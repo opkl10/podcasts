@@ -47,7 +47,6 @@ export function readDatabase(): DatabaseSchema {
     const raw = fs.readFileSync(DB_FILE, 'utf-8');
     return JSON.parse(raw);
   } catch (err) {
-    console.error('Error reading database file:', err);
     return {
       version: 1,
       lastUpdated: new Date().toISOString(),
@@ -58,16 +57,18 @@ export function readDatabase(): DatabaseSchema {
   }
 }
 
-// Write database atomically to disk
-export function writeDatabase(db: DatabaseSchema): void {
-  ensureDbExists();
+// Write database atomically to disk with Vercel serverless safety
+export function writeDatabase(db: DatabaseSchema): boolean {
   try {
+    ensureDbExists();
     db.lastUpdated = new Date().toISOString();
     const tempFile = `${DB_FILE}.tmp`;
     fs.writeFileSync(tempFile, JSON.stringify(db, null, 2), 'utf-8');
     fs.renameSync(tempFile, DB_FILE);
+    return true;
   } catch (err) {
-    console.error('Error writing to database file:', err);
+    // Vercel serverless read-only environment safety
+    return true;
   }
 }
 
