@@ -1,0 +1,750 @@
+{
+  "version": 1,
+  "lastUpdated": "2026-08-29T12:52:18.051Z",
+  "podcasts": [
+    {
+      "id": "pod-tech",
+      "title": "טק & קוד בדרכים (Tech & Code)",
+      "description": "פודקאסט שבועי על עולם הפיתוח, ארכיטקטורת תוכנה, AI וטכנולוגיות העתיד.",
+      "category": "טכנולוגיה",
+      "coverColor": "from-indigo-600 to-purple-600",
+      "hostName": "עומר כהן",
+      "createdAt": "2026-08-01T00:00:00.000Z"
+    },
+    {
+      "id": "pod-startup",
+      "title": "מ-0 ל-1: יזמות וסטארטאפים",
+      "description": "ראיונות עומק עם יזמים ומייסדים על הדרך מרעיון ראשוני עד לגיוס הון והצלחה.",
+      "category": "עסקים ויזמות",
+      "coverColor": "from-amber-600 to-rose-600",
+      "hostName": "עומר כהן",
+      "createdAt": "2026-08-05T00:00:00.000Z"
+    }
+  ],
+  "episodes": [
+    {
+      "id": "ep-1788006130780",
+      "podcastId": "pod-1787950197312",
+      "title": "dfdf",
+      "season": 1,
+      "episodeNumber": 2,
+      "status": "research",
+      "mediaType": "video",
+      "description": "dsf",
+      "targetDurationMinutes": 45,
+      "createdAt": "2026-08-29T12:22:10.780Z",
+      "updatedAt": "2026-08-29T12:22:10.780Z",
+      "guest": {
+        "name": "dsf",
+        "role": "fdf",
+        "links": []
+      },
+      "topics": [
+        {
+          "id": "top-1788006130780-dwu4",
+          "title": "פתיח והיכרות עם האורח",
+          "estimatedMinutes": 5,
+          "notes": "להציג את הרקע והחזון של האורח.",
+          "talkingPoints": [
+            "הצגת הנושא המרכזי",
+            "הצגת האורח ופועלו"
+          ],
+          "questions": [
+            "איך הגעת לתחום הזה?",
+            "מה הוביל לפריצת הדרך שלך?"
+          ],
+          "resources": [],
+          "completed": false,
+          "order": 1
+        },
+        {
+          "id": "top-1788006130780-nc1f",
+          "title": "הנושא המרכזי: אתגרים, פתרונות ותובנות",
+          "estimatedMinutes": 25,
+          "notes": "צלילת עומק לפרקטיקה וטיפים מהשטח.",
+          "talkingPoints": [
+            "הבעיה הגדולה ביותר בתחום",
+            "איך מתמודדים איתה בפועל",
+            "מקרי בוחן מהחיים"
+          ],
+          "questions": [
+            "מה הטעות שרוב האנשים עושים?",
+            "מה הסוד שרק אנשי מקצוע יודעים?"
+          ],
+          "resources": [],
+          "completed": false,
+          "order": 2
+        },
+        {
+          "id": "top-1788006130780-ipda",
+          "title": "סיכום, שאלות בזק וטיפ הזהב",
+          "estimatedMinutes": 15,
+          "notes": "סגירה עוצמתית עם מסר לקחת הביתה.",
+          "talkingPoints": [
+            "שאלות בזק מהירות",
+            "איפה המאזינים יכולים לעקוב"
+          ],
+          "questions": [
+            "איזה טיפ היית נותן לעצמך בתחילת הדרך?"
+          ],
+          "resources": [],
+          "completed": false,
+          "order": 3
+        }
+      ]
+    },
+    {
+      "id": "ep-1788003889638",
+      "podcastId": "pod-1787950197312",
+      "title": "כוכבי הכלב | ",
+      "season": 1,
+      "episodeNumber": 1,
+      "status": "recorded",
+      "mediaType": "audio_only",
+      "description": "הפרק יעסוק בסרט כוכב הכלב של רידלי סקוט, סרט אפוקליפסה",
+      "targetDurationMinutes": 27,
+      "createdAt": "2026-08-29T11:44:49.638Z",
+      "updatedAt": "2026-08-29T12:52:17.964Z",
+      "topics": [
+        {
+          "id": "top-ai-1788004110896-0",
+          "title": "פתיח, חזון היוצרים וקו העלילה: כוכבי הכלב",
+          "estimatedMinutes": 5,
+          "notes": "סקירת החזון הקולנועי של היוצרים והקונספט המרכזי שמוביל את העלילה.",
+          "talkingPoints": [
+            "ההשפעה התרבותית והחשיבות של \"כוכבי הכלב\" בעולם הקולנוע והטלוויזיה.",
+            "הליהוק המרכזי והתאמת השחקנים: ג'ייקוב אלורדי - היג, טייס אזרחי, ג'וש ברולין - בנגלי, חייל מארינס לשעבר, מרגרט קוואלי - סימה.",
+            "כוכבי הכלב (באנגלית: The Dog Stars) הוא סרט מדע בדיוני פוסט אפוקליפטי עתידי בבימויו של רידלי סקוט, על פי תסריט מאת מארק ל."
+          ],
+          "questions": [
+            "איזו סצנה ביצירה מגדירה בצורה המדויקת ביותר את הטון והאווירה?",
+            "האם הליהוק של הדמויות הראשיות ענה על הציפיות שלכם בצפייה הראשונה?"
+          ],
+          "resources": [
+            {
+              "id": "res-1788004110896-0",
+              "title": "ערך אנציקלופדי: כוכבי הכלב",
+              "url": "https://he.wikipedia.org/wiki/%D7%9B%D7%95%D7%9B%D7%91%D7%99%20%D7%94%D7%9B%D7%9C%D7%91"
+            }
+          ],
+          "completed": false,
+          "order": 1
+        },
+        {
+          "id": "top-ai-1788004110896-1",
+          "title": "ניתוח דמויות, קונפליקטים ותמות מרכזיות",
+          "estimatedMinutes": 10,
+          "notes": "צלילת עומק לתמות הפילוסופיות ולמניעים הפסיכולוגיים של הדמויות.",
+          "talkingPoints": [
+            "המסע הפנימי של הדמות הראשית והמחיר האישי שהיא משלמת לאורך הסיפור.",
+            "הקונפליקט המוסרי שמוצג ביצירה והשאלות האנושיות שהיא מעלה.",
+            "הסמליות והרמזים המקדימים ששזורים בעלילה לקראת רגעי השיא."
+          ],
+          "questions": [
+            "מהו לדעתכם הרגע הרגשי החזק ביותר שמגדיר את הסרט?",
+            "האם הבחירות המוסריות של הגיבור מוצדקות בעיניכם בסיום היצירה?"
+          ],
+          "resources": [],
+          "completed": false,
+          "order": 2
+        },
+        {
+          "id": "top-ai-1788004110896-2",
+          "title": "מאחורי הקלעים, אתגרי הפקה ושפת הבימוי",
+          "estimatedMinutes": 5,
+          "notes": "סקירת החלטות הבימוי, אתגרי הצילומים והתפקיד של העיצוב הקולי.",
+          "talkingPoints": [
+            "בנובמבר 2024 חשף רידלי סקוט לראשונה בריאיון כי בין הסרטים העתידיים שהוא מתכנן נמצא גם סרט מדע בדיוני שדבר קיומו לא נודע עד אז, והצהיר כי התסריט כבר כתוב.",
+            "השפה הויזואלית, זוויות הצילום והתאורה שנבחרו לבניית המתח.",
+            "הפסקול והעיצוב הקולי והאופן שבו הם מעצימים את חוויית הצפייה."
+          ],
+          "questions": [
+            "כיצד שפת הצילום והעיצוב הויזואלי תרמו לתחושת ההזדהות של הצופה?",
+            "איזה פרט מאחורי הקלעים הפתיע אתכם ביותר במהלך המחקר על ההפקה?"
+          ],
+          "resources": [],
+          "completed": false,
+          "order": 3
+        },
+        {
+          "id": "top-ai-1788004110896-3",
+          "title": "קבלת היצירה בציבור, סיום והמלצה סופית",
+          "estimatedMinutes": 7,
+          "notes": "שקלול תגובות המבקרים, ניתוח הסיום והציון המסכם.",
+          "talkingPoints": [
+            "כיצד התקבלה היצירה על ידי קהל הצופים ומבקרי הקולנוע בעולם.",
+            "הוויכוחים והפרשנויות השונות שנוצרו סביב סצנת הסיום.",
+            "פסק הדין הסופי: למי היצירה מומלצת והציון המסכם מתוך עשר."
+          ],
+          "questions": [
+            "איך אתם מפרשים את המסר הסופי שהבמאי בחר להשאיר עם הצופים?",
+            "איזה ציון מגיע ליצירה זו בעיניכם, ולמי הייתם ממליצים לצפות בה?"
+          ],
+          "resources": [],
+          "completed": false,
+          "order": 4
+        }
+      ],
+      "movieFacts": [
+        {
+          "id": "fact_1788003921202_crit",
+          "movieTitle": "ניתוח מעמיק: \"כוכבי הכלב\"",
+          "category": "critical_reception",
+          "fact": "היצירה זכתה לתשומת לב רבה ודיונים ערים בקרב הקהל והמבקרים.",
+          "source": "Rotten Tomatoes",
+          "ratingScore": "92% Certified Fresh",
+          "tags": [
+            "ביקורות",
+            "קהל"
+          ]
+        },
+        {
+          "id": "fact_1788003921202_plot",
+          "movieTitle": "ניתוח מעמיק: \"כוכבי הכלב\"",
+          "category": "trivia",
+          "fact": "הקונספט המרכזי: תקציר העלילה והקונספט המרכזי של היצירה.",
+          "source": "Letterboxd",
+          "tags": [
+            "עלילה",
+            "קונספט"
+          ]
+        },
+        {
+          "id": "fact_1788004070259_2",
+          "movieTitle": "כוכבי הכלב",
+          "category": "cast_secret",
+          "fact": "צוות השחקנים המוביל כולל את ג'ייקוב אלורדי - היג, טייס אזרחי, ג'וש ברולין - בנגלי, חייל מארינס לשעבר, מרגרט קוואלי - סימה. הופעות המשחק זכו לשבחים רחבים על עומק הדמויות והכימיה ביניהן.",
+          "source": "IMDb",
+          "ratingScore": "8.5/10",
+          "tags": [
+            "ליהוק",
+            "שחקנים"
+          ],
+          "isPinnedToHUD": true
+        },
+        {
+          "id": "fact_1788004070259_prod_0",
+          "movieTitle": "כוכבי הכלב",
+          "category": "behind_the_scenes",
+          "fact": "בנובמבר 2024 חשף רידלי סקוט לראשונה בריאיון כי בין הסרטים העתידיים שהוא מתכנן נמצא גם סרט מדע בדיוני שדבר קיומו לא נודע עד אז, והצהיר כי התסריט כבר כתוב. עוד באותו החודש דווח כי פרויקט זה מבוסס על הספר \"כוכבי הכלב\" משנת 2012 מאת פיטר הלר, כשאת התסריט כתבו מארק ל. סמית' וכריסטופר וילקינסון. בשלב זה סקוט היה מעוניין שבסרט יככב השחקן פול מסקל שכיכב בסרטו \"גלידאטור 2\" שיצא באותו הזמן, ותכנן את צילומי הסרט לאביב הבא כאשר לוח הזמנים של מסקל יתפנה. על פי הדיווחים נועד הסרט לצאת בסתיו 2025. בסופו של דבר נאלץ מסקל לפרוש מהפרויקט בשל אילוצי זמנים כאשר לוהק לסרטי הביטלס של סם מנדס.",
+          "source": "Wikipedia",
+          "sourceUrl": "https://he.wikipedia.org/wiki/%D7%9B%D7%95%D7%9B%D7%91%D7%99%20%D7%94%D7%9B%D7%9C%D7%91",
+          "tags": [
+            "מאחורי הקלעים",
+            "הפקה"
+          ],
+          "isPinnedToHUD": true
+        },
+        {
+          "id": "fact_1788004070259_prod_1",
+          "movieTitle": "כוכבי הכלב",
+          "category": "behind_the_scenes",
+          "fact": "בינואר 2025 נודע כי ג'ייקוב אלורדי נמצא במגעים לככב בסרט במקומו של פול מסקל. בפברואר דווח כי ג'וש ברולין, מרגרט קוואלי וגאי פירס נמצאים כולם במגעים אחרונים להצטרף לצוות השחקנים לצידו של אלורדי. במאי 2025 הצטרף בנדיקט וונג.",
+          "source": "Wikipedia",
+          "sourceUrl": "https://he.wikipedia.org/wiki/%D7%9B%D7%95%D7%9B%D7%91%D7%99%20%D7%94%D7%9B%D7%9C%D7%91",
+          "tags": [
+            "מאחורי הקלעים",
+            "הפקה"
+          ],
+          "isPinnedToHUD": false
+        },
+        {
+          "id": "fact_1788004070259_prod_2",
+          "movieTitle": "כוכבי הכלב",
+          "category": "behind_the_scenes",
+          "fact": "צילומי הסרט העיקריים החלו באפריל 2025 באיטליה. התקיימו צילומים בקנסיליו, רמה למרגלות האלפים, ומאוחר יותר באווצאנו. ביוני עברה ההפקה לרומא. הצילומים הסתיימו בסוף יוני 2025.",
+          "source": "Wikipedia",
+          "sourceUrl": "https://he.wikipedia.org/wiki/%D7%9B%D7%95%D7%9B%D7%91%D7%99%20%D7%94%D7%9B%D7%9C%D7%91",
+          "tags": [
+            "מאחורי הקלעים",
+            "הפקה"
+          ],
+          "isPinnedToHUD": false
+        },
+        {
+          "id": "fact_1788004070259_plot_0",
+          "movieTitle": "כוכבי הכלב",
+          "category": "trivia",
+          "fact": "ציר עלילתי מרכזי: כוכבי הכלב (באנגלית: The Dog Stars) הוא סרט מדע בדיוני פוסט אפוקליפטי עתידי בבימויו של רידלי סקוט, על פי תסריט מאת מארק ל.",
+          "source": "Letterboxd",
+          "tags": [
+            "עלילה",
+            "קונספט"
+          ]
+        },
+        {
+          "id": "fact_1788004070259_plot_1",
+          "movieTitle": "כוכבי הכלב",
+          "category": "easter_egg",
+          "fact": "ציר עלילתי מרכזי: סמית' וכריסטופר וילקינסון המבוסס על הספר בשם זהה משנת 2012 מאת פיטר הלר.",
+          "source": "Letterboxd",
+          "tags": [
+            "עלילה",
+            "קונספט"
+          ]
+        },
+        {
+          "id": "fact_1788004070259_plot_2",
+          "movieTitle": "כוכבי הכלב",
+          "category": "easter_egg",
+          "fact": "ציר עלילתי מרכזי: בתפקידים הראשיים משחקים ג'ייקוב אלורדי, ג'וש ברולין, מרגרט קוואלי, גאי פירס ובנדיקט וונג.",
+          "source": "Letterboxd",
+          "tags": [
+            "עלילה",
+            "קונספט"
+          ]
+        },
+        {
+          "id": "fact_1788004070259_plot_3",
+          "movieTitle": "כוכבי הכלב",
+          "category": "easter_egg",
+          "fact": "ציר עלילתי מרכזי: הסרט עלה  לאקרנים בארצות הברית ב-28 באוגוסט 2026.",
+          "source": "Letterboxd",
+          "tags": [
+            "עלילה",
+            "קונספט"
+          ]
+        }
+      ],
+      "subtitles": [
+        {
+          "id": "sub_1788007937964_0",
+          "startTime": null,
+          "endTime": null,
+          "text": "נושא 1: פתיח, חזון"
+        },
+        {
+          "id": "sub_1788007937964_1",
+          "startTime": null,
+          "endTime": null,
+          "text": "היוצרים וקו העלילה: כוכבי"
+        },
+        {
+          "id": "sub_1788007937964_2",
+          "startTime": null,
+          "endTime": null,
+          "text": "הכלב. ההשפעה התרבותית והחשיבות"
+        },
+        {
+          "id": "sub_1788007937964_3",
+          "startTime": null,
+          "endTime": null,
+          "text": "של \"כוכבי הכלב\" בעולם"
+        },
+        {
+          "id": "sub_1788007937964_4",
+          "startTime": null,
+          "endTime": null,
+          "text": "הקולנוע והטלוויזיה.. הליהוק המרכזי"
+        },
+        {
+          "id": "sub_1788007937964_5",
+          "startTime": null,
+          "endTime": null,
+          "text": "והתאמת השחקנים: ג'ייקוב אלורדי"
+        },
+        {
+          "id": "sub_1788007937964_6",
+          "startTime": null,
+          "endTime": null,
+          "text": "- היג, טייס אזרחי,"
+        },
+        {
+          "id": "sub_1788007937964_7",
+          "startTime": null,
+          "endTime": null,
+          "text": "ג'וש ברולין - בנגלי,"
+        },
+        {
+          "id": "sub_1788007937964_8",
+          "startTime": null,
+          "endTime": null,
+          "text": "חייל מארינס לשעבר, מרגרט"
+        },
+        {
+          "id": "sub_1788007937964_9",
+          "startTime": null,
+          "endTime": null,
+          "text": "קוואלי - סימה.. כוכבי"
+        },
+        {
+          "id": "sub_1788007937964_10",
+          "startTime": null,
+          "endTime": null,
+          "text": "הכלב (באנגלית: The Dog"
+        },
+        {
+          "id": "sub_1788007937964_11",
+          "startTime": null,
+          "endTime": null,
+          "text": "Stars) הוא סרט מדע"
+        },
+        {
+          "id": "sub_1788007937964_12",
+          "startTime": null,
+          "endTime": null,
+          "text": "בדיוני פוסט אפוקליפטי עתידי"
+        },
+        {
+          "id": "sub_1788007937964_13",
+          "startTime": null,
+          "endTime": null,
+          "text": "בבימויו של רידלי סקוט,"
+        },
+        {
+          "id": "sub_1788007937964_14",
+          "startTime": null,
+          "endTime": null,
+          "text": "על פי תסריט מאת"
+        },
+        {
+          "id": "sub_1788007937964_15",
+          "startTime": null,
+          "endTime": null,
+          "text": "מארק ל.. איזו סצנה"
+        },
+        {
+          "id": "sub_1788007937964_16",
+          "startTime": null,
+          "endTime": null,
+          "text": "ביצירה מגדירה בצורה המדויקת"
+        },
+        {
+          "id": "sub_1788007937964_17",
+          "startTime": null,
+          "endTime": null,
+          "text": "ביותר את הטון והאווירה?."
+        },
+        {
+          "id": "sub_1788007937964_18",
+          "startTime": null,
+          "endTime": null,
+          "text": "האם הליהוק של הדמויות"
+        },
+        {
+          "id": "sub_1788007937964_19",
+          "startTime": null,
+          "endTime": null,
+          "text": "הראשיות ענה על הציפיות"
+        },
+        {
+          "id": "sub_1788007937964_20",
+          "startTime": null,
+          "endTime": null,
+          "text": "שלכם בצפייה הראשונה?. נושא"
+        },
+        {
+          "id": "sub_1788007937964_21",
+          "startTime": null,
+          "endTime": null,
+          "text": "2: ניתוח דמויות, קונפליקטים"
+        },
+        {
+          "id": "sub_1788007937964_22",
+          "startTime": null,
+          "endTime": null,
+          "text": "ותמות מרכזיות. המסע הפנימי"
+        },
+        {
+          "id": "sub_1788007937964_23",
+          "startTime": null,
+          "endTime": null,
+          "text": "של הדמות הראשית והמחיר"
+        },
+        {
+          "id": "sub_1788007937964_24",
+          "startTime": null,
+          "endTime": null,
+          "text": "האישי שהיא משלמת לאורך"
+        },
+        {
+          "id": "sub_1788007937964_25",
+          "startTime": null,
+          "endTime": null,
+          "text": "הסיפור.. הקונפליקט המוסרי שמוצג"
+        },
+        {
+          "id": "sub_1788007937964_26",
+          "startTime": null,
+          "endTime": null,
+          "text": "ביצירה והשאלות האנושיות שהיא"
+        },
+        {
+          "id": "sub_1788007937964_27",
+          "startTime": null,
+          "endTime": null,
+          "text": "מעלה.. הסמליות והרמזים המקדימים"
+        },
+        {
+          "id": "sub_1788007937964_28",
+          "startTime": null,
+          "endTime": null,
+          "text": "ששזורים בעלילה לקראת רגעי"
+        },
+        {
+          "id": "sub_1788007937964_29",
+          "startTime": null,
+          "endTime": null,
+          "text": "השיא.. מהו לדעתכם הרגע"
+        },
+        {
+          "id": "sub_1788007937964_30",
+          "startTime": null,
+          "endTime": null,
+          "text": "הרגשי החזק ביותר שמגדיר"
+        },
+        {
+          "id": "sub_1788007937964_31",
+          "startTime": null,
+          "endTime": null,
+          "text": "את הסרט?. האם הבחירות"
+        },
+        {
+          "id": "sub_1788007937964_32",
+          "startTime": null,
+          "endTime": null,
+          "text": "המוסריות של הגיבור מוצדקות"
+        },
+        {
+          "id": "sub_1788007937964_33",
+          "startTime": null,
+          "endTime": null,
+          "text": "בעיניכם בסיום היצירה?. נושא"
+        },
+        {
+          "id": "sub_1788007937964_34",
+          "startTime": null,
+          "endTime": null,
+          "text": "3: מאחורי הקלעים, אתגרי"
+        },
+        {
+          "id": "sub_1788007937964_35",
+          "startTime": null,
+          "endTime": null,
+          "text": "הפקה ושפת הבימוי. בנובמבר"
+        },
+        {
+          "id": "sub_1788007937964_36",
+          "startTime": null,
+          "endTime": null,
+          "text": "2024 חשף רידלי סקוט"
+        },
+        {
+          "id": "sub_1788007937964_37",
+          "startTime": null,
+          "endTime": null,
+          "text": "לראשונה בריאיון כי בין"
+        },
+        {
+          "id": "sub_1788007937964_38",
+          "startTime": null,
+          "endTime": null,
+          "text": "הסרטים העתידיים שהוא מתכנן"
+        },
+        {
+          "id": "sub_1788007937964_39",
+          "startTime": null,
+          "endTime": null,
+          "text": "נמצא גם סרט מדע"
+        },
+        {
+          "id": "sub_1788007937964_40",
+          "startTime": null,
+          "endTime": null,
+          "text": "בדיוני שדבר קיומו לא"
+        },
+        {
+          "id": "sub_1788007937964_41",
+          "startTime": null,
+          "endTime": null,
+          "text": "נודע עד אז, והצהיר"
+        },
+        {
+          "id": "sub_1788007937964_42",
+          "startTime": null,
+          "endTime": null,
+          "text": "כי התסריט כבר כתוב.."
+        },
+        {
+          "id": "sub_1788007937964_43",
+          "startTime": null,
+          "endTime": null,
+          "text": "השפה הויזואלית, זוויות הצילום"
+        },
+        {
+          "id": "sub_1788007937964_44",
+          "startTime": null,
+          "endTime": null,
+          "text": "והתאורה שנבחרו לבניית המתח.."
+        },
+        {
+          "id": "sub_1788007937964_45",
+          "startTime": null,
+          "endTime": null,
+          "text": "הפסקול והעיצוב הקולי והאופן"
+        },
+        {
+          "id": "sub_1788007937964_46",
+          "startTime": null,
+          "endTime": null,
+          "text": "שבו הם מעצימים את"
+        },
+        {
+          "id": "sub_1788007937964_47",
+          "startTime": null,
+          "endTime": null,
+          "text": "חוויית הצפייה.. כיצד שפת"
+        },
+        {
+          "id": "sub_1788007937964_48",
+          "startTime": null,
+          "endTime": null,
+          "text": "הצילום והעיצוב הויזואלי תרמו"
+        },
+        {
+          "id": "sub_1788007937964_49",
+          "startTime": null,
+          "endTime": null,
+          "text": "לתחושת ההזדהות של הצופה?."
+        },
+        {
+          "id": "sub_1788007937964_50",
+          "startTime": null,
+          "endTime": null,
+          "text": "איזה פרט מאחורי הקלעים"
+        },
+        {
+          "id": "sub_1788007937964_51",
+          "startTime": null,
+          "endTime": null,
+          "text": "הפתיע אתכם ביותר במהלך"
+        },
+        {
+          "id": "sub_1788007937964_52",
+          "startTime": null,
+          "endTime": null,
+          "text": "המחקר על ההפקה?. נושא"
+        },
+        {
+          "id": "sub_1788007937964_53",
+          "startTime": null,
+          "endTime": null,
+          "text": "4: קבלת היצירה בציבור,"
+        },
+        {
+          "id": "sub_1788007937964_54",
+          "startTime": null,
+          "endTime": null,
+          "text": "סיום והמלצה סופית. כיצד"
+        },
+        {
+          "id": "sub_1788007937964_55",
+          "startTime": null,
+          "endTime": null,
+          "text": "התקבלה היצירה על ידי"
+        },
+        {
+          "id": "sub_1788007937964_56",
+          "startTime": null,
+          "endTime": null,
+          "text": "קהל הצופים ומבקרי הקולנוע"
+        },
+        {
+          "id": "sub_1788007937964_57",
+          "startTime": null,
+          "endTime": null,
+          "text": "בעולם.. הוויכוחים והפרשנויות השונות"
+        },
+        {
+          "id": "sub_1788007937964_58",
+          "startTime": null,
+          "endTime": null,
+          "text": "שנוצרו סביב סצנת הסיום.."
+        },
+        {
+          "id": "sub_1788007937964_59",
+          "startTime": null,
+          "endTime": null,
+          "text": "פסק הדין הסופי: למי"
+        },
+        {
+          "id": "sub_1788007937964_60",
+          "startTime": null,
+          "endTime": null,
+          "text": "היצירה מומלצת והציון המסכם"
+        },
+        {
+          "id": "sub_1788007937964_61",
+          "startTime": null,
+          "endTime": null,
+          "text": "מתוך עשר.. איך אתם"
+        },
+        {
+          "id": "sub_1788007937964_62",
+          "startTime": null,
+          "endTime": null,
+          "text": "מפרשים את המסר הסופי"
+        },
+        {
+          "id": "sub_1788007937964_63",
+          "startTime": null,
+          "endTime": null,
+          "text": "שהבמאי בחר להשאיר עם"
+        },
+        {
+          "id": "sub_1788007937964_64",
+          "startTime": null,
+          "endTime": null,
+          "text": "הצופים?. איזה ציון מגיע"
+        },
+        {
+          "id": "sub_1788007937964_65",
+          "startTime": null,
+          "endTime": null,
+          "text": "ליצירה זו בעיניכם, ולמי"
+        },
+        {
+          "id": "sub_1788007937964_66",
+          "startTime": null,
+          "endTime": null,
+          "text": "הייתם ממליצים לצפות בה?"
+        }
+      ],
+      "recording": {
+        "duration": 0,
+        "recordedAt": "2026-08-29T12:11:10.882Z",
+        "videoBlobKey": "rec_ep-1788003889638_1788005470626",
+        "audioBlobKey": "rec_ep-1788003889638_1788005470626_audio",
+        "fileSize": 20768350,
+        "mimeType": "video/webm;codecs=vp9,opus",
+        "resolution": "1080p",
+        "markers": [],
+        "topicsCovered": [
+          "top-ai-1788004110896-0",
+          "top-ai-1788004110896-1",
+          "top-ai-1788004110896-2",
+          "top-ai-1788004110896-3"
+        ]
+      },
+      "subtitleStyle": {
+        "fontFamily": "Heebo, sans-serif",
+        "fontSize": 26,
+        "textColor": "#FFFFFF",
+        "backgroundColor": "rgba(0, 0, 0, 0.75)",
+        "strokeColor": "#000000",
+        "strokeWidth": 2,
+        "highlightWordColor": "#F59E0B",
+        "positionY": "bottom",
+        "boxStyle": "rounded-badge",
+        "isBold": true,
+        "letterSpacing": 0.5,
+        "animation": "karaoke-pop"
+      }
+    }
+  ],
+  "settings": {
+    "defaultDurationMinutes": 45,
+    "defaultTone": "deep",
+    "noiseSuppression": true
+  }
+}
