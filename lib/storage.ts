@@ -74,6 +74,76 @@ export async function deleteMediaBlob(key: string): Promise<void> {
   }
 }
 
+// Export all media blobs stored in IndexedDB as a base64 dictionary
+export async function getAllMediaBlobs(): Promise<Record<string, { base64: string; mimeType: string; size: number }>> {
+  try {
+    const db = await openDB();
+    return new Promise((resolve) => {
+      const tx = db.transaction(STORE_NAME, 'readonly');
+      const store = tx.objectStore(STORE_NAME);
+      const cursorReq = store.openCursor();
+      const mediaMap: Record<string, { base64: string; mimeType: string; size: number }> = {};
+      const promises: Promise<void>[] = [];
+
+      cursorReq.onsuccess = (e: any) => {
+        const cursor = e.target.result;
+        if (cursor) {
+          const key = cursor.key as string;
+          const blob = cursor.value as Blob;
+          if (blob instanceof Blob) {
+            promises.push(
+              new Promise((res) => {
+                const reader = new FileReader();
+                reader.onloadend = () => {
+                  mediaMap[key] = {
+                    base64: reader.result as string,
+                    mimeType: blob.type || 'audio/wav',
+                    size: blob.size
+                  };
+                  res();
+                };
+                reader.onerror = () => res();
+                reader.readAsDataURL(blob);
+              })
+            );
+          }
+          cursor.continue();
+        } else {
+          Promise.all(promises).then(() => resolve(mediaMap));
+        }
+      };
+
+      cursorReq.onerror = () => resolve({});
+    });
+  } catch (err) {
+    console.error('Failed to get all media blobs from IndexedDB', err);
+    return {};
+  }
+}
+
+// Restore media blobs from a dictionary into IndexedDB
+export async function restoreAllMediaBlobs(mediaMap: Record<string, { base64: string; mimeType?: string }>): Promise<number> {
+  if (!mediaMap || typeof mediaMap !== 'object') return 0;
+  let count = 0;
+  try {
+    const keys = Object.keys(mediaMap);
+    for (const key of keys) {
+      const item = mediaMap[key];
+      if (item && item.base64) {
+        try {
+          const res = await fetch(item.base64);
+          const blob = await res.blob();
+          await saveMediaBlob(key, blob);
+          count++;
+        } catch {}
+      }
+    }
+  } catch (err) {
+    console.error('Failed to restore media blobs into IndexedDB', err);
+  }
+  return count;
+}
+
 // Async Background Sync to Server Database
 async function syncToServerDatabase(payload: { episodes?: Episode[]; podcasts?: PodcastShow[] }) {
   if (typeof window === 'undefined') return;

@@ -24,7 +24,9 @@ import {
   AlertTriangle,
   Layers,
   Filter,
-  CheckCircle2
+  CheckCircle2,
+  BookOpen,
+  Users
 } from 'lucide-react';
 
 interface MovieFactCardsManagerProps {
@@ -123,28 +125,38 @@ export default function MovieFactCardsManager({
 
   // Filter facts strictly for this movie
   const filteredFacts = movieFacts.filter(f => {
-    const matchesCategory = selectedCategory === 'all' || f.category === selectedCategory;
+    let matchesCategory = selectedCategory === 'all';
+    if (!matchesCategory) {
+      if (selectedCategory === 'plot') matchesCategory = f.category === 'plot';
+      else if (selectedCategory === 'cast') matchesCategory = f.category === 'cast' || f.category === 'cast_secret';
+      else if (selectedCategory === 'production_crew') matchesCategory = f.category === 'production_crew' || f.category === 'director_vision';
+      else if (selectedCategory === 'reviews') matchesCategory = f.category === 'reviews' || f.category === 'critical_reception' || f.category === 'box_office';
+      else if (selectedCategory === 'behind_the_scenes') matchesCategory = f.category === 'behind_the_scenes' || f.category === 'trivia' || f.category === 'easter_egg';
+      else matchesCategory = f.category === selectedCategory;
+    }
     const matchesSource = selectedSource === 'all' || f.source === selectedSource;
     return matchesCategory && matchesSource;
   });
 
   const getCategoryMeta = (cat: FactCategory) => {
     switch (cat) {
-      case 'behind_the_scenes':
-        return { label: 'מאחורי הקלעים והפקה של הסרט', color: 'text-amber-400 bg-amber-500/10 border-amber-500/30', icon: Clapperboard };
-      case 'critical_reception':
-        return { label: 'ציונים, ביקורות והכנסות הסרט', color: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30', icon: Award };
-      case 'easter_egg':
-        return { label: 'איסטר אגז ורמזים חבויים בסרט', color: 'text-purple-400 bg-purple-500/10 border-purple-500/30', icon: Sparkles };
-      case 'director_vision':
-        return { label: 'חזון הבמאי ותסריט הסרט', color: 'text-indigo-400 bg-indigo-500/10 border-indigo-500/30', icon: Film };
+      case 'plot':
+        return { label: 'עלילה וסיפור הסרט', color: 'text-sky-400 bg-sky-500/10 border-sky-500/30', icon: BookOpen };
+      case 'cast':
       case 'cast_secret':
-        return { label: 'סודות ליהוק ושחקני הסרט', color: 'text-rose-400 bg-rose-500/10 border-rose-500/30', icon: Star };
+        return { label: 'שחקנים ודמויות', color: 'text-rose-400 bg-rose-500/10 border-rose-500/30', icon: Users };
+      case 'production_crew':
+      case 'director_vision':
+        return { label: 'צוותי הפקה + בימוי ויתר התפקידים', color: 'text-indigo-400 bg-indigo-500/10 border-indigo-500/30', icon: Film };
+      case 'reviews':
+      case 'critical_reception':
       case 'box_office':
-        return { label: 'קופות ושיאים של הסרט', color: 'text-yellow-400 bg-yellow-500/10 border-yellow-500/30', icon: Flame };
+        return { label: 'ביקורות כלליות וציונים', color: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30', icon: Award };
+      case 'behind_the_scenes':
+      case 'easter_egg':
       case 'trivia':
       default:
-        return { label: 'טריוויה ועובדות על הסרט', color: 'text-sky-400 bg-sky-500/10 border-sky-500/30', icon: Info };
+        return { label: 'סיפורי מאחורי הקלעים', color: 'text-amber-400 bg-amber-500/10 border-amber-500/30', icon: Clapperboard };
     }
   };
 
@@ -245,12 +257,11 @@ export default function MovieFactCardsManager({
                   onChange={(e) => setCustomCategory(e.target.value as FactCategory)}
                   className="w-full p-1.5 rounded-lg bg-slate-900 border border-slate-800 text-xs text-slate-200 focus:outline-none"
                 >
-                  <option value="behind_the_scenes">מאחורי הקלעים והפקה</option>
-                  <option value="critical_reception">ציונים וביקורות</option>
-                  <option value="easter_egg">איסטר אגז ורמזים</option>
-                  <option value="director_vision">חזון הבמאי ותסריט</option>
-                  <option value="cast_secret">סודות ליהוק ושחקנים</option>
-                  <option value="trivia">טריוויה כללית על הסרט</option>
+                  <option value="plot">🎬 עלילה וסיפור הסרט</option>
+                  <option value="cast">🎭 שחקנים ודמויות</option>
+                  <option value="production_crew">🎥 צוותי הפקה + בימוי ויתר התפקידים</option>
+                  <option value="reviews">⭐ ביקורות כלליות וציונים</option>
+                  <option value="behind_the_scenes">🤫 סיפורי מאחורי הקלעים</option>
                 </select>
               </div>
 
@@ -302,16 +313,15 @@ export default function MovieFactCardsManager({
 
       {/* Category & Source Multi-Filter Bar */}
       <div className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-2xl bg-slate-900/60 border border-slate-800">
-        {/* Categories */}
+        {/* Categories (5 Standard Movie Fact Sections) */}
         <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
           {[
-            { id: 'all', label: `כל העובדות על הסרט (${movieFacts.length})` },
-            { id: 'behind_the_scenes', label: '🎬 מאחורי הקלעים' },
-            { id: 'critical_reception', label: '🏆 ציונים וביקורות' },
-            { id: 'easter_egg', label: '🥚 איסטר אגז' },
-            { id: 'director_vision', label: '🎥 חזון הבמאי' },
-            { id: 'cast_secret', label: '⭐ ליהוק ושחקנים' },
-            { id: 'trivia', label: '💡 טריוויה' }
+            { id: 'all', label: `כל העובדות (${movieFacts.length})` },
+            { id: 'plot', label: '🎬 עלילה' },
+            { id: 'cast', label: '🎭 שחקנים' },
+            { id: 'production_crew', label: '🎥 צוותי הפקה ובימוי' },
+            { id: 'reviews', label: '⭐ ביקורות כלליות' },
+            { id: 'behind_the_scenes', label: '🤫 מאחורי הקלעים' }
           ].map(cat => (
             <button
               key={cat.id}

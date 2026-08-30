@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { Episode, EpisodeStatus, PodcastShow } from '@/lib/types';
-import { getPodcasts, getPodcastById } from '@/lib/storage';
+import { getPodcasts, getPodcastById, saveMediaBlob, getMediaBlob, deleteMediaBlob, formatTime } from '@/lib/storage';
 import { 
   ArrowRight, 
   Mic, 
@@ -18,7 +18,13 @@ import {
   FileText,
   Radio,
   Video,
-  Activity
+  Activity,
+  UploadCloud,
+  Headphones,
+  Trash2,
+  Play,
+  Subtitles,
+  Languages
 } from 'lucide-react';
 
 interface EpisodeDetailsHeaderProps {
@@ -53,11 +59,42 @@ export default function EpisodeDetailsHeader({
   const [targetDuration, setTargetDuration] = useState(episode.targetDurationMinutes);
   const [guestName, setGuestName] = useState(episode.guest?.name || '');
   const [guestRole, setGuestRole] = useState(episode.guest?.role || '');
+  const [hostName, setHostName] = useState(episode.hostName || episode.host?.name || '');
   const [podcasts, setPodcasts] = useState<PodcastShow[]>([]);
+  const [audioPlaybackUrl, setAudioPlaybackUrl] = useState<string | null>(null);
 
   useEffect(() => {
     setPodcasts(getPodcasts());
   }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+    let url: string | null = null;
+    const loadAudioBlob = async () => {
+      if (episode.recording?.audioBlobKey) {
+        const blob = await getMediaBlob(episode.recording.audioBlobKey);
+        if (blob && isMounted) {
+          url = URL.createObjectURL(blob);
+          setAudioPlaybackUrl(url);
+          return;
+        }
+      }
+      if (episode.recording?.videoBlobKey) {
+        const blob = await getMediaBlob(episode.recording.videoBlobKey);
+        if (blob && isMounted) {
+          url = URL.createObjectURL(blob);
+          setAudioPlaybackUrl(url);
+          return;
+        }
+      }
+      if (isMounted) setAudioPlaybackUrl(null);
+    };
+    loadAudioBlob();
+    return () => {
+      isMounted = false;
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [episode.recording]);
 
   const currentPodcast = getPodcastById(episode.podcastId);
 
@@ -71,6 +108,8 @@ export default function EpisodeDetailsHeader({
       season: Number(season),
       episodeNumber: Number(episodeNumber),
       targetDurationMinutes: Number(targetDuration),
+      hostName: hostName.trim() || undefined,
+      host: hostName.trim() ? { name: hostName.trim() } : undefined,
       guest: guestName.trim()
         ? {
             name: guestName,
@@ -88,6 +127,69 @@ export default function EpisodeDetailsHeader({
       ...episode,
       status: newStatus
     });
+  };
+
+  const handleUploadAudioFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const blobKey = `rec_uploaded_${episode.id}_${Date.now()}`;
+      await saveMediaBlob(blobKey, file);
+
+      // Determine duration
+      let durationSeconds = 60;
+      try {
+        const url = URL.createObjectURL(file);
+        const tempAudio = new Audio(url);
+        await new Promise((resolve) => {
+          tempAudio.onloadedmetadata = () => {
+            durationSeconds = Math.round(tempAudio.duration) || 60;
+            resolve(true);
+          };
+          tempAudio.onerror = () => resolve(true);
+          setTimeout(() => resolve(true), 2500);
+        });
+      } catch {}
+
+      const updated: Episode = {
+        ...episode,
+        status: 'recorded',
+        recording: {
+          recordedAt: new Date().toISOString(),
+          duration: durationSeconds,
+          audioBlobKey: blobKey,
+          markers: [],
+          topicsCovered: []
+        }
+      };
+
+      onUpdateEpisode(updated);
+      alert(`קובץ השמע "${file.name}" נשמר בהצלחה בפרק! הוא מוכן כעת להאזנה, עריכת סאונד ב-Audiogram Studio, ותמלול כתוביות AI.`);
+    } catch (err: any) {
+      alert('שגיאה בשמירת קובץ השמע: ' + err.message);
+    }
+  };
+
+  const handleRemoveRecording = async () => {
+    if (!confirm('האם להסיר את קובץ ההקלטה מפרק זה? (נושאי המחקר והטקסט יישארו)')) return;
+    try {
+      if (episode.recording?.audioBlobKey) {
+        await deleteMediaBlob(episode.recording.audioBlobKey);
+      }
+      if (episode.recording?.videoBlobKey) {
+        await deleteMediaBlob(episode.recording.videoBlobKey);
+      }
+      const updated: Episode = {
+        ...episode,
+        status: episode.status === 'recorded' ? 'ready' : episode.status,
+        recording: undefined
+      };
+      onUpdateEpisode(updated);
+      setAudioPlaybackUrl(null);
+    } catch (err: any) {
+      alert('שגיאה בהסרת ההקלטה: ' + err.message);
+    }
   };
 
   return (
@@ -121,6 +223,21 @@ export default function EpisodeDetailsHeader({
               ))}
             </select>
           </div>
+
+          {/* Upload Existing Audio Recording */}
+          <label
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 text-xs font-bold text-emerald-300 hover:text-white border border-emerald-500/40 transition-all shadow-md cursor-pointer active:scale-95"
+            title="העלאת קובץ שמע מוקלט (MP3/WAV/M4A) לפרק זה"
+          >
+            <UploadCloud className="w-3.5 h-3.5 text-emerald-400" />
+            <span>העלאת הקלטה</span>
+            <input
+              type="file"
+              accept="audio/*,video/*,.mp3,.wav,.m4a,.webm,.ogg"
+              className="hidden"
+              onChange={handleUploadAudioFile}
+            />
+          </label>
 
           {/* Audiogram & Sound Studio */}
           {onOpenAudiogram && (
@@ -223,7 +340,17 @@ export default function EpisodeDetailsHeader({
             />
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-cyan-400 mb-1">שם המגיש / מנחה (אופציונלי)</label>
+              <input
+                type="text"
+                value={hostName}
+                onChange={(e) => setHostName(e.target.value)}
+                placeholder="למשל: עומר אוקון"
+                className="w-full px-3.5 py-2 rounded-xl bg-slate-800 border border-slate-700 text-xs text-white focus:outline-none focus:border-cyan-500"
+              />
+            </div>
             <div>
               <label className="block text-xs font-medium text-slate-400 mb-1">שם האורח/ת (אופציונלי)</label>
               <input
@@ -235,7 +362,7 @@ export default function EpisodeDetailsHeader({
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1">תפקיד / תיאור קצר של האורח</label>
+              <label className="block text-xs font-medium text-slate-400 mb-1">תפקיד / תיאור האורח/ת</label>
               <input
                 type="text"
                 value={guestRole}
@@ -357,16 +484,96 @@ export default function EpisodeDetailsHeader({
             </button>
           </div>
 
-          {/* Guest Card Badge */}
-          {episode.guest && (
-            <div className="mt-5 inline-flex items-center gap-3 p-2.5 pr-3.5 rounded-2xl bg-slate-900/80 border border-slate-800">
-              <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-indigo-500 to-purple-600 flex items-center justify-center text-white text-sm font-bold shadow">
-                {episode.guest.name.charAt(0)}
+          {/* Host & Guest Badges */}
+          <div className="mt-5 flex flex-wrap items-center gap-3">
+            {episode.hostName && (
+              <div className="inline-flex items-center gap-3 p-2.5 pr-3.5 rounded-2xl bg-slate-900/80 border border-cyan-500/30 shadow-md">
+                <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center text-white text-sm font-black shadow">
+                  🎙️
+                </div>
+                <div>
+                  <p className="text-xs font-bold text-white">{episode.hostName}</p>
+                  <p className="text-[11px] text-cyan-400 font-medium">מגיש/ת התוכנית</p>
+                </div>
               </div>
-              <div>
-                <p className="text-xs font-bold text-white">{episode.guest.name}</p>
-                <p className="text-[11px] text-slate-400">{episode.guest.role || 'אורח/ת מיוחד/ת'}</p>
+            )}
+
+            {episode.guest && (
+              <div className="inline-flex items-center gap-3 p-2.5 pr-3.5 rounded-2xl bg-slate-900/80 border border-slate-800 shadow-md">
+                <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-indigo-500 to-purple-600 flex items-center justify-center text-white text-sm font-bold shadow">
+                  {episode.guest.name.charAt(0)}
+                </div>
+                <div>
+                  <p className="text-xs font-bold text-white">{episode.guest.name}</p>
+                  <p className="text-[11px] text-slate-400">{episode.guest.role || 'אורח/ת מיוחד/ת'}</p>
+                </div>
               </div>
+            )}
+          </div>
+
+          {/* Dedicated Audio Recording Player Bar */}
+          {episode.recording && (
+            <div className="mt-6 p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-slate-900 via-indigo-950/40 to-slate-900 border border-indigo-500/30 shadow-lg space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                    <Headphones className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-white flex items-center gap-2">
+                      <span>הקלטת הפרק שמורה ומוכנה להאזנה</span>
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-mono">
+                        {formatTime(episode.recording.duration || 0, true)}
+                      </span>
+                    </h4>
+                    <p className="text-[11px] text-slate-400">
+                      ניתן להאזין ישירות, לערוך ב-Audiogram Studio, או לתמלל כתוביות AI
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Link
+                    href={`/episodes/${episode.id}/subtitles`}
+                    className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-bold shadow-md shadow-purple-600/30 transition-all active:scale-95"
+                  >
+                    <Subtitles className="w-3.5 h-3.5" />
+                    <span>אולפן כתוביות ותרגום AI</span>
+                  </Link>
+
+                  {onOpenAudiogram && (
+                    <button
+                      onClick={onOpenAudiogram}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-cyan-600/20 hover:bg-cyan-600/30 border border-cyan-500/40 text-cyan-300 hover:text-white text-xs font-bold transition-all active:scale-95"
+                    >
+                      <Activity className="w-3.5 h-3.5" />
+                      <span>סטודיו עריכה וגלי קול</span>
+                    </button>
+                  )}
+
+                  <button
+                    onClick={handleRemoveRecording}
+                    className="p-2 text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-xl transition-all"
+                    title="הסר קובץ הקלטה מפרק זה"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {audioPlaybackUrl ? (
+                <div className="pt-1">
+                  <audio
+                    controls
+                    src={audioPlaybackUrl}
+                    className="w-full h-10 rounded-xl bg-slate-900 border border-slate-800"
+                  />
+                </div>
+              ) : (
+                <div className="p-2 text-xs text-amber-300 bg-amber-950/20 border border-amber-500/20 rounded-xl">
+                  קובץ השמע לא נמצא בזיכרון המקומי. באפשרותך להעלות שוב באמצעות כפתור "העלאת הקלטה".
+                </div>
+              )}
             </div>
           )}
         </div>

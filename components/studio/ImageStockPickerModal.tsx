@@ -24,6 +24,8 @@ import {
 } from 'lucide-react';
 import { 
   getBunnyConfig, 
+  saveBunnyConfig,
+  testBunnyStorageConnection,
   listBunnyStorageFiles, 
   uploadBlobToBunny, 
   BunnyFileItem, 
@@ -181,14 +183,16 @@ interface ImageStockPickerModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSelectImage: (imageUrl: string, title?: string) => void;
+  initialTarget?: 'background' | 'poster' | 'logo';
 }
 
 export default function ImageStockPickerModal({
   isOpen,
   onClose,
-  onSelectImage
+  onSelectImage,
+  initialTarget = 'poster'
 }: ImageStockPickerModalProps) {
-  const [activeCategory, setActiveCategory] = useState<string>('bunny'); // Default to BunnyCDN if available or all
+  const [activeCategory, setActiveCategory] = useState<string>('bunny'); // Default to BunnyCDN
   const [searchQuery, setSearchQuery] = useState('');
   const [customUploadedImages, setCustomUploadedImages] = useState<StockImageItem[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -202,15 +206,30 @@ export default function ImageStockPickerModal({
   const [bunnyFolder, setBunnyFolder] = useState('');
   const [isUploadingToBunny, setIsUploadingToBunny] = useState(false);
   const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
+  const [showConfigSettings, setShowConfigSettings] = useState(false);
+  const [fileFilterMode, setFileFilterMode] = useState<'images_only' | 'all_files'>('images_only');
+
+  // Form config state for inline Bunny settings
+  const [editZoneName, setEditZoneName] = useState('');
+  const [editAccessKey, setEditAccessKey] = useState('');
+  const [editPullDomain, setEditPullDomain] = useState('');
+  const [editRegion, setEditRegion] = useState('');
+  const [isTestingConfig, setIsTestingConfig] = useState(false);
+  const [configSuccessMsg, setConfigSuccessMsg] = useState<string | null>(null);
 
   useEffect(() => {
     if (isOpen) {
       const conf = getBunnyConfig();
       setBunnyConfig(conf);
+      setEditZoneName(conf.storageZoneName || '');
+      setEditAccessKey(conf.accessKey || '');
+      setEditPullDomain(conf.pullZoneUrl || '');
+      setEditRegion(conf.storageRegion || '');
+
       if (conf.storageZoneName && conf.accessKey) {
         loadBunnyFiles(conf, bunnyFolder);
       } else {
-        setActiveCategory('all');
+        setShowConfigSettings(true);
       }
     }
   }, [isOpen, bunnyFolder]);
@@ -225,12 +244,68 @@ export default function ImageStockPickerModal({
         setBunnyFiles(res.files);
       } else {
         setBunnyError(res.error || 'לא הצלחנו לקרוא את קבצי Bunny Storage');
+        setShowConfigSettings(true);
       }
     } catch (e: any) {
       setBunnyError(e.message || 'שגיאת תקשורת עם Bunny Storage');
+      setShowConfigSettings(true);
     } finally {
       setIsLoadingBunny(false);
     }
+  };
+
+  // Test and save Bunny configuration inline
+  const handleSaveAndTestBunny = async () => {
+    if (!editZoneName.trim() || !editAccessKey.trim()) {
+      alert('נא להזין שם Storage Zone ומפתח Access Key');
+      return;
+    }
+
+    setIsTestingConfig(true);
+    setConfigSuccessMsg(null);
+    setBunnyError(null);
+
+    const newConf: BunnyConfig = {
+      enabled: true,
+      storageZoneName: editZoneName.trim(),
+      accessKey: editAccessKey.trim(),
+      pullZoneUrl: editPullDomain.trim() || `${editZoneName.trim()}.b-cdn.net`,
+      storageRegion: editRegion.trim(),
+      folderName: 'podcasts'
+    };
+
+    try {
+      saveBunnyConfig(newConf);
+      setBunnyConfig(newConf);
+
+      const testRes = await testBunnyStorageConnection(newConf);
+      if (testRes.success) {
+        setConfigSuccessMsg('החיבור ל-Bunny Storage הצליח ונשמר בהצלחה! מושך קבצים...');
+        setTimeout(() => {
+          setShowConfigSettings(false);
+          setConfigSuccessMsg(null);
+        }, 1500);
+        await loadBunnyFiles(newConf, bunnyFolder);
+      } else {
+        setBunnyError(testRes.message);
+      }
+    } catch (err: any) {
+      setBunnyError(err.message || 'שגיאה בבדיקת חיבור');
+    } finally {
+      setIsTestingConfig(false);
+    }
+  };
+
+  // Folder navigation helper
+  const navigateToFolder = (folderPath: string) => {
+    setBunnyFolder(folderPath);
+  };
+
+  const navigateUp = () => {
+    if (!bunnyFolder) return;
+    const parts = bunnyFolder.replace(/\/+$/, '').split('/');
+    parts.pop();
+    setBunnyFolder(parts.join('/'));
   };
 
   if (!isOpen) return null;
@@ -297,6 +372,7 @@ export default function ImageStockPickerModal({
       if (res.success && res.cdnUrl) {
         await loadBunnyFiles(bunnyConfig, bunnyFolder);
         onSelectImage(res.cdnUrl, file.name.replace(/\.[^/.]+$/, ''));
+        onClose();
       } else {
         alert(res.error || 'שגיאה בהעלאת הקובץ ל-Bunny');
       }
@@ -318,7 +394,7 @@ export default function ImageStockPickerModal({
   });
 
   const filteredBunnyFiles = bunnyFiles.filter(file => {
-    if (!file.isImage && file.isDirectory) return false;
+    if (fileFilterMode === 'images_only' && !file.isImage && !file.isDirectory) return false;
     if (!searchQuery) return true;
     return file.name.toLowerCase().includes(searchQuery.toLowerCase());
   });
@@ -333,6 +409,9 @@ export default function ImageStockPickerModal({
     { id: 'awards', label: 'פרסים ואוסקר', icon: Trophy }
   ];
 
+  // Breadcrumbs items
+  const folderBreadcrumbs = bunnyFolder ? bunnyFolder.split('/').filter(Boolean) : [];
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-black/85 backdrop-blur-md animate-in fade-in font-sans">
       <div className="w-full max-w-5xl max-h-[90vh] rounded-3xl bg-[#121620] border border-slate-800 p-5 sm:p-7 shadow-2xl flex flex-col overflow-hidden relative">
@@ -344,28 +423,28 @@ export default function ImageStockPickerModal({
             </div>
             <div>
               <h3 className="text-base font-bold text-white flex items-center gap-2">
-                <span>מאגר פוסטרים ותמונות קולנוע ו-BunnyCDN</span>
+                <span>מאגר פוסטרים, תמונות ו-BunnyCDN</span>
                 {bunnyConfig.storageZoneName && (
                   <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 text-[10px] font-mono border border-amber-500/30">
                     🐰 {bunnyConfig.storageZoneName}
                   </span>
                 )}
               </h3>
-              <p className="text-xs text-slate-400">בחרו מתוך ה-Storage של BunnyCDN, הורידו למחשב, או העלו קובץ חדש</p>
+              <p className="text-xs text-slate-400">בחרו מתוך ה-Storage של BunnyCDN, העלו פוסטר מהמחשב או ממאגר הסרטים</p>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
-            {/* Upload to Bunny / Local */}
+            {/* Upload to Bunny / Local Buttons */}
             {activeCategory === 'bunny' && bunnyConfig.storageZoneName ? (
               <>
                 <button
                   onClick={() => bunnyUploadRef.current?.click()}
                   disabled={isUploadingToBunny}
-                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-white font-bold text-xs shadow-lg shadow-amber-600/30 transition-all active:scale-98 disabled:opacity-50"
+                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-white font-bold text-xs shadow-lg shadow-amber-600/30 transition-all active:scale-98 disabled:opacity-50"
                 >
                   <Upload className="w-3.5 h-3.5" />
-                  <span>{isUploadingToBunny ? 'מעלה ל-Bunny...' : 'העלה תמונה ל-BunnyCDN'}</span>
+                  <span>{isUploadingToBunny ? 'מעלה ל-Bunny...' : 'העלה ל-Bunny Storage'}</span>
                 </button>
                 <input
                   ref={bunnyUploadRef}
@@ -375,24 +454,22 @@ export default function ImageStockPickerModal({
                   className="hidden"
                 />
               </>
-            ) : (
-              <>
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 text-white font-bold text-xs shadow-lg shadow-pink-600/30 transition-all active:scale-98"
-                >
-                  <Upload className="w-3.5 h-3.5" />
-                  <span>העלאת תמונה מהמחשב</span>
-                </button>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/*"
-                  onChange={handleFileUpload}
-                  className="hidden"
-                />
-              </>
-            )}
+            ) : null}
+
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 text-white font-bold text-xs shadow-lg shadow-pink-600/30 transition-all active:scale-98"
+            >
+              <Upload className="w-3.5 h-3.5" />
+              <span>העלאה מהמחשב</span>
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              onChange={handleFileUpload}
+              className="hidden"
+            />
 
             <button
               onClick={onClose}
@@ -405,7 +482,7 @@ export default function ImageStockPickerModal({
 
         {/* Search & Category Filter Bar */}
         <div className="py-4 space-y-3 shrink-0">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2.5">
             {/* Search */}
             <div className="relative flex-1">
               <Search className="w-4 h-4 text-slate-400 absolute right-3.5 top-1/2 -translate-y-1/2" />
@@ -413,35 +490,52 @@ export default function ImageStockPickerModal({
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="חפש לפי שם סרט, קובץ, או תגית..."
+                placeholder="חפש לפי שם סרט, קובץ, או תיקייה..."
                 className="w-full pl-4 pr-10 py-2.5 rounded-xl bg-slate-900 border border-slate-700/80 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
               />
             </div>
 
-            {/* Bunny Folder Selector (if in Bunny tab) */}
-            {activeCategory === 'bunny' && bunnyConfig.storageZoneName && (
-              <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-700/80 px-3 py-2 rounded-xl text-xs">
-                <FolderOpen className="w-3.5 h-3.5 text-amber-400" />
-                <input
-                  type="text"
-                  value={bunnyFolder}
-                  onChange={(e) => setBunnyFolder(e.target.value)}
-                  placeholder="תיקייה ב-Bunny (למשל: images)..."
-                  className="bg-transparent text-xs text-white placeholder-slate-500 focus:outline-none w-36"
-                />
+            {/* Bunny Controls: Toggle Credentials Settings & Filter Mode */}
+            {activeCategory === 'bunny' && (
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setFileFilterMode(prev => prev === 'images_only' ? 'all_files' : 'images_only')}
+                  className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all ${
+                    fileFilterMode === 'all_files' 
+                      ? 'bg-indigo-600 border-indigo-400 text-white shadow' 
+                      : 'bg-slate-900 border-slate-700 text-slate-300 hover:text-white'
+                  }`}
+                  title="הצג את כל סוגי הקבצים כולל פורמטים מיוחדים"
+                >
+                  {fileFilterMode === 'all_files' ? '📁 כל הקבצים' : '🖼️ תמונות בלבד'}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setShowConfigSettings(prev => !prev)}
+                  className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all flex items-center gap-1.5 ${
+                    showConfigSettings 
+                      ? 'bg-amber-500 border-amber-400 text-black shadow font-black' 
+                      : 'bg-slate-900 border-slate-700 text-slate-300 hover:text-white'
+                  }`}
+                >
+                  <span>⚙️ הגדרות CDN</span>
+                </button>
+
                 <button
                   onClick={() => loadBunnyFiles(bunnyConfig, bunnyFolder)}
                   disabled={isLoadingBunny}
-                  className="p-1 text-slate-400 hover:text-white"
-                  title="רענן קבצים"
+                  className="p-2.5 bg-slate-900 hover:bg-slate-800 border border-slate-700 rounded-xl text-slate-300 hover:text-white transition-colors"
+                  title="רענן קבצים מ-BunnyCDN"
                 >
-                  <RotateCw className={`w-3.5 h-3.5 ${isLoadingBunny ? 'animate-spin' : ''}`} />
+                  <RotateCw className={`w-4 h-4 ${isLoadingBunny ? 'animate-spin text-amber-400' : ''}`} />
                 </button>
               </div>
             )}
           </div>
 
-          {/* Categories */}
+          {/* Categories Bar */}
           <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
             {categories.map((cat) => {
               const Icon = cat.icon;
@@ -453,7 +547,7 @@ export default function ImageStockPickerModal({
                   className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
                     activeCategory === cat.id
                       ? (isBunny 
-                          ? 'bg-gradient-to-r from-amber-500 to-orange-600 text-white shadow-lg shadow-amber-600/30' 
+                          ? 'bg-gradient-to-r from-amber-500 to-orange-600 text-white shadow-lg shadow-amber-600/30 font-bold' 
                           : 'bg-pink-600 text-white shadow')
                       : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
                   }`}
@@ -461,7 +555,7 @@ export default function ImageStockPickerModal({
                   <Icon className="w-3.5 h-3.5" />
                   <span>{cat.label}</span>
                   {isBunny && cat.count !== undefined && cat.count > 0 && (
-                    <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-black/40 text-amber-200">
+                    <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-black/40 text-amber-200 font-mono">
                       {cat.count}
                     </span>
                   )}
@@ -469,6 +563,150 @@ export default function ImageStockPickerModal({
               );
             })}
           </div>
+
+          {/* Bunny Folder Breadcrumbs Bar (if in Bunny tab) */}
+          {activeCategory === 'bunny' && (
+            <div className="flex items-center justify-between p-2 rounded-xl bg-slate-950/80 border border-slate-800 text-xs">
+              <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none font-mono">
+                <button
+                  type="button"
+                  onClick={() => navigateToFolder('')}
+                  className={`px-2 py-0.5 rounded-lg flex items-center gap-1 font-bold ${
+                    !bunnyFolder ? 'bg-amber-500 text-slate-950' : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                  }`}
+                >
+                  <span>🏠 ראשי (Root)</span>
+                </button>
+
+                {folderBreadcrumbs.map((crumb, idx) => {
+                  const currentPath = folderBreadcrumbs.slice(0, idx + 1).join('/');
+                  const isLast = idx === folderBreadcrumbs.length - 1;
+                  return (
+                    <React.Fragment key={crumb}>
+                      <span className="text-slate-600">/</span>
+                      <button
+                        type="button"
+                        onClick={() => navigateToFolder(currentPath)}
+                        className={`px-2 py-0.5 rounded-lg font-bold ${
+                          isLast ? 'bg-amber-500 text-slate-950' : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                        }`}
+                      >
+                        📁 {crumb}
+                      </button>
+                    </React.Fragment>
+                  );
+                })}
+              </div>
+
+              {bunnyFolder && (
+                <button
+                  type="button"
+                  onClick={navigateUp}
+                  className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold flex items-center gap-1 shrink-0"
+                >
+                  <span>⬆️ תיקייה למעלה</span>
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* INLINE BUNNY CDN CONFIGURATION DRAWER */}
+          {activeCategory === 'bunny' && showConfigSettings && (
+            <div className="p-4 rounded-2xl bg-slate-900 border border-amber-500/40 space-y-3 animate-in fade-in">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                <span className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
+                  <HardDrive className="w-4 h-4 text-amber-400" />
+                  <span>הגדרות חיבור ל-Bunny Storage & CDN:</span>
+                </span>
+                <span className="text-[10px] text-slate-400">הפרטים נשמרים מקומית בדפדפן</span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-300 block">Storage Zone Name:</label>
+                  <input
+                    type="text"
+                    value={editZoneName}
+                    onChange={(e) => setEditZoneName(e.target.value)}
+                    placeholder="שם ה-Storage Zone (למשל: mypodcast)"
+                    className="w-full p-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-300 block">Access Key (Password):</label>
+                  <input
+                    type="password"
+                    value={editAccessKey}
+                    onChange={(e) => setEditAccessKey(e.target.value)}
+                    placeholder="סיסמת ה-Access Key"
+                    className="w-full p-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white font-mono"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-300 block">Pull Zone Domain (אופציונלי):</label>
+                  <input
+                    type="text"
+                    value={editPullDomain}
+                    onChange={(e) => setEditPullDomain(e.target.value)}
+                    placeholder="mypodcast.b-cdn.net"
+                    className="w-full p-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-300 block">Storage Region:</label>
+                  <select
+                    value={editRegion}
+                    onChange={(e) => setEditRegion(e.target.value)}
+                    className="w-full p-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
+                  >
+                    <option value="">גרמניה / גלובלי (Main)</option>
+                    <option value="uk">לונדון (UK)</option>
+                    <option value="ny">ניו יורק (US East - NY)</option>
+                    <option value="la">לוס אנג'לס (US West - LA)</option>
+                    <option value="sg">סינגפור (Singapore)</option>
+                    <option value="syd">סידני (Sydney)</option>
+                    <option value="se">שטוקהולם (Stockholm)</option>
+                    <option value="jh">יוהנסבורג (Johannesburg)</option>
+                    <option value="br">סאו פאולו (Sao Paulo)</option>
+                  </select>
+                </div>
+              </div>
+
+              {configSuccessMsg && (
+                <div className="p-2 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs font-bold text-center">
+                  ✓ {configSuccessMsg}
+                </div>
+              )}
+
+              {bunnyError && (
+                <div className="p-2 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs font-bold text-center">
+                  ⚠️ {bunnyError}
+                </div>
+              )}
+
+              <div className="flex justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setShowConfigSettings(false)}
+                  className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold"
+                >
+                  סגור
+                </button>
+                <button
+                  type="button"
+                  disabled={isTestingConfig}
+                  onClick={handleSaveAndTestBunny}
+                  className="px-4 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black text-xs font-black shadow-lg transition-all disabled:opacity-50 flex items-center gap-1.5"
+                >
+                  {isTestingConfig ? <RotateCw className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                  <span>{isTestingConfig ? 'בודק חיבור...' : 'שמור ובדוק חיבור ✓'}</span>
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Images Grid Container */}
@@ -480,115 +718,161 @@ export default function ImageStockPickerModal({
                 <div className="py-16 px-6 text-center rounded-2xl bg-slate-900/50 border border-slate-800 space-y-4 max-w-md mx-auto">
                   <HardDrive className="w-12 h-12 mx-auto text-amber-400" />
                   <div className="space-y-1">
-                    <h4 className="text-sm font-bold text-white">חיבור Bunny.net אינו מוגדר עדיין</h4>
+                    <h4 className="text-sm font-bold text-white">הגדרות Bunny.net עדיין לא הוזנו</h4>
                     <p className="text-xs text-slate-400">
-                      הזינו את פרטי ה-Storage Zone ומפתח ה-Access Key בהגדרות כדי למשוך ולהוריד את כל קבצי המדיה שלכם ישירות לתוך האולפן.
+                      הזינו את שם ה-Storage Zone ומפתח ה-Access Key כדי לגשת לכל קבצי המדיה והפוסטרים שהעליתם.
                     </p>
                   </div>
                   <button
-                    onClick={() => {
-                      onClose();
-                      // Event to open Cloud Integrations Modal
-                      window.dispatchEvent(new CustomEvent('open-cloud-modal'));
-                    }}
-                    className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs shadow-lg transition-all"
+                    onClick={() => setShowConfigSettings(true)}
+                    className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-black text-xs shadow-lg transition-all"
                   >
-                    הגדרת BunnyCDN עכשיו
+                    ⚙️ פתח הגדרות BunnyCDN
                   </button>
                 </div>
               ) : isLoadingBunny ? (
                 <div className="py-20 text-center text-slate-400 space-y-3">
                   <div className="w-10 h-10 border-4 border-amber-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
-                  <p className="text-xs font-semibold text-amber-300">מושך את התמונות מ-Bunny Storage Zone ({bunnyConfig.storageZoneName})...</p>
+                  <p className="text-xs font-semibold text-amber-300">מושך את הקבצים מ-Bunny Storage Zone ({bunnyConfig.storageZoneName})...</p>
                 </div>
               ) : bunnyError ? (
                 <div className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs flex items-center justify-between">
                   <span>{bunnyError}</span>
-                  <button 
-                    onClick={() => loadBunnyFiles(bunnyConfig, bunnyFolder)}
-                    className="px-3 py-1 bg-rose-500/20 hover:bg-rose-500/30 rounded-lg font-bold"
-                  >
-                    נסה שוב
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button 
+                      onClick={() => setShowConfigSettings(true)}
+                      className="px-3 py-1 bg-amber-500 text-black rounded-lg font-bold"
+                    >
+                      ⚙️ ערוך הגדרות
+                    </button>
+                    <button 
+                      onClick={() => loadBunnyFiles(bunnyConfig, bunnyFolder)}
+                      className="px-3 py-1 bg-rose-500/20 hover:bg-rose-500/30 rounded-lg font-bold"
+                    >
+                      נסה שוב
+                    </button>
+                  </div>
                 </div>
               ) : filteredBunnyFiles.length > 0 ? (
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
-                  {filteredBunnyFiles.map((file) => (
-                    <div
-                      key={file.guid}
-                      className="group relative rounded-2xl overflow-hidden border border-slate-800 bg-slate-900 hover:border-amber-500/80 transition-all flex flex-col shadow-lg"
-                    >
-                      {/* Image Thumbnail */}
-                      <div 
-                        onClick={() => {
-                          onSelectImage(file.cdnUrl, file.name.replace(/\.[^/.]+$/, ''));
-                          onClose();
-                        }}
-                        className="aspect-[3/4] w-full relative bg-black overflow-hidden cursor-pointer"
+                  {filteredBunnyFiles.map((file) => {
+                    // DIRECTORY CARD
+                    if (file.isDirectory) {
+                      return (
+                        <div
+                          key={file.guid}
+                          onClick={() => navigateToFolder(file.path)}
+                          className="group rounded-2xl overflow-hidden border border-amber-500/30 bg-slate-900 hover:bg-slate-850 hover:border-amber-400 p-4 transition-all flex flex-col items-center justify-center text-center cursor-pointer shadow-lg aspect-[3/4] space-y-2.5"
+                        >
+                          <div className="w-14 h-14 rounded-2xl bg-amber-500/20 text-amber-400 flex items-center justify-center group-hover:scale-110 transition-transform">
+                            <FolderOpen className="w-8 h-8" />
+                          </div>
+                          <div className="space-y-1">
+                            <p className="text-xs font-bold text-white group-hover:text-amber-300 truncate max-w-[130px]" title={file.name}>
+                              {file.name}
+                            </p>
+                            <span className="text-[10px] text-amber-400 font-bold block">תיקייה (לחץ לפתיחה)</span>
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    // FILE / IMAGE CARD
+                    return (
+                      <div
+                        key={file.guid}
+                        className="group relative rounded-2xl overflow-hidden border border-slate-800 bg-slate-900 hover:border-amber-500/80 transition-all flex flex-col shadow-lg"
                       >
-                        <img
-                          src={file.cdnUrl}
-                          alt={file.name}
-                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                          loading="lazy"
-                        />
-                        <span className="absolute top-2 right-2 px-2 py-0.5 rounded-full bg-black/75 backdrop-blur-md text-[10px] font-bold text-amber-300 border border-amber-400/30">
-                          🐰 BunnyCDN
-                        </span>
+                        {/* Image Thumbnail */}
+                        <div 
+                          onClick={() => {
+                            onSelectImage(file.cdnUrl, file.name.replace(/\.[^/.]+$/, ''));
+                            onClose();
+                          }}
+                          className="aspect-[3/4] w-full relative bg-black overflow-hidden cursor-pointer flex items-center justify-center"
+                        >
+                          {file.isImage ? (
+                            <img
+                              src={file.cdnUrl}
+                              alt={file.name}
+                              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                              loading="lazy"
+                            />
+                          ) : (
+                            <div className="text-center p-3 space-y-1">
+                              <ImageIcon className="w-10 h-10 mx-auto text-slate-500" />
+                              <span className="text-[10px] font-mono text-slate-400 block truncate max-w-[110px]">{file.name}</span>
+                            </div>
+                          )}
 
-                        {/* Hover Overlay with Select */}
-                        <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end justify-center p-3">
-                          <span className="px-3 py-1.5 rounded-xl bg-amber-500 text-black text-xs font-black shadow-lg flex items-center gap-1">
-                            <Check className="w-3.5 h-3.5" />
-                            <span>בחר פוסטר לאולפן</span>
+                          <span className="absolute top-2 right-2 px-2 py-0.5 rounded-full bg-black/75 backdrop-blur-md text-[10px] font-bold text-amber-300 border border-amber-400/30">
+                            🐰 BunnyCDN
                           </span>
+
+                          {/* Hover Overlay with Select */}
+                          <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end justify-center p-3">
+                            <span className="px-3 py-1.5 rounded-xl bg-amber-500 text-black text-xs font-black shadow-lg flex items-center gap-1">
+                              <Check className="w-3.5 h-3.5" />
+                              <span>בחר פוסטר זה</span>
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* File Details & Download Actions Bar */}
+                        <div className="p-3 bg-slate-900 border-t border-slate-800/80 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <p className="text-xs font-bold text-white truncate max-w-[130px]" title={file.name}>
+                              {file.name}
+                            </p>
+                            <span className="text-[10px] text-slate-400 font-mono">
+                              {file.size > 0 ? `${(file.size / 1024).toFixed(0)} KB` : ''}
+                            </span>
+                          </div>
+
+                          {/* Download & Copy Buttons */}
+                          <div className="flex items-center gap-1.5 pt-1 border-t border-slate-800/60">
+                            <button
+                              onClick={(e) => handleDownloadImage(e, file.cdnUrl, file.name)}
+                              className="flex-1 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-bold flex items-center justify-center gap-1 transition-colors"
+                              title="הורד קובץ תמונה למחשב"
+                            >
+                              <Download className="w-3 h-3 text-amber-400" />
+                              <span>הורדה</span>
+                            </button>
+
+                            <button
+                              onClick={(e) => handleCopyLink(e, file.cdnUrl)}
+                              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
+                              title="העתק קישור CDN"
+                            >
+                              {copiedUrl === file.cdnUrl ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                            </button>
+                          </div>
                         </div>
                       </div>
-
-                      {/* File Details & Download Actions Bar */}
-                      <div className="p-3 bg-slate-900 border-t border-slate-800/80 space-y-2">
-                        <div className="flex items-center justify-between">
-                          <p className="text-xs font-bold text-white truncate max-w-[130px]" title={file.name}>
-                            {file.name}
-                          </p>
-                          <span className="text-[10px] text-slate-400 font-mono">
-                            {file.size > 0 ? `${(file.size / 1024).toFixed(0)} KB` : ''}
-                          </span>
-                        </div>
-
-                        {/* Download & Copy Buttons */}
-                        <div className="flex items-center gap-1.5 pt-1 border-t border-slate-800/60">
-                          <button
-                            onClick={(e) => handleDownloadImage(e, file.cdnUrl, file.name)}
-                            className="flex-1 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-bold flex items-center justify-center gap-1 transition-colors"
-                            title="הורד קובץ תמונה למחשב"
-                          >
-                            <Download className="w-3 h-3 text-amber-400" />
-                            <span>הורדה</span>
-                          </button>
-
-                          <button
-                            onClick={(e) => handleCopyLink(e, file.cdnUrl)}
-                            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
-                            title="העתק קישור CDN"
-                          >
-                            {copiedUrl === file.cdnUrl ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               ) : (
                 <div className="py-16 text-center text-slate-500 space-y-3">
                   <ImageIcon className="w-10 h-10 mx-auto text-slate-600" />
-                  <p className="text-xs">לא נמצאו תמונות בתיקייה זו ב-Bunny Storage Zone.</p>
-                  <button
-                    onClick={() => bunnyUploadRef.current?.click()}
-                    className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold transition-all"
-                  >
-                    העלו תמונה ראשונה ל-BunnyCDN
-                  </button>
+                  <p className="text-xs">לא נמצאו קבצים בתיקייה זו ב-Bunny Storage Zone.</p>
+                  <div className="flex items-center justify-center gap-2">
+                    <button
+                      onClick={() => bunnyUploadRef.current?.click()}
+                      className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-black text-xs font-bold transition-all"
+                    >
+                      העלו תמונה עכשיו ל-BunnyCDN
+                    </button>
+                    {bunnyFolder && (
+                      <button
+                        onClick={() => navigateToFolder('')}
+                        className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold transition-all"
+                      >
+                        חזרה לתיקייה הראשית
+                      </button>
+                    )}
+                  </div>
                 </div>
               )}
             </div>

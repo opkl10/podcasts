@@ -70,18 +70,28 @@ export interface RecordingMetadata {
 
 export interface SubtitleStyle {
   fontFamily?: string;
-  fontSize?: number; // in px (14 - 48)
+  fontSize?: number; // in px (14 - 56)
+  fontWeight?: 'normal' | '500' | 'bold' | '800' | '900';
   textColor?: string;
   backgroundColor?: string;
+  backgroundOpacity?: number; // 0 - 100
   strokeColor?: string;
   strokeWidth?: number;
+  textShadow?: 'none' | 'soft' | 'hard-outline' | 'neon-glow' | 'cinema-blur';
+  shadowColor?: string;
+  shadowBlur?: number;
   highlightWordColor?: string;
+  activeWordAnimation?: 'none' | 'color-pop' | 'glow' | 'bounce' | 'background-box';
+  textAlign?: 'right' | 'center' | 'left';
   positionY?: 'bottom' | 'center' | 'top' | number; // percentage from top (10 - 90)
-  boxStyle?: 'none' | 'rounded-badge' | 'full-bar' | 'shadow-glow';
+  positionPreset?: 'bottom-low' | 'bottom-standard' | 'center' | 'top-banner';
+  boxStyle?: 'none' | 'rounded-badge' | 'full-bar' | 'shadow-glow' | 'glassmorphism' | 'pill-badge';
   isBold?: boolean;
   isUppercase?: boolean;
   letterSpacing?: number;
-  animation?: 'none' | 'karaoke-pop' | 'fade' | 'bounce';
+  lineHeight?: number;
+  animation?: 'none' | 'karaoke-pop' | 'fade' | 'bounce' | 'slide-up' | 'zoom-in';
+  themePreset?: string;
 }
 
 export interface SubtitleItem {
@@ -102,6 +112,8 @@ export interface Episode {
   status: EpisodeStatus;
   mediaType?: 'video' | 'audio_only'; // תמיכה בפרק וידאו או אודיו בלבד
   description: string;
+  hostName?: string; // שם המגיש / מנחה
+  host?: { name: string; role?: string; avatar?: string };
   guest?: GuestInfo;
   targetDurationMinutes: number;
   createdAt: string;
@@ -113,6 +125,7 @@ export interface Episode {
   subtitleStyle?: SubtitleStyle;
   coverImage?: string;
   tags?: string[];
+  audiogramStudioConfig?: AudiogramStudioConfig;
 }
 
 export interface AudioInputDevice {
@@ -128,8 +141,13 @@ export interface VideoInputDevice {
 }
 
 export type FactCategory = 
+  | 'plot'                // 🎬 עלילה וסיפור הסרט
+  | 'cast'                // 🎭 שחקנים ודמויות
+  | 'production_crew'     // 🎥 צוותי הפקה + בימוי ויתר התפקידים
+  | 'reviews'             // ⭐ ביקורות כלליות
+  | 'behind_the_scenes'   // 🤫 סיפורי מאחורי הקלעים
+  // Compatibility fallbacks:
   | 'trivia' 
-  | 'behind_the_scenes' 
   | 'box_office' 
   | 'critical_reception' 
   | 'easter_egg' 
@@ -159,6 +177,27 @@ export interface ElementTransform {
   scale: number;  // scale factor (0.5 - 2.5)
 }
 
+export interface CustomOverlayStyle {
+  fontFamily?: string;
+  fontSize?: number; // in px (Primary text size, e.g. Host Name / Title / Quote)
+  fontWeight?: 'normal' | '500' | 'bold' | '800' | '900';
+  textColor?: string;
+  secondaryFontSize?: number; // in px (Secondary text size, e.g. Host Role / Episode Number / Speaker / Source)
+  secondaryTextColor?: string;
+  secondaryFontWeight?: 'normal' | '500' | 'bold' | '800' | '900';
+  backgroundColor?: string;
+  backgroundOpacity?: number; // 0 to 100
+  borderColor?: string;
+  borderWidth?: number; // 0 to 8 px
+  borderRadius?: number; // 0 to 40 px
+  glowColor?: string;
+  glowBlur?: number; // 0 to 30 px
+  padding?: number; // 4 to 32 px
+  textAlign?: 'right' | 'center' | 'left';
+  boxShadow?: string;
+  badgeStyle?: 'rounded-badge' | 'pill-badge' | 'glassmorphism' | 'full-bar' | 'none';
+}
+
 export interface LiveOverlayState {
   isLayoutEditMode?: boolean;
   poster: {
@@ -167,12 +206,14 @@ export interface LiveOverlayState {
     title?: string;
     caption?: string;
     transform: ElementTransform;
+    customStyle?: CustomOverlayStyle;
   };
   quote: {
     show: boolean;
     text: string;
     speaker?: string;
     transform: ElementTransform;
+    customStyle?: CustomOverlayStyle;
   };
   rating: {
     show: boolean;
@@ -180,17 +221,20 @@ export interface LiveOverlayState {
     rottenTomatoes?: string;
     personalScore?: string;
     transform: ElementTransform;
+    customStyle?: CustomOverlayStyle;
   };
   customBanner: {
     show: boolean;
     title: string;
     subtitle?: string;
     transform: ElementTransform;
+    customStyle?: CustomOverlayStyle;
   };
   spoilerAlert: {
     show: boolean;
     text?: string;
     transform: ElementTransform;
+    customStyle?: CustomOverlayStyle;
   };
   logo: {
     show: boolean;
@@ -199,10 +243,96 @@ export interface LiveOverlayState {
     positionPreset?: 'top-right' | 'top-left' | 'top-center' | 'bottom-right' | 'bottom-left' | 'bottom-center';
     size?: number; // width/height in px (40 - 200)
     transform: ElementTransform;
+    customStyle?: CustomOverlayStyle;
   };
   factCard?: {
     show: boolean;
     fact: MovieFactCard | null;
     transform: ElementTransform;
+    customStyle?: CustomOverlayStyle;
   };
+}
+
+export interface AudiogramStudioConfig {
+  aspectRatio: '16:9' | '9:16' | '1:1';
+  bgType: 'preset' | 'image' | 'solid';
+  selectedBgPreset: string;
+  customBgImage: string;
+  bgDim: number;
+  solidColor: string;
+  ambientVignette: boolean;
+
+  waveformStyle: string;
+  waveformColorMode: 'gradient' | 'single';
+  singleColor: string;
+  selectedGradient: string;
+  customGradStart: string;
+  customGradEnd: string;
+  waveformPosition: 'center' | 'bottom' | 'top' | 'custom';
+  waveformCustomY: number;
+  waveformHeight: number;
+  waveformSensitivity: number;
+
+  trimStart: number;
+  trimEnd: number;
+
+  showLogo: boolean;
+  logoUrl?: string;
+  logoSize?: number;
+  logoOpacity?: number;
+  logoTransform: ElementTransform;
+
+  showHostTag: boolean;
+  hostName: string;
+  hostRole: string;
+  hostTransform: ElementTransform;
+  hostCustomStyle: CustomOverlayStyle;
+
+  showFactOverlay: boolean;
+  factTransform: ElementTransform;
+  factCustomStyle: CustomOverlayStyle;
+
+  showQuoteOverlay: boolean;
+  quoteText: string;
+  quoteSpeaker: string;
+  quoteTransform: ElementTransform;
+  quoteCustomStyle: CustomOverlayStyle;
+
+  showBannerOverlay: boolean;
+  bannerSubtitle: string;
+  episodeTitleText: string;
+  bannerTransform: ElementTransform;
+  bannerCustomStyle: CustomOverlayStyle;
+
+  showRatingOverlay: boolean;
+  imdbScore: string;
+  rottenScore: string;
+  personalScore: string;
+  ratingTransform: ElementTransform;
+  ratingCustomStyle: CustomOverlayStyle;
+
+  showSpoilerOverlay: boolean;
+  spoilerText: string;
+  spoilerTransform: ElementTransform;
+  spoilerCustomStyle: CustomOverlayStyle;
+
+  showPosterPip: boolean;
+  posterUrl: string;
+  posterShape: 'rounded_square' | 'rectangle' | 'circle';
+  posterTransform: ElementTransform;
+  posterCustomStyle: CustomOverlayStyle;
+
+  showSubtitles: boolean;
+  subtitleTransform: ElementTransform;
+  subtitleCustomStyle: CustomOverlayStyle;
+
+  savedAt?: string;
+  templateName?: string;
+}
+
+export interface AudiogramStudioTemplate {
+  id: string;
+  name: string;
+  createdAt: string;
+  config: Partial<AudiogramStudioConfig>;
 }

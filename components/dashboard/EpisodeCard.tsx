@@ -15,7 +15,8 @@ import {
   Sparkles,
   CheckCircle,
   AlertCircle,
-  Radio
+  Radio,
+  Subtitles
 } from 'lucide-react';
 import { formatTime, getPodcastById } from '@/lib/storage';
 
@@ -160,22 +161,34 @@ export default function EpisodeCard({ episode, onDelete }: EpisodeCardProps) {
       </div>
 
       {/* Action Buttons */}
-      <div className="grid grid-cols-2 gap-2 pt-2">
-        <Link
-          href={`/episodes/${episode.id}`}
-          className="flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl bg-slate-800/80 hover:bg-slate-700/80 text-xs font-semibold text-slate-200 hover:text-white border border-slate-700/50 transition-all text-center"
-        >
-          <BookOpen className="w-3.5 h-3.5 text-indigo-400" />
-          מחקר ואג'נדה
-        </Link>
+      <div className="space-y-2 pt-2">
+        <div className="grid grid-cols-2 gap-2">
+          <Link
+            href={`/episodes/${episode.id}`}
+            className="flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl bg-slate-800/80 hover:bg-slate-700/80 text-xs font-semibold text-slate-200 hover:text-white border border-slate-700/50 transition-all text-center"
+          >
+            <BookOpen className="w-3.5 h-3.5 text-indigo-400" />
+            מחקר ואג'נדה
+          </Link>
 
-        <Link
-          href={`/episodes/${episode.id}/studio`}
-          className="flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl bg-gradient-to-r from-red-600 via-rose-600 to-pink-600 hover:from-red-500 hover:to-pink-500 text-xs font-semibold text-white shadow-md shadow-red-950/40 hover:shadow-red-900/60 transition-all text-center group/btn"
-        >
-          <Mic className="w-3.5 h-3.5 group-hover/btn:animate-pulse" />
-          כניסה לאולפן
-        </Link>
+          <Link
+            href={`/episodes/${episode.id}/studio`}
+            className="flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl bg-gradient-to-r from-red-600 via-rose-600 to-pink-600 hover:from-red-500 hover:to-pink-500 text-xs font-semibold text-white shadow-md shadow-red-950/40 hover:shadow-red-900/60 transition-all text-center group/btn"
+          >
+            <Mic className="w-3.5 h-3.5 group-hover/btn:animate-pulse" />
+            כניסה לאולפן
+          </Link>
+        </div>
+
+        {Boolean(episode.recording || episode.subtitles?.length) && (
+          <Link
+            href={`/episodes/${episode.id}/subtitles`}
+            className="w-full flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl bg-purple-950/40 hover:bg-purple-900/50 border border-purple-800/40 text-purple-300 hover:text-white text-xs font-bold transition-all text-center"
+          >
+            <Subtitles className="w-3.5 h-3.5 text-purple-400" />
+            <span>אולפן כתוביות ותרגום AI</span>
+          </Link>
+        )}
       </div>
     </div>
   );

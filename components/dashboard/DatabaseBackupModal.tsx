@@ -1,8 +1,9 @@
 'use client';
 
 import React, { useState, useRef } from 'react';
-import { Database, Download, Upload, CheckCircle2, AlertCircle, RefreshCw, X, ShieldCheck, HardDrive } from 'lucide-react';
-import { syncWithServerDatabase } from '@/lib/storage';
+import { Database, Download, Upload, CheckCircle2, AlertCircle, RefreshCw, X, ShieldCheck, HardDrive, Sparkles, Music, Film, CheckSquare, Square } from 'lucide-react';
+import { getEpisodes, getPodcasts, saveEpisodes, savePodcasts, getPermanentLogo, savePermanentLogo, syncWithServerDatabase, getAllMediaBlobs, restoreAllMediaBlobs } from '@/lib/storage';
+import { getAISettings, saveAISettings } from '@/lib/apiConfig';
 
 interface DatabaseBackupModalProps {
   isOpen: boolean;
@@ -17,30 +18,87 @@ export default function DatabaseBackupModal({
 }: DatabaseBackupModalProps) {
   const [isExporting, setIsExporting] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
+  const [includeMedia, setIncludeMedia] = useState(true);
   const [statusMsg, setStatusMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   if (!isOpen) return null;
 
-  // 1. Export Full Database Backup JSON
+  // 1. Export 100% Complete Master Backup JSON (With Audio Blobs)
   const handleDownloadBackup = async () => {
     try {
       setIsExporting(true);
-      setStatusMsg(null);
-      const res = await fetch('/api/db/backup');
-      if (!res.ok) throw new Error('שגיאה ביצירת קובץ הגיבוי');
+      setStatusMsg({ type: 'success', text: 'אוסף נתוני פרקים וממיר קובצי שמע מוקלטים...' });
 
-      const blob = await res.blob();
+      const episodes = getEpisodes();
+      const podcasts = getPodcasts();
+      const logo = getPermanentLogo();
+      const aiSettings = getAISettings();
+      let customFonts = [];
+      let cloudSettings = {};
+
+      try {
+        customFonts = JSON.parse(localStorage.getItem('castflow_custom_fonts_v1') || '[]');
+      } catch {}
+
+      try {
+        cloudSettings = JSON.parse(localStorage.getItem('bunny_storage_config_v1') || '{}');
+      } catch {}
+
+      let mediaFiles: Record<string, { base64: string; mimeType: string; size: number }> = {};
+      if (includeMedia) {
+        mediaFiles = await getAllMediaBlobs();
+      }
+
+      const mediaCount = Object.keys(mediaFiles).length;
+
+      const fullBackupPayload = {
+        version: 2,
+        appName: 'CastFlow Podcast Studio Pro',
+        backupDate: new Date().toISOString(),
+        totalEpisodes: episodes.length,
+        totalPodcasts: podcasts.length,
+        totalMediaFiles: mediaCount,
+        episodes,
+        podcasts,
+        permanentLogo: logo,
+        aiSettings,
+        customFonts,
+        cloudSettings,
+        mediaFiles
+      };
+
+      // Also sync to server in background
+      try {
+        await fetch('/api/db/backup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            episodes,
+            podcasts,
+            permanentLogo: logo,
+            aiSettings,
+            customFonts,
+            cloudSettings
+          })
+        });
+      } catch {}
+
+      const jsonString = JSON.stringify(fullBackupPayload, null, 2);
+      const blob = new Blob([jsonString], { type: 'application/json' });
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `castflow_database_backup_${new Date().toISOString().slice(0, 10)}.json`;
+      a.download = `castflow_master_backup_${new Date().toISOString().slice(0, 10)}.json`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       window.URL.revokeObjectURL(url);
 
-      setStatusMsg({ type: 'success', text: 'קובץ הגיבוי הורד בהצלחה למחשב שלך!' });
+      setStatusMsg({ 
+        type: 'success', 
+        text: `קובץ גיבוי מאסטר מלא הורד בהצלחה! כולל ${episodes.length} פרקים, ${mediaCount} קובצי שמע מוקלטים מלאים, ו-${podcasts.length} פודקאסטים.` 
+      });
     } catch (err: any) {
       setStatusMsg({ type: 'error', text: err.message || 'שגיאה בהורדת הגיבוי' });
     } finally {
@@ -48,35 +106,75 @@ export default function DatabaseBackupModal({
     }
   };
 
-  // 2. Restore Database from JSON
+  // 2. Restore 100% Complete Database from JSON (With Audio Blobs)
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     try {
       setIsImporting(true);
-      setStatusMsg(null);
+      setStatusMsg({ type: 'success', text: 'קורא קובץ גיבוי ומשחזר פרקים והקלטות...' });
       const text = await file.text();
       const parsedData = JSON.parse(text);
 
-      const res = await fetch('/api/db/backup', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(parsedData)
-      });
+      if (!parsedData || (!Array.isArray(parsedData.episodes) && !Array.isArray(parsedData.podcasts))) {
+        throw new Error('קובץ הגיבוי אינו במבנה תקין.');
+      }
 
-      if (!res.ok) throw new Error('קובץ הגיבוי אינו תקין');
+      // Restore Episodes & Podcasts
+      if (Array.isArray(parsedData.episodes)) {
+        saveEpisodes(parsedData.episodes);
+      }
+      if (Array.isArray(parsedData.podcasts)) {
+        savePodcasts(parsedData.podcasts);
+      }
 
-      const result = await res.json();
-      await syncWithServerDatabase();
+      // Restore Logo, Fonts & Settings
+      if (parsedData.permanentLogo) {
+        savePermanentLogo(parsedData.permanentLogo);
+      }
+      if (parsedData.aiSettings) {
+        saveAISettings(parsedData.aiSettings);
+      }
+      if (Array.isArray(parsedData.customFonts)) {
+        localStorage.setItem('castflow_custom_fonts_v1', JSON.stringify(parsedData.customFonts));
+      }
+      if (parsedData.cloudSettings) {
+        localStorage.setItem('bunny_storage_config_v1', JSON.stringify(parsedData.cloudSettings));
+      }
+
+      // Restore Full Audio and Media Blobs into IndexedDB
+      let restoredMediaCount = 0;
+      if (parsedData.mediaFiles && typeof parsedData.mediaFiles === 'object') {
+        restoredMediaCount = await restoreAllMediaBlobs(parsedData.mediaFiles);
+      }
+
+      // Sync to Server
+      try {
+        await fetch('/api/db/backup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            episodes: parsedData.episodes,
+            podcasts: parsedData.podcasts,
+            permanentLogo: parsedData.permanentLogo,
+            aiSettings: parsedData.aiSettings,
+            customFonts: parsedData.customFonts,
+            cloudSettings: parsedData.cloudSettings
+          })
+        });
+      } catch {}
+
       onRefreshData();
 
+      const epCount = parsedData.episodes?.length || 0;
+      const podCount = parsedData.podcasts?.length || 0;
       setStatusMsg({
         type: 'success',
-        text: `מסד הנתונים שוחזר בהצלחה! (${result.episodesCount} פרקים ו-${result.podcastsCount} פודקאסטים).`
+        text: `מסד הנתונים וקובצי ההקלטה שוחזרו בהצלחה מלאה! נטענו ${epCount} פרקים, ${podCount} פודקאסטים ו-${restoredMediaCount} קובצי שמע מוקלטים.`
       });
     } catch (err: any) {
-      setStatusMsg({ type: 'error', text: 'שגיאה בשחזור מסד הנתונים: ודא שהקובץ תקין.' });
+      setStatusMsg({ type: 'error', text: 'שגיאה בשחזור מסד הנתונים: ' + (err.message || 'ודא שהקובץ תקין.') });
     } finally {
       setIsImporting(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -119,15 +217,48 @@ export default function DatabaseBackupModal({
 
         {/* Status Alert */}
         {statusMsg && (
-          <div className={`p-3.5 rounded-xl flex items-center gap-2.5 text-xs ${
+          <div className={`p-3.5 rounded-xl flex items-center justify-between gap-2.5 text-xs ${
             statusMsg.type === 'success' 
               ? 'bg-emerald-950/60 border border-emerald-500/50 text-emerald-300' 
               : 'bg-rose-950/60 border border-rose-500/50 text-rose-300'
           }`}>
-            {statusMsg.type === 'success' ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <AlertCircle className="w-4 h-4 shrink-0" />}
-            <span>{statusMsg.text}</span>
+            <div className="flex items-center gap-2">
+              {statusMsg.type === 'success' ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <AlertCircle className="w-4 h-4 shrink-0" />}
+              <span>{statusMsg.text}</span>
+            </div>
+            {statusMsg.type === 'success' && (
+              <button
+                onClick={() => window.location.reload()}
+                className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] shrink-0 transition-colors"
+              >
+                רענן עמוד
+              </button>
+            )}
           </div>
         )}
+
+        {/* Media Option Toggle */}
+        <div 
+          onClick={() => setIncludeMedia(!includeMedia)}
+          className="p-3 rounded-2xl bg-slate-900/90 border border-slate-800 hover:border-indigo-500/40 cursor-pointer flex items-center justify-between transition-all"
+        >
+          <div className="flex items-center gap-3">
+            <div className={`p-2 rounded-xl ${includeMedia ? 'bg-indigo-600/20 text-indigo-400' : 'bg-slate-800 text-slate-500'}`}>
+              <Music className="w-4 h-4" />
+            </div>
+            <div>
+              <p className="text-xs font-bold text-slate-200">כלול את כל קובצי ההקלטה והאודיו (Full Audio Media)</p>
+              <p className="text-[11px] text-slate-400">אורז את כל קובצי השמע והווידאו של הפרקים לתוך הגיבוי</p>
+            </div>
+          </div>
+          <div>
+            {includeMedia ? (
+              <CheckSquare className="w-5 h-5 text-indigo-400" />
+            ) : (
+              <Square className="w-5 h-5 text-slate-600" />
+            )}
+          </div>
+        </div>
 
         {/* Actions Grid */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">

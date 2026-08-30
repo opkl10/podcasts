@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { Episode, PodcastShow } from '@/lib/types';
-import { getEpisodes, getPodcasts, saveEpisode, deleteEpisode } from '@/lib/storage';
+import { getEpisodes, getPodcasts, saveEpisode, deleteEpisode, saveMediaBlob } from '@/lib/storage';
 import StatsOverview from '@/components/dashboard/StatsOverview';
 import EpisodeCard from '@/components/dashboard/EpisodeCard';
 import PodcastManagerModal from '@/components/dashboard/PodcastManagerModal';
@@ -29,7 +29,8 @@ import {
   Cloud,
   FolderArchive,
   Subtitles,
-  Activity
+  Activity,
+  Upload
 } from 'lucide-react';
 
 export default function DashboardPage() {
@@ -46,6 +47,78 @@ export default function DashboardPage() {
   const [isDbModalOpen, setIsDbModalOpen] = useState(false);
   const [isCloudModalOpen, setIsCloudModalOpen] = useState(false);
   const [isLoaded, setIsLoaded] = useState(false);
+  const importAudioFileInputRef = React.useRef<HTMLInputElement>(null);
+
+  const handleImportAudioAsNewEpisode = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const cleanTitle = file.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
+      const epId = `ep_${Date.now()}`;
+      const blobKey = `rec_uploaded_${epId}_${Date.now()}`;
+      await saveMediaBlob(blobKey, file);
+
+      // Detect duration
+      let durationSeconds = 60;
+      try {
+        const url = URL.createObjectURL(file);
+        const tempAudio = new Audio(url);
+        await new Promise((resolve) => {
+          tempAudio.onloadedmetadata = () => {
+            durationSeconds = Math.round(tempAudio.duration) || 60;
+            resolve(true);
+          };
+          tempAudio.onerror = () => resolve(true);
+          setTimeout(() => resolve(true), 2500);
+        });
+      } catch {}
+
+      const nowIso = new Date().toISOString();
+      const newEpisode: Episode = {
+        id: epId,
+        podcastId: selectedPodcastId !== 'all' ? selectedPodcastId : (podcasts[0]?.id || 'pod-tech'),
+        title: cleanTitle || `פרק מוקלט ${new Date().toLocaleDateString('he-IL')}`,
+        description: `פרק שנוצר מייבוא קובץ שמע: ${file.name}`,
+        season: 1,
+        episodeNumber: episodes.length + 1,
+        status: 'recorded',
+        targetDurationMinutes: Math.round(durationSeconds / 60) || 30,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+        topics: [
+          {
+            id: `topic_${Date.now()}_1`,
+            title: 'נושא מרכזי מההקלטה',
+            estimatedMinutes: Math.round(durationSeconds / 60) || 30,
+            notes: 'הוקלט והועלה למערכת',
+            talkingPoints: ['דיון פודקאסט ראשי'],
+            questions: ['מהם עיקרי הדברים שנאמרו בפרק?'],
+            resources: [],
+            completed: true,
+            order: 1
+          }
+        ],
+        subtitles: [],
+        movieFacts: [],
+        recording: {
+          recordedAt: new Date().toISOString(),
+          duration: durationSeconds,
+          audioBlobKey: blobKey,
+          markers: [],
+          topicsCovered: []
+        }
+      };
+
+      saveEpisode(newEpisode);
+      setEpisodes(prev => [newEpisode, ...prev]);
+      alert(`הפרק "${newEpisode.title}" נוצר בהצלחה עם קובץ השמע! הפרק מוכן לעריכת סאונד ב-Audiogram Studio, כתוביות AI ושיתוף.`);
+    } catch (err: any) {
+      alert('שגיאה בייבוא קובץ השמע: ' + err.message);
+    } finally {
+      if (importAudioFileInputRef.current) importAudioFileInputRef.current.value = '';
+    }
+  };
 
   useEffect(() => {
     const episodesData = getEpisodes();
@@ -125,13 +198,33 @@ export default function DashboardPage() {
           </div>
 
           <div className="flex flex-wrap sm:flex-col gap-3 shrink-0">
-            <Link
-              href="/episodes/new"
-              className="flex items-center justify-center gap-2 px-6 py-3.5 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold text-sm shadow-xl shadow-indigo-600/30 hover:scale-[1.02] active:scale-95 transition-all"
-            >
-              <PlusCircle className="w-5 h-5" />
-              <span>יצירת פרק חדש</span>
-            </Link>
+            {/* Hidden Input for Instant Audio Import */}
+            <input
+              ref={importAudioFileInputRef}
+              type="file"
+              accept="audio/*,video/*,.mp3,.wav,.m4a,.webm,.ogg"
+              onChange={handleImportAudioAsNewEpisode}
+              className="hidden"
+            />
+
+            <div className="flex items-center gap-2">
+              <Link
+                href="/episodes/new"
+                className="flex-1 flex items-center justify-center gap-2 px-5 py-3.5 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold text-sm shadow-xl shadow-indigo-600/30 hover:scale-[1.02] active:scale-95 transition-all text-center whitespace-nowrap"
+              >
+                <PlusCircle className="w-5 h-5" />
+                <span>יצירת פרק חדש</span>
+              </Link>
+
+              <button
+                onClick={() => importAudioFileInputRef.current?.click()}
+                className="flex items-center justify-center gap-1.5 px-4 py-3.5 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 hover:text-white border border-emerald-500/40 font-bold text-xs shadow-lg transition-all active:scale-95 whitespace-nowrap"
+                title="העלאת קובץ שמע מוקלט (MP3/WAV/M4A) ליצירת פרק מוכן באופן מיידי"
+              >
+                <Upload className="w-4 h-4 text-emerald-400" />
+                <span>העלאת הקלטה</span>
+              </button>
+            </div>
 
             <div className="flex items-center gap-2">
               <button
@@ -200,6 +293,7 @@ export default function DashboardPage() {
           podcasts={podcasts}
           onOpenSubtitles={(ep) => setSubtitleEpisode(ep)}
           onOpenAudiogram={(ep) => setAudiogramEpisode(ep)}
+          onDeleteEpisode={(id) => setEpisodes(prev => prev.filter(e => e.id !== id))}
         />
       ) : (
         <>

@@ -143,6 +143,92 @@ export async function convertBlobToSpeechMonoWav(blob: Blob, targetSampleRate = 
   }
 }
 
+export interface AudioChunk {
+  blob: Blob;
+  startSec: number;
+  endSec: number;
+  durationSec: number;
+  index: number;
+  total: number;
+}
+
+// Convert Blob directly to base64 string
+export function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      resolve(reader.result as string);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+// Slice long Audio/Video Blob into 16kHz Mono WAV Chunks (Supports 20+, 60+, 120+ minute podcasts!)
+export async function sliceAudioBlobIntoChunks(
+  blob: Blob,
+  chunkDurationSec: number = 120, // 2-minute chunks (safely ~3.8 MB each)
+  targetSampleRate = 16000
+): Promise<AudioChunk[]> {
+  const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+  const audioContext = new AudioCtx();
+  const arrayBuffer = await blob.arrayBuffer();
+  const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+  await audioContext.close();
+
+  const totalDuration = audioBuffer.duration;
+  const numChunks = Math.max(1, Math.ceil(totalDuration / chunkDurationSec));
+  const chunks: AudioChunk[] = [];
+
+  for (let i = 0; i < numChunks; i++) {
+    const startSec = i * chunkDurationSec;
+    const endSec = Math.min(totalDuration, (i + 1) * chunkDurationSec);
+    const duration = endSec - startSec;
+
+    if (duration <= 0.2) continue;
+
+    const startSample = Math.floor(startSec * audioBuffer.sampleRate);
+    const endSample = Math.min(audioBuffer.length, Math.floor(endSec * audioBuffer.sampleRate));
+    const sampleLength = endSample - startSample;
+
+    const offlineCtx = new OfflineAudioContext(
+      1,
+      Math.ceil(duration * targetSampleRate),
+      targetSampleRate
+    );
+
+    const sliceBuffer = offlineCtx.createBuffer(
+      audioBuffer.numberOfChannels,
+      sampleLength,
+      audioBuffer.sampleRate
+    );
+
+    for (let c = 0; c < audioBuffer.numberOfChannels; c++) {
+      const channelData = audioBuffer.getChannelData(c).subarray(startSample, endSample);
+      sliceBuffer.copyToChannel(channelData, c, 0);
+    }
+
+    const source = offlineCtx.createBufferSource();
+    source.buffer = sliceBuffer;
+    source.connect(offlineCtx.destination);
+    source.start(0);
+
+    const resampledBuffer = await offlineCtx.startRendering();
+    const chunkBlob = audioBufferToWav(resampledBuffer, true);
+
+    chunks.push({
+      blob: chunkBlob,
+      startSec,
+      endSec,
+      durationSec: duration,
+      index: i,
+      total: numChunks
+    });
+  }
+
+  return chunks;
+}
+
 // Format seconds into SRT Timestamp (00:00:00,000)
 export function formatSrtTimestamp(seconds: number): string {
   const h = Math.floor(seconds / 3600);
@@ -428,31 +514,137 @@ export function smartRebalanceSubtitles(
   return newSubtitles.sort((a, b) => a.startTime - b.startTime);
 }
 
+// Split a single subtitle card at a specific word index
+export function splitSubtitleItemAtWordIndex(sub: SubtitleItem, wordIndex: number): [SubtitleItem, SubtitleItem] {
+  const words = sub.text.trim().replace(/\s+/g, ' ').split(' ');
+  const safeIndex = Math.max(1, Math.min(words.length - 1, wordIndex));
+  
+  const part1Text = words.slice(0, safeIndex).join(' ');
+  const part2Text = words.slice(safeIndex).join(' ');
+
+  const totalDuration = Math.max(0.4, sub.endTime - sub.startTime);
+  const ratio = safeIndex / words.length;
+  const splitTime = Number((sub.startTime + totalDuration * ratio).toFixed(2));
+
+  const sub1: SubtitleItem = {
+    id: `sub_split1_${Date.now()}_${Math.random().toString(36).substring(2, 5)}`,
+    startTime: sub.startTime,
+    endTime: Math.max(sub.startTime + 0.1, Number((splitTime - 0.05).toFixed(2))),
+    text: part1Text,
+    customStyle: sub.customStyle
+  };
+
+  const sub2: SubtitleItem = {
+    id: `sub_split2_${Date.now() + 1}_${Math.random().toString(36).substring(2, 5)}`,
+    startTime: splitTime,
+    endTime: sub.endTime,
+    text: part2Text,
+    customStyle: sub.customStyle
+  };
+
+  return [sub1, sub2];
+}
+
 // Split a single subtitle card right down the middle
 export function splitSubtitleItemAtMiddle(sub: SubtitleItem): [SubtitleItem, SubtitleItem] {
   const words = sub.text.trim().replace(/\s+/g, ' ').split(' ');
   const mid = Math.ceil(words.length / 2);
-  const part1Text = words.slice(0, mid).join(' ');
-  const part2Text = words.slice(mid).join(' ');
+  return splitSubtitleItemAtWordIndex(sub, mid);
+}
 
-  const totalDuration = sub.endTime - sub.startTime;
-  const midTime = Number((sub.startTime + totalDuration * 0.5).toFixed(2));
+// Semantic Sentence Splitter: Groups and splits subtitles strictly by natural punctuation (. , ? ! - :) and Hebrew conjunctions
+export function segmentSubtitlesByPunctuation(subtitles: SubtitleItem[]): SubtitleItem[] {
+  if (!subtitles || subtitles.length === 0) return [];
 
-  const sub1: SubtitleItem = {
-    id: `sub_split1_${Date.now()}`,
-    startTime: sub.startTime,
-    endTime: midTime - 0.05,
-    text: part1Text
-  };
+  const results: SubtitleItem[] = [];
 
-  const sub2: SubtitleItem = {
-    id: `sub_split2_${Date.now() + 1}`,
-    startTime: midTime,
-    endTime: sub.endTime,
-    text: part2Text
-  };
+  for (const sub of subtitles) {
+    const text = cleanAndPolishHebrewSubtitleText(sub.text);
+    // Split by punctuation marks while keeping the punctuation with the preceding sentence
+    const parts = text.split(/(?<=[.!?,\-–—:;])\s+/).filter(p => p.trim().length > 0);
 
-  return [sub1, sub2];
+    if (parts.length <= 1) {
+      results.push(sub);
+      continue;
+    }
+
+    const totalDuration = Math.max(0.6, sub.endTime - sub.startTime);
+    const totalChars = text.length || 1;
+    let currentStart = sub.startTime;
+
+    parts.forEach((part, pIdx) => {
+      const weight = Math.max(0.15, part.length / totalChars);
+      const partDuration = totalDuration * weight;
+      const partEnd = pIdx === parts.length - 1 
+        ? sub.endTime 
+        : Number((currentStart + partDuration).toFixed(2));
+
+      results.push({
+        id: `sub_punct_${Date.now()}_${pIdx}_${Math.random().toString(36).substring(2, 5)}`,
+        startTime: Number(currentStart.toFixed(2)),
+        endTime: Number(partEnd.toFixed(2)),
+        text: part.trim(),
+        customStyle: sub.customStyle
+      });
+
+      currentStart = partEnd + 0.05;
+    });
+  }
+
+  return results.sort((a, b) => a.startTime - b.startTime);
+}
+
+// Max Character Limit Segmenter: Ensures no subtitle line exceeds maxChars (e.g. 28 chars for mobile / Reels)
+export function segmentSubtitlesByMaxChars(subtitles: SubtitleItem[], maxChars: number = 30): SubtitleItem[] {
+  if (!subtitles || subtitles.length === 0) return [];
+
+  const results: SubtitleItem[] = [];
+
+  for (const sub of subtitles) {
+    const cleaned = cleanAndPolishHebrewSubtitleText(sub.text);
+    if (cleaned.length <= maxChars) {
+      results.push(sub);
+      continue;
+    }
+
+    const words = cleaned.split(' ').filter(w => w.trim().length > 0);
+    const lines: string[] = [];
+    let currentLine = '';
+
+    for (const w of words) {
+      if ((currentLine + ' ' + w).trim().length <= maxChars) {
+        currentLine = (currentLine + ' ' + w).trim();
+      } else {
+        if (currentLine) lines.push(currentLine);
+        currentLine = w;
+      }
+    }
+    if (currentLine) lines.push(currentLine);
+
+    const totalDuration = Math.max(0.6, sub.endTime - sub.startTime);
+    const totalChars = cleaned.length || 1;
+    let currentStart = sub.startTime;
+
+    lines.forEach((line, lIdx) => {
+      const weight = Math.max(0.15, line.length / totalChars);
+      const lineDuration = totalDuration * weight;
+      const lineEnd = lIdx === lines.length - 1 
+        ? sub.endTime 
+        : Number((currentStart + lineDuration).toFixed(2));
+
+      results.push({
+        id: `sub_char_${Date.now()}_${lIdx}_${Math.random().toString(36).substring(2, 5)}`,
+        startTime: Number(currentStart.toFixed(2)),
+        endTime: Number(lineEnd.toFixed(2)),
+        text: line.trim(),
+        customStyle: sub.customStyle
+      });
+
+      currentStart = lineEnd + 0.05;
+    });
+  }
+
+  return results.sort((a, b) => a.startTime - b.startTime);
 }
 
 // Merge subtitle at index with next subtitle
@@ -465,12 +657,19 @@ export function mergeSubtitleWithNext(subtitles: SubtitleItem[], index: number):
     id: current.id,
     startTime: current.startTime,
     endTime: next.endTime,
-    text: `${current.text} ${next.text}`.trim()
+    text: `${current.text} ${next.text}`.trim(),
+    customStyle: current.customStyle
   };
 
   const copy = [...subtitles];
   copy.splice(index, 2, merged);
   return copy;
+}
+
+// Merge subtitle at index with previous subtitle
+export function mergeSubtitleWithPrevious(subtitles: SubtitleItem[], index: number): SubtitleItem[] {
+  if (index <= 0 || index >= subtitles.length) return subtitles;
+  return mergeSubtitleWithNext(subtitles, index - 1);
 }
 
 // Shift all timestamps by +/- delta seconds to fix global latency / audio offset

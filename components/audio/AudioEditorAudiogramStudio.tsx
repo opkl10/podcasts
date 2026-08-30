@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Episode, SubtitleItem, MovieFactCard, ElementTransform } from '@/lib/types';
+import { Episode, SubtitleItem, MovieFactCard, ElementTransform, CustomOverlayStyle, AudiogramStudioConfig, AudiogramStudioTemplate } from '@/lib/types';
 import { getMediaBlob, saveMediaBlob, formatTime, getPermanentLogo, savePermanentLogo, saveEpisode } from '@/lib/storage';
 import { trimAudioBlob } from '@/lib/audioUtils';
 import { 
@@ -10,6 +10,8 @@ import {
   RotateCcw, 
   Scissors, 
   Download, 
+  Save,
+  Bookmark,
   Sliders, 
   Volume2, 
   VolumeX, 
@@ -42,7 +44,10 @@ import {
   FolderOpen,
   Move,
   Lock,
-  Unlock
+  Unlock,
+  Type,
+  Mic,
+  User
 } from 'lucide-react';
 import ImageStockPickerModal from '../studio/ImageStockPickerModal';
 import DraggableOverlay from '../studio/DraggableOverlay';
@@ -54,8 +59,20 @@ interface AudioEditorAudiogramStudioProps {
   onUpdateEpisode?: (updated: Episode) => void;
 }
 
-export type WaveformStyle = 'bars' | 'sine' | 'radial' | 'mirror' | 'pulse' | 'liquid';
+export type WaveformStyle = 
+  | 'bars' 
+  | 'sine' 
+  | 'radial' 
+  | 'mirror' 
+  | 'pulse' 
+  | 'liquid' 
+  | 'circle_bars' 
+  | 'dots_matrix' 
+  | 'neon_glow_wave' 
+  | 'spectrum_3d';
+
 export type WaveformColorMode = 'single' | 'gradient';
+export type StudioAspectRatio = '16:9' | '9:16' | '1:1';
 
 const BACKGROUND_PRESETS = [
   { id: 'obsidian', name: 'Obsidian Void', style: 'linear-gradient(180deg, #0b0f19 0%, #05070c 100%)' },
@@ -77,12 +94,115 @@ const GRADIENT_PRESETS = [
   { id: 'pure_white', name: 'Neon White (לבן לציאן)', start: '#ffffff', end: '#38bdf8' }
 ];
 
+const AUDIOGRAM_PRESETS = [
+  {
+    id: 'gold_luxe',
+    name: '🎙️ סטודיו זהב (Luxe Gold)',
+    desc: 'מעגל גלי קול זהב יוקרתי, תג מגיש אלגנטי ורקע כהה',
+    config: {
+      bgType: 'preset' as const,
+      selectedBgPreset: 'gold',
+      waveformStyle: 'circle_bars' as WaveformStyle,
+      waveformColorMode: 'gradient' as WaveformColorMode,
+      selectedGradient: 'gold',
+      waveformHeight: 110,
+      waveformPosition: 'center' as const,
+      hostTagStyle: 'gold_pill' as const,
+      factCardStyle: 'amber_gold' as const
+    }
+  },
+  {
+    id: 'cyberpunk_wave',
+    name: '⚡ סייברפאנק (Cyberpunk)',
+    desc: 'גלי ניאון טורקיז ורוד עם אפקט זוהר כפול ומראה עתידני',
+    config: {
+      bgType: 'preset' as const,
+      selectedBgPreset: 'cyberpunk',
+      waveformStyle: 'neon_glow_wave' as WaveformStyle,
+      waveformColorMode: 'gradient' as WaveformColorMode,
+      selectedGradient: 'cyberpunk',
+      waveformHeight: 120,
+      waveformPosition: 'center' as const,
+      hostTagStyle: 'neon_border' as const,
+      factCardStyle: 'cyan_glow' as const
+    }
+  },
+  {
+    id: 'cinema_velvet',
+    name: '🎬 קולנוע קלאסי (Cinema Velvet)',
+    desc: 'רקע שחור עמוק, גלי סינוס קלאסיים וכרטיסיית עובדות קולנוע',
+    config: {
+      bgType: 'preset' as const,
+      selectedBgPreset: 'cinema',
+      waveformStyle: 'sine' as WaveformStyle,
+      waveformColorMode: 'single' as WaveformColorMode,
+      singleColor: '#f59e0b',
+      waveformHeight: 90,
+      waveformPosition: 'bottom' as const,
+      hostTagStyle: 'dark_glass' as const,
+      factCardStyle: 'amber_gold' as const
+    }
+  },
+  {
+    id: 'viral_reels',
+    name: '📱 רילס וטיקטוק (Viral 9:16)',
+    desc: 'פורמט אנכי 9:16 עם עמודי תדרים 3D וכתוביות מודגשות',
+    config: {
+      aspectRatio: '9:16' as StudioAspectRatio,
+      bgType: 'preset' as const,
+      selectedBgPreset: 'royal',
+      waveformStyle: 'spectrum_3d' as WaveformStyle,
+      waveformColorMode: 'gradient' as WaveformColorMode,
+      selectedGradient: 'galaxy',
+      waveformHeight: 130,
+      waveformPosition: 'center' as const,
+      hostTagStyle: 'gold_pill' as const,
+      factCardStyle: 'cyan_glow' as const
+    }
+  },
+  {
+    id: 'retro_synth',
+    name: '📺 רטרו סינת\'ווייב (Retro 80s)',
+    desc: 'שקיעה ורודה-כתומה עם גלי מראה כפולים',
+    config: {
+      bgType: 'preset' as const,
+      selectedBgPreset: 'cyberpunk',
+      waveformStyle: 'mirror' as WaveformStyle,
+      waveformColorMode: 'gradient' as WaveformColorMode,
+      selectedGradient: 'sunset',
+      waveformHeight: 100,
+      waveformPosition: 'center' as const,
+      hostTagStyle: 'neon_border' as const,
+      factCardStyle: 'cinema_red' as const
+    }
+  },
+  {
+    id: 'clean_minimal',
+    name: '🤍 מינימליזם נקי (Minimalist)',
+    desc: 'מטריצת נקודות LED עדינה, רקע שחור אחיד ומראה נקי',
+    config: {
+      bgType: 'solid' as const,
+      solidColor: '#090d16',
+      waveformStyle: 'dots_matrix' as WaveformStyle,
+      waveformColorMode: 'single' as WaveformColorMode,
+      singleColor: '#ffffff',
+      waveformHeight: 80,
+      waveformPosition: 'center' as const,
+      hostTagStyle: 'minimal_text' as const,
+      factCardStyle: 'minimal_slate' as const
+    }
+  }
+];
+
 export default function AudioEditorAudiogramStudio({
   episode,
   isOpen,
   onClose,
   onUpdateEpisode
 }: AudioEditorAudiogramStudioProps) {
+  // Aspect Ratio & Layout
+  const [aspectRatio, setAspectRatio] = useState<StudioAspectRatio>('16:9');
+
   // Audio state
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
@@ -90,7 +210,9 @@ export default function AudioEditorAudiogramStudio({
   const [currentTime, setCurrentTime] = useState<number>(0);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [audioVolume, setAudioVolume] = useState<number>(1.0);
+  const [audioPlaybackRate, setAudioPlaybackRate] = useState<number>(1.0);
   const [isMuted, setIsMuted] = useState<boolean>(false);
+  const [voiceWarmth, setVoiceWarmth] = useState<boolean>(false);
 
   // Audio Trimming & Cutting State
   const [trimStart, setTrimStart] = useState<number>(0);
@@ -106,43 +228,339 @@ export default function AudioEditorAudiogramStudio({
   const [bgBlur, setBgBlur] = useState<number>(0);
   const [bgDim, setBgDim] = useState<number>(30);
   const [solidColor, setSolidColor] = useState<string>('#0b0f19');
+  const [ambientVignette, setAmbientVignette] = useState<boolean>(true);
   const bgFileInputRef = useRef<HTMLInputElement | null>(null);
   const bgImageObjectRef = useRef<HTMLImageElement | null>(null);
+  const audioUploadInputRef = useRef<HTMLInputElement | null>(null);
+
+  const handleUploadAudioFileForEditor = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const blobKey = `rec_uploaded_${episode.id}_${Date.now()}`;
+      await saveMediaBlob(blobKey, file);
+
+      let durationSeconds = 60;
+      try {
+        const url = URL.createObjectURL(file);
+        const tempAudio = new Audio(url);
+        await new Promise((resolve) => {
+          tempAudio.onloadedmetadata = () => {
+            durationSeconds = Math.round(tempAudio.duration) || 60;
+            resolve(true);
+          };
+          tempAudio.onerror = () => resolve(true);
+          setTimeout(() => resolve(true), 2500);
+        });
+      } catch {}
+
+      const updated: Episode = {
+        ...episode,
+        status: 'recorded',
+        recording: {
+          recordedAt: new Date().toISOString(),
+          duration: durationSeconds,
+          audioBlobKey: blobKey,
+          markers: [],
+          topicsCovered: []
+        }
+      };
+
+      saveEpisode(updated);
+      if (onUpdateEpisode) onUpdateEpisode(updated);
+
+      setAudioBlob(file);
+      const url = URL.createObjectURL(file);
+      setAudioUrl(url);
+      setDuration(durationSeconds);
+      setTrimEnd(durationSeconds);
+      alert(`קובץ השמע "${file.name}" נטען בהצלחה לסטודיו העריכה!`);
+    } catch (err: any) {
+      alert('שגיאה בטעינת קובץ השמע: ' + err.message);
+    }
+  };
 
   // Permanent Logo State (loaded from storage)
   const [logoConfig, setLogoConfig] = useState<{
     show: boolean;
+    showByDefault: boolean;
     url: string;
     opacity: number;
     size: number;
     positionPreset: 'top-right' | 'top-left' | 'top-center' | 'bottom-right' | 'bottom-left' | 'bottom-center';
   }>({
     show: true,
+    showByDefault: true,
     url: 'https://images.unsplash.com/photo-1590602847861-f357a9332bbc?w=200&q=80',
     opacity: 0.9,
-    size: 64,
+    size: 100,
     positionPreset: 'top-right'
   });
 
-  // Overlays State (Facts, Quote, Ratings, Title Banner, Spoiler, Poster PIP, Subtitles)
+  // Overlays State (Facts, Quote, Ratings, Title Banner, Host Tag, Spoiler, Poster PIP, Subtitles)
+  const [hostName, setHostName] = useState<string>(episode.hostName || episode.host?.name || '');
+  const [hostRole, setHostRole] = useState<string>(episode.host?.role || 'מנחה ראשי');
+  const [hostTagStyle, setHostTagStyle] = useState<'gold_pill' | 'neon_border' | 'dark_glass' | 'minimal_text'>('gold_pill');
+  const [showHostTag, setShowHostTag] = useState<boolean>(!!(episode.hostName || episode.host?.name));
   const [showFactOverlay, setShowFactOverlay] = useState<boolean>(true);
+  const [factCardStyle, setFactCardStyle] = useState<'amber_gold' | 'cyan_glow' | 'dark_glass' | 'cinema_red' | 'minimal_slate'>('amber_gold');
   const [selectedFactIndex, setSelectedFactIndex] = useState<number>(0);
   const [showQuoteOverlay, setShowQuoteOverlay] = useState<boolean>(false);
+  const [quoteCardStyle, setQuoteCardStyle] = useState<'quote_ribbon' | 'velvet_glow' | 'modern_border'>('velvet_glow');
   const [quoteText, setQuoteText] = useState<string>('״הקולנוע הוא שפה אוניברסלית של חלומות...״');
   const [quoteSpeaker, setQuoteSpeaker] = useState<string>('המנחה');
   const [showRatingOverlay, setShowRatingOverlay] = useState<boolean>(false);
+  const [imdbScore, setImdbScore] = useState<string>('8.8');
+  const [rottenScore, setRottenScore] = useState<string>('94%');
+  const [personalScore, setPersonalScore] = useState<string>('9.2');
   const [showBannerOverlay, setShowBannerOverlay] = useState<boolean>(true);
+  const [bannerSubtitle, setBannerSubtitle] = useState<string>(`CastFlow Studio • פרק ${episode.episodeNumber}`);
+  const [episodeTitleText, setEpisodeTitleText] = useState<string>(episode.title);
+  const [titleBannerStyle, setTitleBannerStyle] = useState<'indigo_glass' | 'gold_accent' | 'cinema_ribbon'>('indigo_glass');
   const [showSpoilerOverlay, setShowSpoilerOverlay] = useState<boolean>(false);
+  const [spoilerText, setSpoilerText] = useState<string>('⚠️ זהירות: הניתוח מכיל ספוילרים קריטיים לעלילה!');
   const [showPosterPip, setShowPosterPip] = useState<boolean>(false);
+  const [posterShape, setPosterShape] = useState<'rectangle' | 'rounded_square' | 'circle'>('rounded_square');
   const [posterUrl, setPosterUrl] = useState<string>('https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=800&q=80');
   const [showSubtitles, setShowSubtitles] = useState<boolean>(true);
+
+  // Active Element Selection for Free Styling Inspector
+  const [selectedElementToStyle, setSelectedElementToStyle] = useState<'host' | 'fact' | 'quote' | 'banner' | 'poster' | 'rating' | 'spoiler' | 'subtitles' | 'logo' | 'waveform'>('host');
+
+  // Full Custom Styles for Each Element (חופש עיצוב מלא לכל אלמנט)
+  const [hostCustomStyle, setHostCustomStyle] = useState<CustomOverlayStyle>({
+    fontFamily: 'Rubik',
+    fontSize: 13,
+    fontWeight: 'bold',
+    textColor: '#ffffff',
+    secondaryFontSize: 10,
+    secondaryTextColor: '#06b6d4',
+    backgroundColor: '#030712',
+    backgroundOpacity: 95,
+    borderColor: '#06b6d4',
+    borderWidth: 1.5,
+    borderRadius: 9999,
+    glowColor: '#06b6d4',
+    glowBlur: 0,
+    padding: 10,
+    textAlign: 'right'
+  });
+
+  const [factCustomStyle, setFactCustomStyle] = useState<CustomOverlayStyle>({
+    fontFamily: 'Rubik',
+    fontSize: 12,
+    fontWeight: 'bold',
+    textColor: '#ffffff',
+    secondaryFontSize: 10,
+    secondaryTextColor: '#f59e0b',
+    backgroundColor: '#030712',
+    backgroundOpacity: 95,
+    borderColor: '#f59e0b',
+    borderWidth: 1.5,
+    borderRadius: 16,
+    glowColor: '#f59e0b',
+    glowBlur: 0,
+    padding: 12,
+    textAlign: 'right'
+  });
+
+  const [quoteCustomStyle, setQuoteCustomStyle] = useState<CustomOverlayStyle>({
+    fontFamily: 'Assistant',
+    fontSize: 14,
+    fontWeight: 'bold',
+    textColor: '#ffffff',
+    secondaryFontSize: 11,
+    secondaryTextColor: '#c084fc',
+    backgroundColor: '#030712',
+    backgroundOpacity: 95,
+    borderColor: '#a855f7',
+    borderWidth: 1.5,
+    borderRadius: 16,
+    glowColor: '#a855f7',
+    glowBlur: 8,
+    padding: 14,
+    textAlign: 'center'
+  });
+
+  const [bannerCustomStyle, setBannerCustomStyle] = useState<CustomOverlayStyle>({
+    fontFamily: 'Rubik',
+    fontSize: 13,
+    fontWeight: '900',
+    textColor: '#ffffff',
+    secondaryFontSize: 10,
+    secondaryTextColor: '#818cf8',
+    backgroundColor: '#030712',
+    backgroundOpacity: 90,
+    borderColor: '#6366f1',
+    borderWidth: 2,
+    borderRadius: 12,
+    glowColor: '#6366f1',
+    glowBlur: 0,
+    padding: 10,
+    textAlign: 'right'
+  });
+
+  const [ratingCustomStyle, setRatingCustomStyle] = useState<CustomOverlayStyle>({
+    fontFamily: 'Rubik',
+    fontSize: 13,
+    fontWeight: 'bold',
+    textColor: '#ffffff',
+    secondaryFontSize: 10,
+    secondaryTextColor: '#f59e0b',
+    backgroundColor: '#030712',
+    backgroundOpacity: 95,
+    borderColor: '#f59e0b',
+    borderWidth: 1.5,
+    borderRadius: 16,
+    glowColor: '#f59e0b',
+    glowBlur: 0,
+    padding: 10,
+    textAlign: 'center'
+  });
+
+  const [spoilerCustomStyle, setSpoilerCustomStyle] = useState<CustomOverlayStyle>({
+    fontFamily: 'Rubik',
+    fontSize: 12,
+    fontWeight: 'bold',
+    textColor: '#ffffff',
+    secondaryFontSize: 10,
+    secondaryTextColor: '#f87171',
+    backgroundColor: '#450a0a',
+    backgroundOpacity: 95,
+    borderColor: '#ef4444',
+    borderWidth: 1.5,
+    borderRadius: 12,
+    glowColor: '#ef4444',
+    glowBlur: 10,
+    padding: 10,
+    textAlign: 'center'
+  });
+
+  const [posterCustomStyle, setPosterCustomStyle] = useState<CustomOverlayStyle>({
+    borderColor: '#6366f1',
+    borderWidth: 2,
+    borderRadius: 16,
+    glowColor: '#6366f1',
+    glowBlur: 12,
+    backgroundOpacity: 100
+  });
+
+  const [subtitleCustomStyle, setSubtitleCustomStyle] = useState<CustomOverlayStyle>({
+    fontFamily: 'Rubik',
+    fontSize: 22,
+    fontWeight: '900',
+    textColor: '#ffffff',
+    backgroundColor: '#000000',
+    backgroundOpacity: 80,
+    borderColor: '#facc15',
+    borderWidth: 0,
+    borderRadius: 12,
+    glowColor: '#000000',
+    glowBlur: 4,
+    padding: 10,
+    textAlign: 'center'
+  });
+
+  // Helper to check if currently selected element is visible
+  const isCurrentElementVisible = (): boolean => {
+    switch (selectedElementToStyle) {
+      case 'host': return showHostTag;
+      case 'fact': return showFactOverlay;
+      case 'quote': return showQuoteOverlay;
+      case 'banner': return showBannerOverlay;
+      case 'poster': return showPosterPip;
+      case 'rating': return showRatingOverlay;
+      case 'spoiler': return showSpoilerOverlay;
+      case 'subtitles': return showSubtitles;
+      case 'logo': return logoConfig.show;
+      default: return true;
+    }
+  };
+
+  // Helper to toggle visibility of currently selected element
+  const toggleCurrentElementVisibility = (override?: boolean) => {
+    switch (selectedElementToStyle) {
+      case 'host': setShowHostTag(prev => override !== undefined ? override : !prev); break;
+      case 'fact': setShowFactOverlay(prev => override !== undefined ? override : !prev); break;
+      case 'quote': setShowQuoteOverlay(prev => override !== undefined ? override : !prev); break;
+      case 'banner': setShowBannerOverlay(prev => override !== undefined ? override : !prev); break;
+      case 'poster': setShowPosterPip(prev => override !== undefined ? override : !prev); break;
+      case 'rating': setShowRatingOverlay(prev => override !== undefined ? override : !prev); break;
+      case 'spoiler': setShowSpoilerOverlay(prev => override !== undefined ? override : !prev); break;
+      case 'subtitles': setShowSubtitles(prev => override !== undefined ? override : !prev); break;
+      case 'logo': setLogoConfig(prev => ({ ...prev, show: override !== undefined ? override : !prev.show })); break;
+    }
+  };
+
+  // Helper to get active style
+  const getCurrentElementStyle = (): CustomOverlayStyle => {
+    switch (selectedElementToStyle) {
+      case 'host': return hostCustomStyle;
+      case 'fact': return factCustomStyle;
+      case 'quote': return quoteCustomStyle;
+      case 'banner': return bannerCustomStyle;
+      case 'poster': return posterCustomStyle;
+      case 'rating': return ratingCustomStyle;
+      case 'spoiler': return spoilerCustomStyle;
+      case 'subtitles': return subtitleCustomStyle;
+      default: return hostCustomStyle;
+    }
+  };
+
+  // Helper to update active style
+  const updateCurrentElementStyle = (patch: Partial<CustomOverlayStyle>) => {
+    switch (selectedElementToStyle) {
+      case 'host': setHostCustomStyle((prev: CustomOverlayStyle) => ({ ...prev, ...patch })); break;
+      case 'fact': setFactCustomStyle((prev: CustomOverlayStyle) => ({ ...prev, ...patch })); break;
+      case 'quote': setQuoteCustomStyle((prev: CustomOverlayStyle) => ({ ...prev, ...patch })); break;
+      case 'banner': setBannerCustomStyle((prev: CustomOverlayStyle) => ({ ...prev, ...patch })); break;
+      case 'poster': setPosterCustomStyle((prev: CustomOverlayStyle) => ({ ...prev, ...patch })); break;
+      case 'rating': setRatingCustomStyle((prev: CustomOverlayStyle) => ({ ...prev, ...patch })); break;
+      case 'spoiler': setSpoilerCustomStyle((prev: CustomOverlayStyle) => ({ ...prev, ...patch })); break;
+      case 'subtitles': setSubtitleCustomStyle((prev: CustomOverlayStyle) => ({ ...prev, ...patch })); break;
+    }
+  };
+
+  // Color to RGBA string helper
+  const hexToRgba = (hex: string = '#000000', opacityPct: number = 100) => {
+    let cleanHex = hex.replace('#', '');
+    if (cleanHex.length === 3) {
+      cleanHex = cleanHex.split('').map(c => c + c).join('');
+    }
+    const r = parseInt(cleanHex.substring(0, 2) || '0', 16);
+    const g = parseInt(cleanHex.substring(2, 4) || '0', 16);
+    const b = parseInt(cleanHex.substring(4, 6) || '0', 16);
+    const a = Math.max(0, Math.min(1, (opacityPct ?? 100) / 100));
+    return `rgba(${r}, ${g}, ${b}, ${a})`;
+  };
+
+  // Apply Full Studio Design Preset
+  const handleApplyStudioPreset = (preset: typeof AUDIOGRAM_PRESETS[0]) => {
+    if (preset.config.aspectRatio) setAspectRatio(preset.config.aspectRatio);
+    if (preset.config.bgType) setBgType(preset.config.bgType);
+    if (preset.config.selectedBgPreset) setSelectedBgPreset(preset.config.selectedBgPreset);
+    if (preset.config.solidColor) setSolidColor(preset.config.solidColor);
+    if (preset.config.waveformStyle) setWaveformStyle(preset.config.waveformStyle);
+    if (preset.config.waveformColorMode) setWaveformColorMode(preset.config.waveformColorMode);
+    if (preset.config.selectedGradient) setSelectedGradient(preset.config.selectedGradient);
+    if (preset.config.singleColor) setSingleColor(preset.config.singleColor);
+    if (preset.config.waveformHeight) setWaveformHeight(preset.config.waveformHeight);
+    if (preset.config.waveformPosition) setWaveformPosition(preset.config.waveformPosition);
+    if (preset.config.hostTagStyle) setHostTagStyle(preset.config.hostTagStyle);
+    if (preset.config.factCardStyle) setFactCardStyle(preset.config.factCardStyle);
+    alert(`סגנון "${preset.name}" הוחל בהצלחה על כל מרכיבי הסטודיו!`);
+  };
 
   // Drag & Transform States for Overlays (גרירה ושינוי גודל)
   const [isEditMode, setIsEditMode] = useState<boolean>(true);
   const [logoTransform, setLogoTransform] = useState<ElementTransform>({ x: 80, y: 5, scale: 1.0 });
+  const [hostTransform, setHostTransform] = useState<ElementTransform>({ x: 70, y: 15, scale: 1.0 });
   const [factTransform, setFactTransform] = useState<ElementTransform>({ x: 5, y: 8, scale: 1.0 });
   const [quoteTransform, setQuoteTransform] = useState<ElementTransform>({ x: 25, y: 65, scale: 1.0 });
   const [bannerTransform, setBannerTransform] = useState<ElementTransform>({ x: 65, y: 78, scale: 1.0 });
+  const [ratingTransform, setRatingTransform] = useState<ElementTransform>({ x: 20, y: 75, scale: 1.0 });
+  const [spoilerTransform, setSpoilerTransform] = useState<ElementTransform>({ x: 25, y: 15, scale: 1.0 });
   const [posterTransform, setPosterTransform] = useState<ElementTransform>({ x: 5, y: 45, scale: 1.0 });
   const [subtitleTransform, setSubtitleTransform] = useState<ElementTransform>({ x: 15, y: 78, scale: 1.0 });
 
@@ -157,9 +575,14 @@ export default function AudioEditorAudiogramStudio({
   const [waveformHeight, setWaveformHeight] = useState<number>(100);
   const [waveformSensitivity, setWaveformSensitivity] = useState<number>(1.2);
 
+  // Export Format & Resolution State
+  const [exportFormat, setExportFormat] = useState<'mp4' | 'webm'>('mp4');
+  const [exportResolution, setExportResolution] = useState<'1080p' | '720p' | '4k'>('1080p');
+
   // Tabs
-  const [activeTab, setActiveTab] = useState<'trimmer' | 'waveform' | 'background' | 'overlays' | 'export'>('waveform');
+  const [activeTab, setActiveTab] = useState<'styler' | 'waveform' | 'background' | 'overlays' | 'trimmer' | 'export'>('styler');
   const [isStockModalOpen, setIsStockModalOpen] = useState(false);
+  const [stockPickerTarget, setStockPickerTarget] = useState<'background' | 'poster' | 'logo'>('poster');
 
   // DOM & Audio Nodes Refs
   const audioElementRef = useRef<HTMLAudioElement | null>(null);
@@ -169,10 +592,314 @@ export default function AudioEditorAudiogramStudio({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const animFrameRef = useRef<number | null>(null);
   const logoFileInputRef = useRef<HTMLInputElement | null>(null);
+  const posterFileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const handlePosterFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const dataUrl = reader.result as string;
+        setPosterUrl(dataUrl);
+        setShowPosterPip(true);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
 
   const movieFacts = episode.movieFacts || [];
   const currentFact = movieFacts[selectedFactIndex] || movieFacts[0] || null;
   const activeSubtitle = (episode.subtitles || []).find(s => currentTime >= s.startTime && currentTime <= s.endTime);
+
+  // Saved Studio Configurations & Custom Presets / Templates
+  const [customTemplates, setCustomTemplates] = useState<AudiogramStudioTemplate[]>([]);
+  const [isNewTemplateModalOpen, setIsNewTemplateModalOpen] = useState<boolean>(false);
+  const [newTemplateName, setNewTemplateName] = useState<string>('');
+  const [isSaveSuccess, setIsSaveSuccess] = useState<boolean>(false);
+  const [saveMessage, setSaveMessage] = useState<string>('');
+
+  // Load custom templates from localStorage
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('audiogram_studio_custom_templates_v1');
+      if (raw) {
+        setCustomTemplates(JSON.parse(raw));
+      }
+    } catch (e) {}
+  }, []);
+
+  // Load Saved Episode Studio Configuration on Open
+  useEffect(() => {
+    if (!isOpen) return;
+    try {
+      const savedConfigStr = localStorage.getItem(`audiogram_studio_ep_${episode.id}`);
+      const config: AudiogramStudioConfig | null = (episode as any).audiogramStudioConfig || (savedConfigStr ? JSON.parse(savedConfigStr) : null);
+      
+      if (config) {
+        if (config.aspectRatio) setAspectRatio(config.aspectRatio);
+        if (config.bgType) setBgType(config.bgType);
+        if (config.selectedBgPreset) setSelectedBgPreset(config.selectedBgPreset);
+        if (config.customBgImage !== undefined) setCustomBgImage(config.customBgImage);
+        if (config.bgDim !== undefined) setBgDim(config.bgDim);
+        if (config.solidColor) setSolidColor(config.solidColor);
+        if (config.ambientVignette !== undefined) setAmbientVignette(config.ambientVignette);
+
+        if (config.waveformStyle) setWaveformStyle(config.waveformStyle as any);
+        if (config.waveformColorMode) setWaveformColorMode(config.waveformColorMode);
+        if (config.singleColor) setSingleColor(config.singleColor);
+        if (config.selectedGradient) setSelectedGradient(config.selectedGradient);
+        if (config.customGradStart) setCustomGradStart(config.customGradStart);
+        if (config.customGradEnd) setCustomGradEnd(config.customGradEnd);
+        if (config.waveformPosition) setWaveformPosition(config.waveformPosition as any);
+        if (config.waveformHeight !== undefined) setWaveformHeight(config.waveformHeight);
+        if (config.waveformSensitivity !== undefined) setWaveformSensitivity(config.waveformSensitivity);
+
+        if (config.trimStart !== undefined) setTrimStart(config.trimStart);
+        if (config.trimEnd !== undefined && config.trimEnd > 0) setTrimEnd(config.trimEnd);
+
+        if (config.showLogo !== undefined) setLogoConfig(prev => ({ ...prev, show: config.showLogo ?? prev.show, url: config.logoUrl || prev.url, size: config.logoSize || prev.size, opacity: config.logoOpacity ?? prev.opacity }));
+        if (config.logoTransform) setLogoTransform(config.logoTransform);
+
+        if (config.showHostTag !== undefined) setShowHostTag(config.showHostTag);
+        if (config.hostName) setHostName(config.hostName);
+        if (config.hostRole) setHostRole(config.hostRole);
+        if (config.hostTransform) setHostTransform(config.hostTransform);
+        if (config.hostCustomStyle) setHostCustomStyle(config.hostCustomStyle);
+
+        if (config.showFactOverlay !== undefined) setShowFactOverlay(config.showFactOverlay);
+        if (config.factTransform) setFactTransform(config.factTransform);
+        if (config.factCustomStyle) setFactCustomStyle(config.factCustomStyle);
+
+        if (config.showQuoteOverlay !== undefined) setShowQuoteOverlay(config.showQuoteOverlay);
+        if (config.quoteText) setQuoteText(config.quoteText);
+        if (config.quoteSpeaker) setQuoteSpeaker(config.quoteSpeaker);
+        if (config.quoteTransform) setQuoteTransform(config.quoteTransform);
+        if (config.quoteCustomStyle) setQuoteCustomStyle(config.quoteCustomStyle);
+
+        if (config.showBannerOverlay !== undefined) setShowBannerOverlay(config.showBannerOverlay);
+        if (config.bannerSubtitle) setBannerSubtitle(config.bannerSubtitle);
+        if (config.episodeTitleText) setEpisodeTitleText(config.episodeTitleText);
+        if (config.bannerTransform) setBannerTransform(config.bannerTransform);
+        if (config.bannerCustomStyle) setBannerCustomStyle(config.bannerCustomStyle);
+
+        if (config.showRatingOverlay !== undefined) setShowRatingOverlay(config.showRatingOverlay);
+        if (config.imdbScore) setImdbScore(config.imdbScore);
+        if (config.rottenScore) setRottenScore(config.rottenScore);
+        if (config.personalScore) setPersonalScore(config.personalScore);
+        if (config.ratingTransform) setRatingTransform(config.ratingTransform);
+        if (config.ratingCustomStyle) setRatingCustomStyle(config.ratingCustomStyle);
+
+        if (config.showSpoilerOverlay !== undefined) setShowSpoilerOverlay(config.showSpoilerOverlay);
+        if (config.spoilerText) setSpoilerText(config.spoilerText);
+        if (config.spoilerTransform) setSpoilerTransform(config.spoilerTransform);
+        if (config.spoilerCustomStyle) setSpoilerCustomStyle(config.spoilerCustomStyle);
+
+        if (config.showPosterPip !== undefined) setShowPosterPip(config.showPosterPip);
+        if (config.posterUrl) setPosterUrl(config.posterUrl);
+        if (config.posterShape) setPosterShape(config.posterShape);
+        if (config.posterTransform) setPosterTransform(config.posterTransform);
+        if (config.posterCustomStyle) setPosterCustomStyle(config.posterCustomStyle);
+
+        if (config.showSubtitles !== undefined) setShowSubtitles(config.showSubtitles);
+        if (config.subtitleTransform) setSubtitleTransform(config.subtitleTransform);
+        if (config.subtitleCustomStyle) setSubtitleCustomStyle(config.subtitleCustomStyle);
+      }
+    } catch (e) {
+      console.error('Error loading saved audiogram studio config:', e);
+    }
+  }, [isOpen, episode.id]);
+
+  const buildCurrentStudioConfig = (): AudiogramStudioConfig => ({
+    aspectRatio,
+    bgType,
+    selectedBgPreset,
+    customBgImage,
+    bgDim,
+    solidColor,
+    ambientVignette,
+
+    waveformStyle,
+    waveformColorMode,
+    singleColor,
+    selectedGradient,
+    customGradStart,
+    customGradEnd,
+    waveformPosition,
+    waveformCustomY: 50,
+    waveformHeight,
+    waveformSensitivity,
+
+    trimStart,
+    trimEnd,
+
+    showLogo: logoConfig.show,
+    logoUrl: logoConfig.url,
+    logoSize: logoConfig.size,
+    logoOpacity: logoConfig.opacity,
+    logoTransform,
+
+    showHostTag,
+    hostName,
+    hostRole,
+    hostTransform,
+    hostCustomStyle,
+
+    showFactOverlay,
+    factTransform,
+    factCustomStyle,
+
+    showQuoteOverlay,
+    quoteText,
+    quoteSpeaker,
+    quoteTransform,
+    quoteCustomStyle,
+
+    showBannerOverlay,
+    bannerSubtitle,
+    episodeTitleText,
+    bannerTransform,
+    bannerCustomStyle,
+
+    showRatingOverlay,
+    imdbScore,
+    rottenScore,
+    personalScore,
+    ratingTransform,
+    ratingCustomStyle,
+
+    showSpoilerOverlay,
+    spoilerText,
+    spoilerTransform,
+    spoilerCustomStyle,
+
+    showPosterPip,
+    posterUrl,
+    posterShape,
+    posterTransform,
+    posterCustomStyle,
+
+    showSubtitles,
+    subtitleTransform,
+    subtitleCustomStyle,
+
+    savedAt: new Date().toISOString()
+  });
+
+  const handleSaveStudioConfig = () => {
+    try {
+      const config = buildCurrentStudioConfig();
+      localStorage.setItem(`audiogram_studio_ep_${episode.id}`, JSON.stringify(config));
+      
+      const updated: Episode = {
+        ...episode,
+        audiogramStudioConfig: config
+      };
+      saveEpisode(updated);
+      if (onUpdateEpisode) onUpdateEpisode(updated);
+
+      setIsSaveSuccess(true);
+      setSaveMessage('כל הגדרות העיצוב, המיקומים והצבעים נשמרו בהצלחה בפרק!');
+      setTimeout(() => setIsSaveSuccess(false), 3500);
+    } catch (e: any) {
+      alert('שגיאה בשמירת הגדרות הסטודיו: ' + e.message);
+    }
+  };
+
+  const handleSaveAsTemplate = (tplName: string) => {
+    if (!tplName.trim()) return;
+    try {
+      const config = buildCurrentStudioConfig();
+      const newTemplate: AudiogramStudioTemplate = {
+        id: `tpl_${Date.now()}`,
+        name: tplName.trim(),
+        createdAt: new Date().toISOString(),
+        config
+      };
+      const updatedList = [newTemplate, ...customTemplates];
+      setCustomTemplates(updatedList);
+      localStorage.setItem('audiogram_studio_custom_templates_v1', JSON.stringify(updatedList));
+      setIsNewTemplateModalOpen(false);
+      setNewTemplateName('');
+      setIsSaveSuccess(true);
+      setSaveMessage(`התבנית "${tplName}" נשמרה בהצלחה במאגר התבניות שלך!`);
+      setTimeout(() => setIsSaveSuccess(false), 3500);
+    } catch (e: any) {
+      alert('שגיאה בשמירת התבנית: ' + e.message);
+    }
+  };
+
+  const handleApplyTemplate = (tpl: AudiogramStudioTemplate) => {
+    try {
+      const config = tpl.config;
+      if (config.aspectRatio) setAspectRatio(config.aspectRatio);
+      if (config.bgType) setBgType(config.bgType);
+      if (config.selectedBgPreset) setSelectedBgPreset(config.selectedBgPreset);
+      if (config.customBgImage !== undefined) setCustomBgImage(config.customBgImage);
+      if (config.bgDim !== undefined) setBgDim(config.bgDim);
+      if (config.solidColor) setSolidColor(config.solidColor);
+      if (config.ambientVignette !== undefined) setAmbientVignette(config.ambientVignette);
+
+      if (config.waveformStyle) setWaveformStyle(config.waveformStyle as any);
+      if (config.waveformColorMode) setWaveformColorMode(config.waveformColorMode);
+      if (config.singleColor) setSingleColor(config.singleColor);
+      if (config.selectedGradient) setSelectedGradient(config.selectedGradient);
+      if (config.customGradStart) setCustomGradStart(config.customGradStart);
+      if (config.customGradEnd) setCustomGradEnd(config.customGradEnd);
+      if (config.waveformPosition) setWaveformPosition(config.waveformPosition as any);
+      if (config.waveformHeight !== undefined) setWaveformHeight(config.waveformHeight);
+      if (config.waveformSensitivity !== undefined) setWaveformSensitivity(config.waveformSensitivity);
+
+      if (config.showLogo !== undefined) setLogoConfig(prev => ({ ...prev, show: config.showLogo ?? prev.show, url: config.logoUrl || prev.url, size: config.logoSize || prev.size, opacity: config.logoOpacity ?? prev.opacity }));
+      if (config.logoTransform) setLogoTransform(config.logoTransform);
+
+      if (config.showHostTag !== undefined) setShowHostTag(config.showHostTag);
+      if (config.hostTransform) setHostTransform(config.hostTransform);
+      if (config.hostCustomStyle) setHostCustomStyle(config.hostCustomStyle);
+
+      if (config.showFactOverlay !== undefined) setShowFactOverlay(config.showFactOverlay);
+      if (config.factTransform) setFactTransform(config.factTransform);
+      if (config.factCustomStyle) setFactCustomStyle(config.factCustomStyle);
+
+      if (config.showQuoteOverlay !== undefined) setShowQuoteOverlay(config.showQuoteOverlay);
+      if (config.quoteTransform) setQuoteTransform(config.quoteTransform);
+      if (config.quoteCustomStyle) setQuoteCustomStyle(config.quoteCustomStyle);
+
+      if (config.showBannerOverlay !== undefined) setShowBannerOverlay(config.showBannerOverlay);
+      if (config.bannerTransform) setBannerTransform(config.bannerTransform);
+      if (config.bannerCustomStyle) setBannerCustomStyle(config.bannerCustomStyle);
+
+      if (config.showRatingOverlay !== undefined) setShowRatingOverlay(config.showRatingOverlay);
+      if (config.ratingTransform) setRatingTransform(config.ratingTransform);
+      if (config.ratingCustomStyle) setRatingCustomStyle(config.ratingCustomStyle);
+
+      if (config.showSpoilerOverlay !== undefined) setShowSpoilerOverlay(config.showSpoilerOverlay);
+      if (config.spoilerTransform) setSpoilerTransform(config.spoilerTransform);
+      if (config.spoilerCustomStyle) setSpoilerCustomStyle(config.spoilerCustomStyle);
+
+      if (config.showPosterPip !== undefined) setShowPosterPip(config.showPosterPip);
+      if (config.posterShape) setPosterShape(config.posterShape);
+      if (config.posterTransform) setPosterTransform(config.posterTransform);
+      if (config.posterCustomStyle) setPosterCustomStyle(config.posterCustomStyle);
+
+      if (config.showSubtitles !== undefined) setShowSubtitles(config.showSubtitles);
+      if (config.subtitleTransform) setSubtitleTransform(config.subtitleTransform);
+      if (config.subtitleCustomStyle) setSubtitleCustomStyle(config.subtitleCustomStyle);
+
+      setIsSaveSuccess(true);
+      setSaveMessage(`התבנית "${tpl.name}" הוחלה בהצלחה על כל מרכיבי הסטודיו!`);
+      setTimeout(() => setIsSaveSuccess(false), 3500);
+    } catch (e: any) {
+      alert('שגיאה בהחלת התבנית: ' + e.message);
+    }
+  };
+
+  const handleDeleteTemplate = (tplId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!confirm('האם למחוק תבנית זו?')) return;
+    const updatedList = customTemplates.filter(t => t.id !== tplId);
+    setCustomTemplates(updatedList);
+    localStorage.setItem('audiogram_studio_custom_templates_v1', JSON.stringify(updatedList));
+  };
 
   // 1. Initialize Audio Source & Permanent Logo on Open
   useEffect(() => {
@@ -183,9 +910,10 @@ export default function AudioEditorAudiogramStudio({
     if (savedLogo) {
       setLogoConfig({
         show: savedLogo.showByDefault ?? true,
+        showByDefault: savedLogo.showByDefault ?? true,
         url: savedLogo.url,
         opacity: savedLogo.opacity ?? 0.9,
-        size: savedLogo.size ?? 64,
+        size: savedLogo.size ?? 100,
         positionPreset: savedLogo.positionPreset ?? 'top-right'
       });
     }
@@ -227,7 +955,9 @@ export default function AudioEditorAudiogramStudio({
       const source = ctx.createMediaElementSource(audioElementRef.current);
       sourceNodeRef.current = source;
 
+      // Connect source to analyser for dynamic visualizer, and connect analyser to audio destination (speakers) for full sound playback!
       source.connect(analyser);
+      analyser.connect(ctx.destination);
     } catch (e) {
       console.warn('Web Audio setup notice:', e);
     }
@@ -261,6 +991,20 @@ export default function AudioEditorAudiogramStudio({
     }
   }, [logoConfig.url]);
 
+  const posterImageObjectRef = useRef<HTMLImageElement | null>(null);
+  useEffect(() => {
+    if (posterUrl) {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.src = posterUrl;
+      img.onload = () => {
+        posterImageObjectRef.current = img;
+      };
+    } else {
+      posterImageObjectRef.current = null;
+    }
+  }, [posterUrl]);
+
   // 4. Main Stage Canvas Render Loop (Draws Background + Logo + Overlays + Dynamic Waveforms + Subtitles)
   useEffect(() => {
     if (!isOpen) return;
@@ -281,6 +1025,10 @@ export default function AudioEditorAudiogramStudio({
 
       const W = canvas.width;
       const H = canvas.height;
+
+      // Enable High-Quality Smoothing for crisp Retina images and logos
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
 
       // A. DRAW BACKGROUND
       ctx.clearRect(0, 0, W, H);
@@ -532,124 +1280,477 @@ export default function AudioEditorAudiogramStudio({
         ctx.globalAlpha = 1.0;
       }
 
-      // E. DRAW ALL OVERLAYS DIRECTLY ON CANVAS (ENSURES 100% PREVIEW & VIDEO EXPORT FIDELITY)
-      // 1. Logo
-      if (logoConfig.show && logoImageObjectRef.current) {
-        try {
-          ctx.save();
-          ctx.globalAlpha = logoConfig.opacity || 0.9;
-          const lx = (logoTransform.x / 100) * W;
-          const ly = (logoTransform.y / 100) * H;
-          const lSize = (logoConfig.size || 64) * (logoTransform.scale || 1.0);
-          ctx.drawImage(logoImageObjectRef.current, lx, ly, lSize, lSize);
-          ctx.restore();
-        } catch (e) {}
+      // 7. CIRCLE BARS (Radial Radiating Podcast Ring)
+      else if (waveformStyle === 'circle_bars') {
+        const cx = W / 2;
+        const cy = waveCenterY;
+        const baseRadius = aspectRatio === '9:16' ? 95 : 80;
+        const barCount = 48;
+
+        for (let i = 0; i < barCount; i++) {
+          const angle = (i / barCount) * Math.PI * 2;
+          const rawVal = freqArray[i % freqArray.length] || 15;
+          const barLen = Math.max(8, (rawVal / 255) * (waveformHeight * 0.7) * waveformSensitivity);
+
+          const x1 = cx + Math.cos(angle) * baseRadius;
+          const y1 = cy + Math.sin(angle) * baseRadius;
+          const x2 = cx + Math.cos(angle) * (baseRadius + barLen);
+          const y2 = cy + Math.sin(angle) * (baseRadius + barLen);
+
+          ctx.beginPath();
+          ctx.moveTo(x1, y1);
+          ctx.lineTo(x2, y2);
+          ctx.strokeStyle = waveFill;
+          ctx.lineWidth = 3.5;
+          ctx.lineCap = 'round';
+          ctx.stroke();
+        }
+
+        // Inner glowing core ring
+        ctx.beginPath();
+        ctx.arc(cx, cy, baseRadius - 6, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(10, 15, 28, 0.85)';
+        ctx.fill();
+        ctx.strokeStyle = waveFill;
+        ctx.lineWidth = 2;
+        ctx.stroke();
       }
 
-      // 2. Fact Card Overlay
-      if (showFactOverlay && currentFact) {
-        try {
-          ctx.save();
-          const fx = (factTransform.x / 100) * W;
-          const fy = (factTransform.y / 100) * H;
-          const fScale = factTransform.scale || 1.0;
-          ctx.translate(fx, fy);
-          ctx.scale(fScale, fScale);
+      // 8. DOTS MATRIX (Futuristic LED Matrix Array)
+      else if (waveformStyle === 'dots_matrix') {
+        const cols = 36;
+        const rows = 8;
+        const dotRadius = 3;
+        const startX = W * 0.2;
+        const colWidth = (W * 0.6) / cols;
 
-          ctx.fillStyle = 'rgba(10, 15, 25, 0.92)';
-          ctx.strokeStyle = 'rgba(245, 158, 11, 0.6)';
-          ctx.lineWidth = 1.5;
-          ctx.beginPath();
-          if (ctx.roundRect) ctx.roundRect(0, 0, 240, 80, 12);
-          else ctx.rect(0, 0, 240, 80);
-          ctx.fill();
-          ctx.stroke();
+        for (let c = 0; c < cols; c++) {
+          const rawVal = freqArray[c % freqArray.length] || 10;
+          const activeRows = Math.floor((rawVal / 255) * rows * waveformSensitivity);
 
-          ctx.fillStyle = '#f59e0b';
-          ctx.font = 'bold 10px sans-serif';
-          ctx.direction = 'rtl';
-          ctx.fillText(currentFact.source || 'עובדה על הסרט', 225, 20);
+          for (let r = 0; r < rows; r++) {
+            const x = startX + c * colWidth;
+            const y = waveCenterY + (rows / 2 - r) * 11;
 
-          ctx.fillStyle = '#ffffff';
-          ctx.font = 'bold 11px sans-serif';
-          const words = currentFact.fact.split(' ');
-          let curL = '';
-          let curY = 38;
-          for (let w of words) {
-            const test = curL + w + ' ';
-            if (ctx.measureText(test).width > 210) {
-              ctx.fillText(curL, 225, curY);
-              curL = w + ' ';
-              curY += 16;
-              if (curY > 70) break;
-            } else {
-              curL = test;
-            }
+            ctx.beginPath();
+            ctx.arc(x, y, dotRadius, 0, Math.PI * 2);
+            ctx.fillStyle = r <= activeRows ? waveFill : 'rgba(255, 255, 255, 0.08)';
+            ctx.fill();
           }
-          ctx.fillText(curL, 225, curY);
-          ctx.restore();
-        } catch (e) {}
+        }
       }
 
-      // 3. Lower-Third / Title Banner
-      if (showBannerOverlay) {
-        try {
-          ctx.save();
-          const bx = (bannerTransform.x / 100) * W;
-          const by = (bannerTransform.y / 100) * H;
-          const bScale = bannerTransform.scale || 1.0;
-          ctx.translate(bx, by);
-          ctx.scale(bScale, bScale);
+      // 9. NEON GLOW WAVE (Double Neon Sine Wave with Bloom)
+      else if (waveformStyle === 'neon_glow_wave') {
+        ctx.strokeStyle = waveFill;
+        ctx.lineWidth = 4;
+        ctx.shadowColor = typeof waveFill === 'string' ? waveFill : '#06b6d4';
+        ctx.shadowBlur = 18;
+        ctx.beginPath();
 
-          ctx.fillStyle = 'rgba(10, 15, 25, 0.9)';
-          ctx.strokeStyle = '#6366f1';
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-          if (ctx.roundRect) ctx.roundRect(0, 0, 220, 48, 10);
-          else ctx.rect(0, 0, 220, 48);
-          ctx.fill();
-          ctx.stroke();
+        const points = 60;
+        const step = (W * 0.7) / points;
+        const startX = W * 0.15;
 
-          ctx.fillStyle = '#818cf8';
-          ctx.font = 'bold 10px sans-serif';
-          ctx.direction = 'rtl';
-          ctx.fillText(`CastFlow Studio • פרק ${episode.episodeNumber}`, 208, 18);
-          ctx.fillStyle = '#ffffff';
-          ctx.font = 'bold 12px sans-serif';
-          ctx.fillText(episode.title.slice(0, 26), 208, 36);
-          ctx.restore();
-        } catch (e) {}
+        for (let i = 0; i < points; i++) {
+          const rawVal = ((timeArray[i * 2] || 128) - 128) / 128;
+          const y = waveCenterY + rawVal * (waveformHeight * 0.75) * waveformSensitivity;
+          const x = startX + i * step;
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+
+        // Secondary Harmonic Wave
+        ctx.beginPath();
+        for (let i = 0; i < points; i++) {
+          const rawVal = ((timeArray[(i * 3) % timeArray.length] || 128) - 128) / 128;
+          const y = waveCenterY - rawVal * (waveformHeight * 0.45) * waveformSensitivity;
+          const x = startX + i * step;
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        ctx.shadowBlur = 0;
       }
 
-      // 4. Subtitles
-      if (showSubtitles && activeSubtitle) {
-        try {
-          ctx.save();
-          const sx = (subtitleTransform.x / 100) * W;
-          const sy = (subtitleTransform.y / 100) * H;
-          const sScale = subtitleTransform.scale || 1.0;
-          ctx.translate(sx, sy);
-          ctx.scale(sScale, sScale);
+      // 10. SPECTRUM 3D (Reflective 3D Glass Equalizer Bars)
+      else if (waveformStyle === 'spectrum_3d') {
+        const barCount = 36;
+        const barWidth = (W * 0.6) / barCount;
+        const startX = W * 0.2;
 
-          ctx.font = 'bold 20px sans-serif';
-          ctx.direction = 'rtl';
-          ctx.textAlign = 'center';
-          const subText = activeSubtitle.text;
-          const metrics = ctx.measureText(subText);
-          const subW = metrics.width + 28;
+        for (let i = 0; i < barCount; i++) {
+          const rawVal = freqArray[i * 2] || 10;
+          const height = Math.max(6, (rawVal / 255) * waveformHeight * waveformSensitivity);
+          const x = startX + i * barWidth;
 
-          ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+          // Main Top Bar
+          ctx.fillStyle = waveFill;
           ctx.beginPath();
-          if (ctx.roundRect) ctx.roundRect(-subW / 2, -24, subW, 34, 10);
-          else ctx.rect(-subW / 2, -24, subW, 34);
+          if (ctx.roundRect) ctx.roundRect(x, waveCenterY - height, barWidth - 3, height, [4, 4, 0, 0]);
+          else ctx.rect(x, waveCenterY - height, barWidth - 3, height);
           ctx.fill();
 
-          ctx.shadowColor = 'rgba(0, 0, 0, 0.9)';
-          ctx.shadowBlur = 4;
-          ctx.fillStyle = '#ffffff';
-          ctx.fillText(subText, 0, 0);
-          ctx.restore();
-        } catch (e) {}
+          // Mirror Reflection Lower Bar
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.18)';
+          ctx.beginPath();
+          if (ctx.roundRect) ctx.roundRect(x, waveCenterY + 2, barWidth - 3, height * 0.35, [0, 0, 4, 4]);
+          else ctx.rect(x, waveCenterY + 2, barWidth - 3, height * 0.35);
+          ctx.fill();
+        }
+      }
+
+      // Ambient Vignette Effect
+      if (ambientVignette) {
+        const vig = ctx.createRadialGradient(W / 2, H / 2, W * 0.35, W / 2, H / 2, W * 0.75);
+        vig.addColorStop(0, 'rgba(0, 0, 0, 0)');
+        vig.addColorStop(1, 'rgba(0, 0, 0, 0.6)');
+        ctx.fillStyle = vig;
+        ctx.fillRect(0, 0, W, H);
+      }
+
+      // E. DRAW OVERLAYS ON CANVAS ONLY DURING VIDEO EXPORT (Prevents duplicate double-layer ghosting in editor view)
+      if (isExportingVideo) {
+        // High-DPI / Full HD Resolution scale factor relative to the stage editor baseline (720px)
+        const resScale = Math.max(1.0, W / 720);
+
+        // 1. Logo
+        if (logoConfig.show && logoImageObjectRef.current) {
+          try {
+            ctx.save();
+            ctx.globalAlpha = logoConfig.opacity || 0.9;
+            const lx = (logoTransform.x / 100) * W;
+            const ly = (logoTransform.y / 100) * H;
+            const lSize = (logoConfig.size || 80) * (logoTransform.scale || 1.0) * (resScale * 0.7);
+            ctx.drawImage(logoImageObjectRef.current, lx, ly, lSize, lSize);
+            ctx.restore();
+          } catch (e) {}
+        }
+
+        // 2. Host Tag Overlay
+        if (showHostTag && hostName) {
+          try {
+            ctx.save();
+            const hx = (hostTransform.x / 100) * W;
+            const hy = (hostTransform.y / 100) * H;
+            const hScale = (hostTransform.scale || 1.0) * resScale;
+            ctx.translate(hx, hy);
+            ctx.scale(hScale, hScale);
+
+            const bgRgba = hexToRgba(hostCustomStyle.backgroundColor || '#030712', hostCustomStyle.backgroundOpacity ?? 95);
+            ctx.fillStyle = bgRgba;
+            ctx.strokeStyle = hostCustomStyle.borderColor || '#06b6d4';
+            ctx.lineWidth = hostCustomStyle.borderWidth ?? 1.5;
+
+            if ((hostCustomStyle.glowBlur ?? 0) > 0) {
+              ctx.shadowColor = hostCustomStyle.glowColor || '#06b6d4';
+              ctx.shadowBlur = hostCustomStyle.glowBlur || 0;
+            }
+
+            const hRadius = hostCustomStyle.borderRadius ?? 20;
+            ctx.beginPath();
+            if (ctx.roundRect) ctx.roundRect(0, 0, 190, 52, Math.min(26, hRadius));
+            else ctx.rect(0, 0, 190, 52);
+            ctx.fill();
+            if (hostCustomStyle.borderWidth && hostCustomStyle.borderWidth > 0) ctx.stroke();
+
+            ctx.shadowBlur = 0;
+            ctx.fillStyle = hostCustomStyle.textColor || '#ffffff';
+            ctx.font = `${hostCustomStyle.fontWeight || 'bold'} ${hostCustomStyle.fontSize || 13}px ${hostCustomStyle.fontFamily || 'sans-serif'}`;
+            ctx.direction = 'rtl';
+            ctx.fillText(`🎙️ ${hostName}`, 175, 23);
+
+            if (hostRole) {
+              ctx.fillStyle = hostCustomStyle.secondaryTextColor || hostCustomStyle.borderColor || '#06b6d4';
+              ctx.font = `600 ${hostCustomStyle.secondaryFontSize || 10}px ${hostCustomStyle.fontFamily || 'sans-serif'}`;
+              ctx.fillText(hostRole, 175, 41);
+            }
+            ctx.restore();
+          } catch (e) {}
+        }
+
+        // 3. Fact Card Overlay
+        if (showFactOverlay && currentFact) {
+          try {
+            ctx.save();
+            const fx = (factTransform.x / 100) * W;
+            const fy = (factTransform.y / 100) * H;
+            const fScale = (factTransform.scale || 1.0) * resScale;
+            ctx.translate(fx, fy);
+            ctx.scale(fScale, fScale);
+
+            const fBg = hexToRgba(factCustomStyle.backgroundColor || '#030712', factCustomStyle.backgroundOpacity ?? 95);
+            ctx.fillStyle = fBg;
+            ctx.strokeStyle = factCustomStyle.borderColor || '#f59e0b';
+            ctx.lineWidth = factCustomStyle.borderWidth ?? 1.5;
+
+            if ((factCustomStyle.glowBlur ?? 0) > 0) {
+              ctx.shadowColor = factCustomStyle.glowColor || '#f59e0b';
+              ctx.shadowBlur = factCustomStyle.glowBlur || 0;
+            }
+
+            const fRadius = factCustomStyle.borderRadius ?? 16;
+            ctx.beginPath();
+            if (ctx.roundRect) ctx.roundRect(0, 0, 240, 85, Math.min(20, fRadius));
+            else ctx.rect(0, 0, 240, 85);
+            ctx.fill();
+            if (factCustomStyle.borderWidth && factCustomStyle.borderWidth > 0) ctx.stroke();
+
+            ctx.shadowBlur = 0;
+            ctx.fillStyle = factCustomStyle.secondaryTextColor || factCustomStyle.borderColor || '#f59e0b';
+            ctx.font = `bold ${factCustomStyle.secondaryFontSize || 10}px ${factCustomStyle.fontFamily || 'sans-serif'}`;
+            ctx.direction = 'rtl';
+            ctx.fillText(currentFact.source || 'עובדה על הסרט', 225, 20);
+
+            ctx.fillStyle = factCustomStyle.textColor || '#ffffff';
+            ctx.font = `${factCustomStyle.fontWeight || 'bold'} ${factCustomStyle.fontSize || 11}px ${factCustomStyle.fontFamily || 'sans-serif'}`;
+            const words = currentFact.fact.split(' ');
+            let curL = '';
+            let curY = 38;
+            for (let w of words) {
+              const test = curL + w + ' ';
+              if (ctx.measureText(test).width > 210) {
+                ctx.fillText(curL, 225, curY);
+                curL = w + ' ';
+                curY += 16;
+                if (curY > 75) break;
+              } else {
+                curL = test;
+              }
+            }
+            ctx.fillText(curL, 225, curY);
+            ctx.restore();
+          } catch (e) {}
+        }
+
+        // 4. Quote Overlay
+        if (showQuoteOverlay && quoteText) {
+          try {
+            ctx.save();
+            const qx = (quoteTransform.x / 100) * W;
+            const qy = (quoteTransform.y / 100) * H;
+            const qScale = (quoteTransform.scale || 1.0) * resScale;
+            ctx.translate(qx, qy);
+            ctx.scale(qScale, qScale);
+
+            const qBg = hexToRgba(quoteCustomStyle.backgroundColor || '#030712', quoteCustomStyle.backgroundOpacity ?? 95);
+            ctx.fillStyle = qBg;
+            ctx.strokeStyle = quoteCustomStyle.borderColor || '#a855f7';
+            ctx.lineWidth = quoteCustomStyle.borderWidth ?? 1.5;
+
+            if ((quoteCustomStyle.glowBlur ?? 0) > 0) {
+              ctx.shadowColor = quoteCustomStyle.glowColor || '#a855f7';
+              ctx.shadowBlur = quoteCustomStyle.glowBlur || 0;
+            }
+
+            const qRadius = quoteCustomStyle.borderRadius ?? 16;
+            ctx.beginPath();
+            if (ctx.roundRect) ctx.roundRect(-140, 0, 280, 68, Math.min(16, qRadius));
+            else ctx.rect(-140, 0, 280, 68);
+            ctx.fill();
+            if (quoteCustomStyle.borderWidth && quoteCustomStyle.borderWidth > 0) ctx.stroke();
+
+            ctx.shadowBlur = 0;
+            ctx.fillStyle = quoteCustomStyle.textColor || '#ffffff';
+            ctx.font = `italic ${quoteCustomStyle.fontWeight || 'bold'} ${quoteCustomStyle.fontSize || 12}px ${quoteCustomStyle.fontFamily || 'sans-serif'}`;
+            ctx.direction = 'rtl';
+            ctx.textAlign = 'center';
+            ctx.fillText(`"${quoteText.slice(0, 42)}"`, 0, 28);
+
+            if (quoteSpeaker) {
+              ctx.fillStyle = quoteCustomStyle.secondaryTextColor || quoteCustomStyle.borderColor || '#c084fc';
+              ctx.font = `600 ${quoteCustomStyle.secondaryFontSize || 10}px ${quoteCustomStyle.fontFamily || 'sans-serif'}`;
+              ctx.fillText(`— ${quoteSpeaker}`, 0, 50);
+            }
+            ctx.restore();
+          } catch (e) {}
+        }
+
+        // 5. Lower-Third / Title Banner
+        if (showBannerOverlay) {
+          try {
+            ctx.save();
+            const bx = (bannerTransform.x / 100) * W;
+            const by = (bannerTransform.y / 100) * H;
+            const bScale = (bannerTransform.scale || 1.0) * resScale;
+            ctx.translate(bx, by);
+            ctx.scale(bScale, bScale);
+
+            const bBg = hexToRgba(bannerCustomStyle.backgroundColor || '#030712', bannerCustomStyle.backgroundOpacity ?? 90);
+            ctx.fillStyle = bBg;
+            ctx.strokeStyle = bannerCustomStyle.borderColor || '#6366f1';
+            ctx.lineWidth = bannerCustomStyle.borderWidth ?? 2;
+
+            if ((bannerCustomStyle.glowBlur ?? 0) > 0) {
+              ctx.shadowColor = bannerCustomStyle.glowColor || '#6366f1';
+              ctx.shadowBlur = bannerCustomStyle.glowBlur || 0;
+            }
+
+            const bRadius = bannerCustomStyle.borderRadius ?? 12;
+            ctx.beginPath();
+            if (ctx.roundRect) ctx.roundRect(0, 0, 230, 54, Math.min(16, bRadius));
+            else ctx.rect(0, 0, 230, 54);
+            ctx.fill();
+            if (bannerCustomStyle.borderWidth && bannerCustomStyle.borderWidth > 0) ctx.stroke();
+
+            ctx.shadowBlur = 0;
+            ctx.fillStyle = bannerCustomStyle.secondaryTextColor || bannerCustomStyle.borderColor || '#818cf8';
+            ctx.font = `bold ${bannerCustomStyle.secondaryFontSize || 10}px ${bannerCustomStyle.fontFamily || 'sans-serif'}`;
+            ctx.direction = 'rtl';
+            ctx.fillText(bannerSubtitle, 218, 20);
+
+            ctx.fillStyle = bannerCustomStyle.textColor || '#ffffff';
+            ctx.font = `${bannerCustomStyle.fontWeight || 'bold'} ${bannerCustomStyle.fontSize || 12}px ${bannerCustomStyle.fontFamily || 'sans-serif'}`;
+            ctx.fillText(episodeTitleText.slice(0, 28), 218, 40);
+            ctx.restore();
+          } catch (e) {}
+        }
+
+        // 6. Rating Card
+        if (showRatingOverlay) {
+          try {
+            ctx.save();
+            const rx = (ratingTransform.x / 100) * W;
+            const ry = (ratingTransform.y / 100) * H;
+            const rScale = (ratingTransform.scale || 1.0) * resScale;
+            ctx.translate(rx, ry);
+            ctx.scale(rScale, rScale);
+
+            const rBg = hexToRgba(ratingCustomStyle.backgroundColor || '#030712', ratingCustomStyle.backgroundOpacity ?? 95);
+            ctx.fillStyle = rBg;
+            ctx.strokeStyle = ratingCustomStyle.borderColor || '#f59e0b';
+            ctx.lineWidth = ratingCustomStyle.borderWidth ?? 1.5;
+
+            const rRadius = ratingCustomStyle.borderRadius ?? 16;
+            ctx.beginPath();
+            if (ctx.roundRect) ctx.roundRect(-100, 0, 200, 52, Math.min(16, rRadius));
+            else ctx.rect(-100, 0, 200, 52);
+            ctx.fill();
+            if (ratingCustomStyle.borderWidth && ratingCustomStyle.borderWidth > 0) ctx.stroke();
+
+            ctx.fillStyle = ratingCustomStyle.secondaryTextColor || '#f59e0b';
+            ctx.font = `bold ${ratingCustomStyle.secondaryFontSize || 10}px ${ratingCustomStyle.fontFamily || 'sans-serif'}`;
+            ctx.direction = 'rtl';
+            ctx.textAlign = 'center';
+            ctx.fillText('🏆 ציוני ודירוגי ביקורת', 0, 18);
+
+            ctx.fillStyle = ratingCustomStyle.textColor || '#ffffff';
+            ctx.font = `${ratingCustomStyle.fontWeight || 'bold'} ${ratingCustomStyle.fontSize || 12}px ${ratingCustomStyle.fontFamily || 'sans-serif'}`;
+            ctx.fillText(`IMDb: ${imdbScore}  •  RT: ${rottenScore}  •  ציון: ${personalScore}`, 0, 38);
+            ctx.restore();
+          } catch (e) {}
+        }
+
+        // 7. Spoiler Alert
+        if (showSpoilerOverlay) {
+          try {
+            ctx.save();
+            const spx = (spoilerTransform.x / 100) * W;
+            const spy = (spoilerTransform.y / 100) * H;
+            const spScale = (spoilerTransform.scale || 1.0) * resScale;
+            ctx.translate(spx, spy);
+            ctx.scale(spScale, spScale);
+
+            const spBg = hexToRgba(spoilerCustomStyle.backgroundColor || '#450a0a', spoilerCustomStyle.backgroundOpacity ?? 95);
+            ctx.fillStyle = spBg;
+            ctx.strokeStyle = spoilerCustomStyle.borderColor || '#ef4444';
+            ctx.lineWidth = spoilerCustomStyle.borderWidth ?? 1.5;
+
+            const spRadius = spoilerCustomStyle.borderRadius ?? 12;
+            ctx.beginPath();
+            if (ctx.roundRect) ctx.roundRect(-120, 0, 240, 42, Math.min(12, spRadius));
+            else ctx.rect(-120, 0, 240, 42);
+            ctx.fill();
+            if (spoilerCustomStyle.borderWidth && spoilerCustomStyle.borderWidth > 0) ctx.stroke();
+
+            ctx.fillStyle = spoilerCustomStyle.textColor || '#ffffff';
+            ctx.font = `${spoilerCustomStyle.fontWeight || 'bold'} ${spoilerCustomStyle.fontSize || 11}px ${spoilerCustomStyle.fontFamily || 'sans-serif'}`;
+            ctx.direction = 'rtl';
+            ctx.textAlign = 'center';
+            ctx.fillText(spoilerText.slice(0, 38), 0, 26);
+            ctx.restore();
+          } catch (e) {}
+        }
+
+        // 8. Poster PIP Overlay
+        if (showPosterPip && posterUrl && posterImageObjectRef.current) {
+          try {
+            ctx.save();
+            const px = (posterTransform.x / 100) * W;
+            const py = (posterTransform.y / 100) * H;
+            const pScale = (posterTransform.scale || 1.0) * resScale;
+            const pw = 112 * pScale;
+            const ph = posterShape === 'rectangle' ? 168 * pScale : pw;
+            ctx.translate(px, py);
+
+            if ((posterCustomStyle.glowBlur ?? 0) > 0) {
+              ctx.shadowColor = posterCustomStyle.glowColor || '#6366f1';
+              ctx.shadowBlur = (posterCustomStyle.glowBlur || 0) * resScale;
+            }
+
+            const pRadius = posterShape === 'circle' ? pw / 2 : ((posterCustomStyle.borderRadius ?? 16) * pScale);
+            ctx.beginPath();
+            if (ctx.roundRect) ctx.roundRect(0, 0, pw, ph, pRadius);
+            else ctx.rect(0, 0, pw, ph);
+            ctx.save();
+            ctx.clip();
+            ctx.drawImage(posterImageObjectRef.current, 0, 0, pw, ph);
+            ctx.restore();
+
+            if ((posterCustomStyle.borderWidth ?? 2) > 0) {
+              ctx.strokeStyle = posterCustomStyle.borderColor || '#6366f1';
+              ctx.lineWidth = (posterCustomStyle.borderWidth ?? 2) * pScale;
+              ctx.beginPath();
+              if (ctx.roundRect) ctx.roundRect(0, 0, pw, ph, pRadius);
+              else ctx.rect(0, 0, pw, ph);
+              ctx.stroke();
+            }
+            ctx.restore();
+          } catch (e) {}
+        }
+
+        // 9. Subtitles
+        if (showSubtitles && activeSubtitle) {
+          try {
+            ctx.save();
+            const sx = (subtitleTransform.x / 100) * W;
+            const sy = (subtitleTransform.y / 100) * H;
+            const sScale = (subtitleTransform.scale || 1.0) * resScale;
+            ctx.translate(sx, sy);
+            ctx.scale(sScale, sScale);
+
+            ctx.font = `${subtitleCustomStyle.fontWeight || 'bold'} ${subtitleCustomStyle.fontSize || 20}px ${subtitleCustomStyle.fontFamily || 'sans-serif'}`;
+            ctx.direction = 'rtl';
+            ctx.textAlign = 'center';
+            const subText = activeSubtitle.text;
+            const metrics = ctx.measureText(subText);
+            const subW = metrics.width + 32;
+
+            const sBg = hexToRgba(subtitleCustomStyle.backgroundColor || '#000000', subtitleCustomStyle.backgroundOpacity ?? 80);
+            ctx.fillStyle = sBg;
+            ctx.strokeStyle = subtitleCustomStyle.borderColor || 'transparent';
+            ctx.lineWidth = subtitleCustomStyle.borderWidth ?? 0;
+
+            if ((subtitleCustomStyle.glowBlur ?? 0) > 0) {
+              ctx.shadowColor = subtitleCustomStyle.glowColor || '#000000';
+              ctx.shadowBlur = subtitleCustomStyle.glowBlur || 0;
+            }
+
+            const sRadius = subtitleCustomStyle.borderRadius ?? 12;
+            ctx.beginPath();
+            if (ctx.roundRect) ctx.roundRect(-subW / 2, -26, subW, 38, Math.min(16, sRadius));
+            else ctx.rect(-subW / 2, -26, subW, 38);
+            ctx.fill();
+            if (subtitleCustomStyle.borderWidth && subtitleCustomStyle.borderWidth > 0) ctx.stroke();
+
+            ctx.shadowBlur = 0;
+            ctx.fillStyle = subtitleCustomStyle.textColor || '#ffffff';
+            ctx.fillText(subText, 0, 0);
+            ctx.restore();
+          } catch (e) {}
+        }
       }
 
       animId = requestAnimationFrame(renderStage);
@@ -660,6 +1761,7 @@ export default function AudioEditorAudiogramStudio({
   }, [
     isOpen, 
     isPlaying, 
+    isExportingVideo,
     bgType, 
     selectedBgPreset, 
     customBgImage,
@@ -699,8 +1801,17 @@ export default function AudioEditorAudiogramStudio({
       audioElementRef.current.pause();
       setIsPlaying(false);
     } else {
-      audioElementRef.current.play().catch(e => console.error(e));
-      setIsPlaying(true);
+      audioElementRef.current.volume = isMuted ? 0 : (audioVolume || 1.0);
+      audioElementRef.current.muted = isMuted;
+      audioElementRef.current.play().then(() => {
+        setIsPlaying(true);
+        if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
+          audioContextRef.current.resume().catch(() => {});
+        }
+      }).catch(e => {
+        console.error('Audio playback failed:', e);
+        setIsPlaying(false);
+      });
     }
   };
 
@@ -808,13 +1919,45 @@ export default function AudioEditorAudiogramStudio({
       ];
       const exportStream = new MediaStream(combinedTracks);
 
-      let chosenMime = 'video/webm;codecs=vp8,opus';
-      if (!MediaRecorder.isTypeSupported(chosenMime)) chosenMime = 'video/webm';
-      if (!MediaRecorder.isTypeSupported(chosenMime)) chosenMime = 'video/mp4';
+      // Determine best matching mime type based on user selection
+      let chosenMime = '';
+      if (exportFormat === 'mp4') {
+        const mp4Types = [
+          'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+          'video/mp4;codecs=avc1,mp4a.40.2',
+          'video/mp4;codecs=h264,aac',
+          'video/mp4;codecs=h264',
+          'video/mp4'
+        ];
+        for (const t of mp4Types) {
+          if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(t)) {
+            chosenMime = t;
+            break;
+          }
+        }
+        if (!chosenMime) {
+          if (MediaRecorder.isTypeSupported('video/webm;codecs=h264,opus')) chosenMime = 'video/webm;codecs=h264,opus';
+          else if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')) chosenMime = 'video/webm;codecs=vp9,opus';
+          else chosenMime = 'video/webm';
+        }
+      } else {
+        const webmTypes = [
+          'video/webm;codecs=vp9,opus',
+          'video/webm;codecs=vp8,opus',
+          'video/webm'
+        ];
+        for (const t of webmTypes) {
+          if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(t)) {
+            chosenMime = t;
+            break;
+          }
+        }
+        if (!chosenMime) chosenMime = 'video/webm';
+      }
 
       const recorder = new MediaRecorder(exportStream, {
         mimeType: chosenMime,
-        videoBitsPerSecond: 5000000
+        videoBitsPerSecond: 8000000 // 8 Mbps broadcast quality
       });
 
       const chunks: Blob[] = [];
@@ -823,8 +1966,9 @@ export default function AudioEditorAudiogramStudio({
       };
 
       recorder.onstop = () => {
-        const finalBlob = new Blob(chunks, { type: chosenMime });
-        const ext = chosenMime.includes('mp4') ? 'mp4' : 'webm';
+        const isMp4 = exportFormat === 'mp4' || chosenMime.includes('mp4');
+        const ext = isMp4 ? 'mp4' : 'webm';
+        const finalBlob = new Blob(chunks, { type: isMp4 ? 'video/mp4' : chosenMime });
         const downloadUrl = URL.createObjectURL(finalBlob);
         const a = document.createElement('a');
         a.href = downloadUrl;
@@ -838,7 +1982,7 @@ export default function AudioEditorAudiogramStudio({
         setIsPlaying(false);
         setExportProgress(100);
         exportAudioCtx.close().catch(() => {});
-        alert('ייצוא הווידאו הושלם בהצלחה והקובץ ירד למחשב שלכם!');
+        alert(`ייצוא הווידאו (${ext.toUpperCase()}) הושלם בהצלחה והקובץ ירד למחשב שלכם!`);
       };
 
       // Start recording
@@ -902,6 +2046,25 @@ export default function AudioEditorAudiogramStudio({
           </div>
 
           <div className="flex items-center gap-2">
+            {/* Hidden Audio File Input */}
+            <input
+              ref={audioUploadInputRef}
+              type="file"
+              accept="audio/*,video/*,.mp3,.wav,.m4a,.webm,.ogg"
+              onChange={handleUploadAudioFileForEditor}
+              className="hidden"
+            />
+
+            {/* Upload Audio File Button */}
+            <button
+              onClick={() => audioUploadInputRef.current?.click()}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 hover:text-white border border-emerald-500/40 text-xs font-bold transition-all shadow-md active:scale-95"
+              title="העלאת קובץ שמע ישירות מהמחשב לעריכה וייצוא"
+            >
+              <Upload className="w-3.5 h-3.5 text-emerald-400" />
+              <span>טען שמע מהמחשב</span>
+            </button>
+
             {/* Free Drag Mode Toggle */}
             <button
               onClick={() => setIsEditMode(!isEditMode)}
@@ -916,6 +2079,20 @@ export default function AudioEditorAudiogramStudio({
               <span>{isEditMode ? 'מצב גרירה פתוח' : 'שכבות נעולות'}</span>
             </button>
 
+            {/* Save Studio Settings to Episode */}
+            <button
+              onClick={handleSaveStudioConfig}
+              className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all shadow-md active:scale-95 border ${
+                isSaveSuccess
+                  ? 'bg-emerald-600 border-emerald-400 text-white shadow-emerald-900/40 animate-in zoom-in-95'
+                  : 'bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 hover:text-white border-indigo-500/40'
+              }`}
+              title="שמור את כל הגדרות העיצוב, המיקומים, הטקסטים והצבעים ישירות לפרק"
+            >
+              {isSaveSuccess ? <Check className="w-3.5 h-3.5 text-white" /> : <Save className="w-3.5 h-3.5 text-indigo-400" />}
+              <span>{isSaveSuccess ? 'העיצוב נשמר ✓' : 'שמור עיצוב לפרק'}</span>
+            </button>
+
             <button
               onClick={onClose}
               className="p-2 text-slate-400 hover:text-white rounded-xl hover:bg-slate-800 transition-colors"
@@ -925,33 +2102,96 @@ export default function AudioEditorAudiogramStudio({
           </div>
         </div>
 
+        {/* Floating Success Save Toast */}
+        {isSaveSuccess && saveMessage && (
+          <div className="bg-emerald-950/90 border-b border-emerald-500/50 text-emerald-300 px-4 py-2 text-xs font-bold flex items-center justify-between animate-in slide-in-from-top-2">
+            <div className="flex items-center gap-2">
+              <Check className="w-4 h-4 text-emerald-400" />
+              <span>{saveMessage}</span>
+            </div>
+            <span className="text-[10px] text-emerald-400/80 font-mono">הסנכרון נשמר במאגר הנתונים</span>
+          </div>
+        )}
+
         {/* Main Studio Body Grid (Left: Stage Preview, Right: Controls & Tools) */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 p-4 sm:p-6 overflow-y-auto flex-1">
           {/* LEFT: Live Stage Canvas Viewport (7 Cols) */}
           <div className="lg:col-span-7 space-y-3 flex flex-col justify-between">
+            {/* Aspect Ratio Switcher Bar */}
+            <div className="flex items-center justify-between px-1">
+              <span className="text-[11px] font-bold text-slate-400 flex items-center gap-1.5">
+                <Tv className="w-3.5 h-3.5 text-cyan-400" />
+                <span>יחס מסך לתצוגה וסושיאל:</span>
+              </span>
+              <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800 text-[11px]">
+                <button
+                  type="button"
+                  onClick={() => setAspectRatio('16:9')}
+                  className={`px-2.5 py-1 rounded-lg font-bold transition-all ${
+                    aspectRatio === '16:9' ? 'bg-cyan-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  📺 16:9 רוחב
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAspectRatio('9:16')}
+                  className={`px-2.5 py-1 rounded-lg font-bold transition-all ${
+                    aspectRatio === '9:16' ? 'bg-pink-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  📱 9:16 רילס / טיקטוק
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAspectRatio('1:1')}
+                  className={`px-2.5 py-1 rounded-lg font-bold transition-all ${
+                    aspectRatio === '1:1' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  ⏹️ 1:1 ריבוע
+                </button>
+              </div>
+            </div>
+
             {/* Visual Canvas Stage Viewport */}
-            <div className="relative aspect-video w-full rounded-3xl overflow-hidden border border-slate-800 shadow-2xl bg-black flex items-center justify-center group">
+            <div className={`relative w-full rounded-3xl overflow-hidden border border-slate-800 shadow-2xl bg-black flex items-center justify-center group ${
+              aspectRatio === '16:9' ? 'aspect-video' : aspectRatio === '9:16' ? 'aspect-[9/16] max-h-[460px] mx-auto' : 'aspect-square max-h-[440px] mx-auto'
+            }`}>
               <canvas
                 ref={canvasRef}
-                width={854}
-                height={480}
+                width={aspectRatio === '16:9' ? 1920 : aspectRatio === '9:16' ? 1080 : 1080}
+                height={aspectRatio === '16:9' ? 1080 : aspectRatio === '9:16' ? 1920 : 1080}
                 className="w-full h-full object-contain"
               />
 
-              {/* OVERLAY 1: Permanent Logo (הלוגו שקבעתי) - DRAGGABLE */}
-              {logoConfig.show && logoConfig.url && (
-                <DraggableOverlay
-                  transform={logoTransform}
-                  onUpdateTransform={setLogoTransform}
-                  isEditMode={isEditMode}
-                  defaultPosition={{ x: 80, y: 5, scale: 1.0 }}
-                >
-                  <div style={{ opacity: logoConfig.opacity }}>
+              {/* INTERACTIVE DOM OVERLAYS (Shown only during editing/preview to avoid duplicate canvas layers during video export) */}
+              {!isExportingVideo && (
+                <>
+                  {/* OVERLAY 1: Permanent Logo (הלוגו שקבעתי) - DRAGGABLE */}
+                  {logoConfig.show && logoConfig.url && (
+                    <DraggableOverlay
+                      transform={logoTransform}
+                      onUpdateTransform={setLogoTransform}
+                      isEditMode={isEditMode}
+                      defaultPosition={{ x: 80, y: 5, scale: 1.0 }}
+                    >
+                  <div
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedElementToStyle('logo');
+                      setActiveTab('overlays');
+                    }}
+                    style={{ opacity: logoConfig.opacity }}
+                    className={`cursor-pointer transition-all ${
+                      selectedElementToStyle === 'logo' ? 'ring-2 ring-pink-500 ring-offset-2 ring-offset-black rounded-xl' : ''
+                    }`}
+                  >
                     <img
                       src={logoConfig.url}
                       alt="Podcast Logo"
                       style={{ width: `${logoConfig.size}px`, height: `${logoConfig.size}px` }}
-                      className="object-contain drop-shadow-xl select-none pointer-events-none"
+                      className="object-contain drop-shadow-2xl select-none pointer-events-none"
                     />
                   </div>
                 </DraggableOverlay>
@@ -965,18 +2205,57 @@ export default function AudioEditorAudiogramStudio({
                   isEditMode={isEditMode}
                   defaultPosition={{ x: 5, y: 8, scale: 1.0 }}
                 >
-                  <div className="max-w-xs p-3 rounded-2xl bg-gradient-to-br from-slate-950/95 via-indigo-950/90 to-slate-950/95 border border-amber-500/40 shadow-2xl text-right animate-in fade-in select-none">
-                    <div className="flex items-center justify-between gap-1.5 mb-1">
-                      <span className="px-2 py-0.5 rounded text-[9px] font-mono font-bold bg-amber-500 text-slate-950">
+                  <div
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedElementToStyle('fact');
+                      setActiveTab('styler');
+                    }}
+                    style={{
+                      fontFamily: factCustomStyle.fontFamily || 'Rubik',
+                      fontSize: `${factCustomStyle.fontSize || 12}px`,
+                      fontWeight: factCustomStyle.fontWeight || 'bold',
+                      color: factCustomStyle.textColor || '#ffffff',
+                      backgroundColor: factCustomStyle.backgroundColor 
+                        ? `${factCustomStyle.backgroundColor}${Math.round(((factCustomStyle.backgroundOpacity ?? 95) / 100) * 255).toString(16).padStart(2, '0')}` 
+                        : 'rgba(3, 7, 18, 0.95)',
+                      borderColor: factCustomStyle.borderColor || '#f59e0b',
+                      borderWidth: `${factCustomStyle.borderWidth ?? 1.5}px`,
+                      borderRadius: `${factCustomStyle.borderRadius ?? 16}px`,
+                      boxShadow: (factCustomStyle.glowBlur ?? 0) > 0 
+                        ? `0 0 ${factCustomStyle.glowBlur}px ${factCustomStyle.glowColor || '#f59e0b'}` 
+                        : '0 10px 25px -5px rgba(0,0,0,0.5)',
+                      padding: `${factCustomStyle.padding || 12}px`,
+                      textAlign: factCustomStyle.textAlign || 'right'
+                    }}
+                    className={`max-w-xs shadow-2xl select-none cursor-pointer transition-all animate-in fade-in ${
+                      selectedElementToStyle === 'fact' ? 'ring-2 ring-amber-400 ring-offset-2 ring-offset-black' : ''
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-1.5 mb-1.5">
+                      <span 
+                        style={{ 
+                          backgroundColor: factCustomStyle.borderColor || '#f59e0b', 
+                          color: '#030712',
+                          fontSize: `${factCustomStyle.secondaryFontSize || 9}px` 
+                        }}
+                        className="px-2 py-0.5 rounded font-mono font-bold"
+                      >
                         {currentFact.source}
                       </span>
                       {currentFact.ratingScore && (
-                        <span className="text-[10px] font-bold text-amber-400">
+                        <span 
+                          className="font-bold" 
+                          style={{ 
+                            color: factCustomStyle.secondaryTextColor || factCustomStyle.borderColor || '#f59e0b',
+                            fontSize: `${factCustomStyle.secondaryFontSize || 10}px` 
+                          }}
+                        >
                           ⭐ {currentFact.ratingScore}
                         </span>
                       )}
                     </div>
-                    <p className="text-[11px] font-bold text-white leading-snug line-clamp-3">
+                    <p className="leading-snug line-clamp-3">
                       {currentFact.fact}
                     </p>
                   </div>
@@ -991,18 +2270,111 @@ export default function AudioEditorAudiogramStudio({
                   isEditMode={isEditMode}
                   defaultPosition={{ x: 25, y: 65, scale: 1.0 }}
                 >
-                  <div className="max-w-md p-3 rounded-2xl bg-slate-950/95 border border-purple-500/40 text-center shadow-2xl select-none">
-                    <p className="text-xs font-bold text-white italic">
+                  <div
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedElementToStyle('quote');
+                      setActiveTab('styler');
+                    }}
+                    style={{
+                      fontFamily: quoteCustomStyle.fontFamily || 'Assistant',
+                      fontSize: `${quoteCustomStyle.fontSize || 14}px`,
+                      fontWeight: quoteCustomStyle.fontWeight || 'bold',
+                      color: quoteCustomStyle.textColor || '#ffffff',
+                      backgroundColor: quoteCustomStyle.backgroundColor 
+                        ? `${quoteCustomStyle.backgroundColor}${Math.round(((quoteCustomStyle.backgroundOpacity ?? 95) / 100) * 255).toString(16).padStart(2, '0')}` 
+                        : 'rgba(3, 7, 18, 0.95)',
+                      borderColor: quoteCustomStyle.borderColor || '#a855f7',
+                      borderWidth: `${quoteCustomStyle.borderWidth ?? 1.5}px`,
+                      borderRadius: `${quoteCustomStyle.borderRadius ?? 16}px`,
+                      boxShadow: (quoteCustomStyle.glowBlur ?? 0) > 0 
+                        ? `0 0 ${quoteCustomStyle.glowBlur}px ${quoteCustomStyle.glowColor || '#a855f7'}` 
+                        : '0 10px 25px -5px rgba(0,0,0,0.5)',
+                      padding: `${quoteCustomStyle.padding || 14}px`,
+                      textAlign: quoteCustomStyle.textAlign || 'center'
+                    }}
+                    className={`max-w-md shadow-2xl select-none cursor-pointer transition-all ${
+                      selectedElementToStyle === 'quote' ? 'ring-2 ring-purple-400 ring-offset-2 ring-offset-black' : ''
+                    }`}
+                  >
+                    <p className="italic">
                       {quoteText}
                     </p>
                     {quoteSpeaker && (
-                      <span className="text-[10px] text-purple-300 font-semibold mt-0.5 block">— {quoteSpeaker}</span>
+                      <span 
+                        style={{ 
+                          color: quoteCustomStyle.secondaryTextColor || quoteCustomStyle.borderColor || '#c084fc',
+                          fontSize: `${quoteCustomStyle.secondaryFontSize || 10}px`
+                        }} 
+                        className="opacity-90 mt-1 block font-semibold"
+                      >
+                        — {quoteSpeaker}
+                      </span>
                     )}
                   </div>
                 </DraggableOverlay>
               )}
 
-              {/* OVERLAY 4: Show Banner / Lower-Third (כרטיסיית כותרת) - DRAGGABLE */}
+              {/* OVERLAY 4: Host Name Badge Tag (תג מגיש/ת התוכנית) - DRAGGABLE */}
+              {showHostTag && hostName && (
+                <DraggableOverlay
+                  transform={hostTransform}
+                  onUpdateTransform={setHostTransform}
+                  isEditMode={isEditMode}
+                  defaultPosition={{ x: 70, y: 15, scale: 1.0 }}
+                >
+                  <div
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedElementToStyle('host');
+                      setActiveTab('styler');
+                    }}
+                    style={{
+                      fontFamily: hostCustomStyle.fontFamily || 'Rubik',
+                      fontSize: `${hostCustomStyle.fontSize || 13}px`,
+                      fontWeight: hostCustomStyle.fontWeight || 'bold',
+                      color: hostCustomStyle.textColor || '#ffffff',
+                      backgroundColor: hostCustomStyle.backgroundColor 
+                        ? `${hostCustomStyle.backgroundColor}${Math.round(((hostCustomStyle.backgroundOpacity ?? 95) / 100) * 255).toString(16).padStart(2, '0')}` 
+                        : 'rgba(3, 7, 18, 0.95)',
+                      borderColor: hostCustomStyle.borderColor || '#06b6d4',
+                      borderWidth: `${hostCustomStyle.borderWidth ?? 1.5}px`,
+                      borderRadius: `${hostCustomStyle.borderRadius ?? 9999}px`,
+                      boxShadow: (hostCustomStyle.glowBlur ?? 0) > 0 
+                        ? `0 0 ${hostCustomStyle.glowBlur}px ${hostCustomStyle.glowColor || '#06b6d4'}` 
+                        : '0 10px 25px -5px rgba(0,0,0,0.5)',
+                      padding: `${hostCustomStyle.padding || 8}px 16px`,
+                      textAlign: hostCustomStyle.textAlign || 'right'
+                    }}
+                    className={`inline-flex items-center gap-2.5 shadow-2xl select-none cursor-pointer transition-all ${
+                      selectedElementToStyle === 'host' ? 'ring-2 ring-cyan-400 ring-offset-2 ring-offset-black' : ''
+                    }`}
+                  >
+                    <span 
+                      style={{ backgroundColor: `${hostCustomStyle.borderColor || '#06b6d4'}33`, color: hostCustomStyle.borderColor || '#06b6d4' }}
+                      className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-black shrink-0"
+                    >
+                      🎙️
+                    </span>
+                    <div className="leading-tight">
+                      <span className="block font-bold">{hostName}</span>
+                      {hostRole && (
+                        <span 
+                          style={{ 
+                            color: hostCustomStyle.secondaryTextColor || hostCustomStyle.borderColor || '#06b6d4',
+                            fontSize: `${hostCustomStyle.secondaryFontSize || 10}px`
+                          }} 
+                          className="block font-medium opacity-90"
+                        >
+                          {hostRole}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </DraggableOverlay>
+              )}
+
+              {/* OVERLAY 5: Show Banner / Lower-Third (כרטיסיית כותרת) - DRAGGABLE */}
               {showBannerOverlay && (
                 <DraggableOverlay
                   transform={bannerTransform}
@@ -1010,16 +2382,144 @@ export default function AudioEditorAudiogramStudio({
                   isEditMode={isEditMode}
                   defaultPosition={{ x: 65, y: 78, scale: 1.0 }}
                 >
-                  <div className="max-w-xs p-2.5 rounded-xl bg-slate-950/90 border-r-4 border-indigo-500 border border-slate-800 text-right shadow-xl select-none">
-                    <span className="text-[9px] font-bold text-indigo-400 block uppercase">
-                      CastFlow Studio • פרק {episode.episodeNumber}
+                  <div
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedElementToStyle('banner');
+                      setActiveTab('styler');
+                    }}
+                    style={{
+                      fontFamily: bannerCustomStyle.fontFamily || 'Rubik',
+                      fontSize: `${bannerCustomStyle.fontSize || 13}px`,
+                      fontWeight: bannerCustomStyle.fontWeight || '900',
+                      color: bannerCustomStyle.textColor || '#ffffff',
+                      backgroundColor: bannerCustomStyle.backgroundColor 
+                        ? `${bannerCustomStyle.backgroundColor}${Math.round(((bannerCustomStyle.backgroundOpacity ?? 90) / 100) * 255).toString(16).padStart(2, '0')}` 
+                        : 'rgba(3, 7, 18, 0.90)',
+                      borderColor: bannerCustomStyle.borderColor || '#6366f1',
+                      borderWidth: `${bannerCustomStyle.borderWidth ?? 2}px`,
+                      borderRadius: `${bannerCustomStyle.borderRadius ?? 12}px`,
+                      boxShadow: (bannerCustomStyle.glowBlur ?? 0) > 0 
+                        ? `0 0 ${bannerCustomStyle.glowBlur}px ${bannerCustomStyle.glowColor || '#6366f1'}` 
+                        : '0 10px 25px -5px rgba(0,0,0,0.5)',
+                      padding: `${bannerCustomStyle.padding || 10}px 14px`,
+                      textAlign: bannerCustomStyle.textAlign || 'right'
+                    }}
+                    className={`max-w-xs shadow-xl select-none cursor-pointer transition-all ${
+                      selectedElementToStyle === 'banner' ? 'ring-2 ring-indigo-400 ring-offset-2 ring-offset-black' : ''
+                    }`}
+                  >
+                    <span 
+                      style={{ 
+                        color: bannerCustomStyle.secondaryTextColor || bannerCustomStyle.borderColor || '#818cf8',
+                        fontSize: `${bannerCustomStyle.secondaryFontSize || 9}px`
+                      }}
+                      className="font-bold block uppercase"
+                    >
+                      {bannerSubtitle}
                     </span>
-                    <h4 className="text-xs font-black text-white truncate">{episode.title}</h4>
+                    <h4 className="truncate">{episodeTitleText}</h4>
                   </div>
                 </DraggableOverlay>
               )}
 
-              {/* OVERLAY 5: Poster PIP - DRAGGABLE */}
+              {/* OVERLAY 6: Rating Card Overlay - DRAGGABLE */}
+              {showRatingOverlay && (
+                <DraggableOverlay
+                  transform={ratingTransform}
+                  onUpdateTransform={setRatingTransform}
+                  isEditMode={isEditMode}
+                  defaultPosition={{ x: 20, y: 75, scale: 1.0 }}
+                >
+                  <div
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedElementToStyle('rating');
+                      setActiveTab('styler');
+                    }}
+                    style={{
+                      fontFamily: ratingCustomStyle.fontFamily || 'Rubik',
+                      fontSize: `${ratingCustomStyle.fontSize || 13}px`,
+                      fontWeight: ratingCustomStyle.fontWeight || 'bold',
+                      color: ratingCustomStyle.textColor || '#ffffff',
+                      backgroundColor: ratingCustomStyle.backgroundColor 
+                        ? `${ratingCustomStyle.backgroundColor}${Math.round(((ratingCustomStyle.backgroundOpacity ?? 95) / 100) * 255).toString(16).padStart(2, '0')}` 
+                        : 'rgba(3, 7, 18, 0.95)',
+                      borderColor: ratingCustomStyle.borderColor || '#f59e0b',
+                      borderWidth: `${ratingCustomStyle.borderWidth ?? 1.5}px`,
+                      borderRadius: `${ratingCustomStyle.borderRadius ?? 16}px`,
+                      boxShadow: (ratingCustomStyle.glowBlur ?? 0) > 0 
+                        ? `0 0 ${ratingCustomStyle.glowBlur}px ${ratingCustomStyle.glowColor || '#f59e0b'}` 
+                        : '0 10px 25px -5px rgba(0,0,0,0.5)',
+                      padding: `${ratingCustomStyle.padding || 10}px 14px`,
+                      textAlign: ratingCustomStyle.textAlign || 'center'
+                    }}
+                    className={`shadow-2xl select-none cursor-pointer transition-all ${
+                      selectedElementToStyle === 'rating' ? 'ring-2 ring-amber-400 ring-offset-2 ring-offset-black' : ''
+                    }`}
+                  >
+                    <span 
+                      style={{ 
+                        color: ratingCustomStyle.secondaryTextColor || ratingCustomStyle.borderColor || '#f59e0b', 
+                        fontSize: `${ratingCustomStyle.secondaryFontSize || 10}px` 
+                      }}
+                      className="font-bold block mb-1"
+                    >
+                      🏆 ציוני ודירוגי ביקורת
+                    </span>
+                    <div className="flex items-center justify-center gap-2.5 font-mono font-bold text-xs">
+                      {imdbScore && <span className="flex items-center gap-1"><span className="text-yellow-400">⭐ IMDb:</span> {imdbScore}</span>}
+                      {rottenScore && <span className="flex items-center gap-1"><span className="text-rose-400">🍅 RT:</span> {rottenScore}</span>}
+                      {personalScore && <span className="flex items-center gap-1"><span className="text-amber-300">🎙️ ציון:</span> {personalScore}</span>}
+                    </div>
+                  </div>
+                </DraggableOverlay>
+              )}
+
+              {/* OVERLAY 7: Spoiler Alert Overlay - DRAGGABLE */}
+              {showSpoilerOverlay && (
+                <DraggableOverlay
+                  transform={spoilerTransform}
+                  onUpdateTransform={setSpoilerTransform}
+                  isEditMode={isEditMode}
+                  defaultPosition={{ x: 25, y: 15, scale: 1.0 }}
+                >
+                  <div
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedElementToStyle('spoiler');
+                      setActiveTab('styler');
+                    }}
+                    style={{
+                      fontFamily: spoilerCustomStyle.fontFamily || 'Rubik',
+                      fontSize: `${spoilerCustomStyle.fontSize || 12}px`,
+                      fontWeight: spoilerCustomStyle.fontWeight || 'bold',
+                      color: spoilerCustomStyle.textColor || '#ffffff',
+                      backgroundColor: spoilerCustomStyle.backgroundColor 
+                        ? `${spoilerCustomStyle.backgroundColor}${Math.round(((spoilerCustomStyle.backgroundOpacity ?? 95) / 100) * 255).toString(16).padStart(2, '0')}` 
+                        : 'rgba(69, 10, 10, 0.95)',
+                      borderColor: spoilerCustomStyle.borderColor || '#ef4444',
+                      borderWidth: `${spoilerCustomStyle.borderWidth ?? 1.5}px`,
+                      borderRadius: `${spoilerCustomStyle.borderRadius ?? 12}px`,
+                      boxShadow: (spoilerCustomStyle.glowBlur ?? 0) > 0 
+                        ? `0 0 ${spoilerCustomStyle.glowBlur}px ${spoilerCustomStyle.glowColor || '#ef4444'}` 
+                        : '0 10px 25px -5px rgba(0,0,0,0.5)',
+                      padding: `${spoilerCustomStyle.padding || 10}px 14px`,
+                      textAlign: spoilerCustomStyle.textAlign || 'center'
+                    }}
+                    className={`shadow-2xl select-none cursor-pointer transition-all animate-pulse ${
+                      selectedElementToStyle === 'spoiler' ? 'ring-2 ring-rose-500 ring-offset-2 ring-offset-black' : ''
+                    }`}
+                  >
+                    <span className="flex items-center justify-center gap-1.5 font-bold">
+                      <span>⚠️</span>
+                      <span>{spoilerText}</span>
+                    </span>
+                  </div>
+                </DraggableOverlay>
+              )}
+
+              {/* OVERLAY 8: Poster PIP - DRAGGABLE */}
               {showPosterPip && posterUrl && (
                 <DraggableOverlay
                   transform={posterTransform}
@@ -1027,13 +2527,30 @@ export default function AudioEditorAudiogramStudio({
                   isEditMode={isEditMode}
                   defaultPosition={{ x: 5, y: 45, scale: 1.0 }}
                 >
-                  <div className="w-28 rounded-xl overflow-hidden border-2 border-indigo-500/60 shadow-2xl select-none">
-                    <img src={posterUrl} alt="Movie Poster" className="w-full object-cover" />
+                  <div
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedElementToStyle('poster');
+                      setActiveTab('styler');
+                    }}
+                    style={{
+                      borderColor: posterCustomStyle.borderColor || '#6366f1',
+                      borderWidth: `${posterCustomStyle.borderWidth ?? 2}px`,
+                      borderRadius: `${posterCustomStyle.borderRadius ?? 16}px`,
+                      boxShadow: (posterCustomStyle.glowBlur ?? 0) > 0 
+                        ? `0 0 ${posterCustomStyle.glowBlur}px ${posterCustomStyle.glowColor || '#6366f1'}` 
+                        : '0 10px 25px -5px rgba(0,0,0,0.5)'
+                    }}
+                    className={`w-28 overflow-hidden shadow-2xl select-none cursor-pointer transition-all ${
+                      posterShape === 'circle' ? 'rounded-full aspect-square' : posterShape === 'rectangle' ? 'rounded-xl aspect-[2/3]' : 'rounded-2xl aspect-square'
+                    } ${selectedElementToStyle === 'poster' ? 'ring-2 ring-pink-400 ring-offset-2 ring-offset-black' : ''}`}
+                  >
+                    <img src={posterUrl} alt="Movie Poster" className="w-full h-full object-cover" />
                   </div>
                 </DraggableOverlay>
               )}
 
-              {/* OVERLAY 6: Live Subtitle Overlay - DRAGGABLE */}
+              {/* OVERLAY 9: Live Subtitle Overlay - DRAGGABLE */}
               {showSubtitles && activeSubtitle && (
                 <DraggableOverlay
                   transform={subtitleTransform}
@@ -1042,29 +2559,43 @@ export default function AudioEditorAudiogramStudio({
                   defaultPosition={{ x: 15, y: 78, scale: 1.0 }}
                 >
                   <div
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedElementToStyle('subtitles');
+                      setActiveTab('styler');
+                    }}
                     style={{
-                      fontFamily: (activeSubtitle.customStyle || episode.subtitleStyle)?.fontFamily || 'sans-serif',
-                      fontSize: `${(activeSubtitle.customStyle || episode.subtitleStyle)?.fontSize || 22}px`,
-                      color: (activeSubtitle.customStyle || episode.subtitleStyle)?.textColor || '#ffffff',
-                      backgroundColor: (activeSubtitle.customStyle || episode.subtitleStyle)?.boxStyle === 'rounded-badge' 
-                        ? (activeSubtitle.customStyle || episode.subtitleStyle)?.backgroundColor || 'rgba(0,0,0,0.75)'
-                        : 'transparent',
-                      padding: (activeSubtitle.customStyle || episode.subtitleStyle)?.boxStyle === 'rounded-badge' ? '6px 14px' : '0px',
-                      borderRadius: (activeSubtitle.customStyle || episode.subtitleStyle)?.boxStyle === 'rounded-badge' ? '12px' : '0px',
-                      fontWeight: (activeSubtitle.customStyle || episode.subtitleStyle)?.isBold !== false ? 'bold' : 'normal',
+                      fontFamily: subtitleCustomStyle.fontFamily || 'Rubik',
+                      fontSize: `${subtitleCustomStyle.fontSize || 22}px`,
+                      fontWeight: subtitleCustomStyle.fontWeight || '900',
+                      color: subtitleCustomStyle.textColor || '#ffffff',
+                      backgroundColor: subtitleCustomStyle.backgroundColor 
+                        ? `${subtitleCustomStyle.backgroundColor}${Math.round(((subtitleCustomStyle.backgroundOpacity ?? 80) / 100) * 255).toString(16).padStart(2, '0')}` 
+                        : 'rgba(0, 0, 0, 0.8)',
+                      borderColor: subtitleCustomStyle.borderColor || 'transparent',
+                      borderWidth: `${subtitleCustomStyle.borderWidth ?? 0}px`,
+                      borderRadius: `${subtitleCustomStyle.borderRadius ?? 12}px`,
+                      boxShadow: (subtitleCustomStyle.glowBlur ?? 0) > 0 
+                        ? `0 0 ${subtitleCustomStyle.glowBlur}px ${subtitleCustomStyle.glowColor || '#facc15'}` 
+                        : 'none',
+                      padding: `${subtitleCustomStyle.padding || 8}px 18px`,
+                      textAlign: subtitleCustomStyle.textAlign || 'center',
                       textShadow: '0 2px 8px rgba(0,0,0,0.9)',
                       lineHeight: '1.3',
-                      letterSpacing: `${(activeSubtitle.customStyle || episode.subtitleStyle)?.letterSpacing || 0}px`,
                       whiteSpace: 'pre-line'
                     }}
-                    className="select-none text-center"
+                    className={`select-none cursor-pointer transition-all ${
+                      selectedElementToStyle === 'subtitles' ? 'ring-2 ring-yellow-400 ring-offset-2 ring-offset-black' : ''
+                    }`}
                   >
                     {activeSubtitle.text}
                   </div>
                 </DraggableOverlay>
               )}
+            </>
+          )}
 
-              {/* Hidden Native Audio Element */}
+            {/* Hidden Native Audio Element */}
               {audioUrl && (
                 <audio
                   ref={audioElementRef}
@@ -1079,7 +2610,7 @@ export default function AudioEditorAudiogramStudio({
 
             {/* Audio Playback Controls & Scrubber */}
             <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-3">
-              <div className="flex items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-2">
                   <button
                     onClick={handleTogglePlay}
@@ -1102,6 +2633,37 @@ export default function AudioEditorAudiogramStudio({
                     title="5 שניות קדימה"
                   >
                     +5s
+                  </button>
+
+                  {/* Playback Speed Switcher */}
+                  <div className="flex items-center bg-slate-900 rounded-xl border border-slate-800 p-0.5 text-[10px]">
+                    {[0.75, 1.0, 1.25, 1.5].map(rate => (
+                      <button
+                        key={rate}
+                        type="button"
+                        onClick={() => {
+                          setAudioPlaybackRate(rate);
+                          if (audioElementRef.current) audioElementRef.current.playbackRate = rate;
+                        }}
+                        className={`px-1.5 py-1 rounded-lg font-mono font-bold transition-all ${
+                          audioPlaybackRate === rate ? 'bg-cyan-600 text-white' : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        {rate}x
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Voice Warmth Boost Switch */}
+                  <button
+                    type="button"
+                    onClick={() => setVoiceWarmth(!voiceWarmth)}
+                    className={`px-2.5 py-1 rounded-xl text-[10px] font-bold border transition-all flex items-center gap-1 ${
+                      voiceWarmth ? 'bg-amber-500/20 border-amber-500/50 text-amber-300' : 'bg-slate-900 border-slate-800 text-slate-400'
+                    }`}
+                    title="פילטר שיפור חום קול ורדיופוניקה"
+                  >
+                    <span>🎙️ חום קול</span>
                   </button>
                 </div>
 
@@ -1151,8 +2713,18 @@ export default function AudioEditorAudiogramStudio({
 
           {/* RIGHT: Studio Customization Tools (5 Cols) */}
           <div className="lg:col-span-5 space-y-4 flex flex-col justify-between">
-            {/* Customization Tabs (5 Tabs) */}
-            <div className="grid grid-cols-5 gap-1 p-1 bg-slate-950 rounded-2xl border border-slate-800 text-xs">
+            {/* Customization Tabs (6 Tabs) */}
+            <div className="grid grid-cols-6 gap-1 p-1 bg-slate-950 rounded-2xl border border-slate-800 text-xs">
+              <button
+                onClick={() => setActiveTab('styler')}
+                className={`py-2 px-1 rounded-xl font-bold transition-all flex items-center justify-center gap-1 ${
+                  activeTab === 'styler' ? 'bg-gradient-to-r from-cyan-600 to-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>מעצב</span>
+              </button>
+
               <button
                 onClick={() => setActiveTab('background')}
                 className={`py-2 px-1 rounded-xl font-bold transition-all flex items-center justify-center gap-1 ${
@@ -1160,7 +2732,7 @@ export default function AudioEditorAudiogramStudio({
                 }`}
               >
                 <Palette className="w-3.5 h-3.5" />
-                <span>רקע ותמונה</span>
+                <span>רקע</span>
               </button>
 
               <button
@@ -1180,7 +2752,7 @@ export default function AudioEditorAudiogramStudio({
                 }`}
               >
                 <Layers className="w-3.5 h-3.5" />
-                <span>גרפיקות</span>
+                <span>שכבות</span>
               </button>
 
               <button
@@ -1206,9 +2778,1023 @@ export default function AudioEditorAudiogramStudio({
 
             {/* TAB CONTENT */}
             <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 flex-1 space-y-4 overflow-y-auto max-h-[50vh]">
+              {/* TAB: FREE ELEMENT STYLER (מעצב אלמנטים חופשי מלא) */}
+              {activeTab === 'styler' && (
+                <div className="space-y-4">
+                  {/* Element Switcher Bar */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                        <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
+                        <span>בחר אלמנט לעיצוב והתאמה אישית:</span>
+                      </label>
+                      <span className="text-[10px] text-cyan-400 font-mono font-bold">לחץ גם על האלמנט בפריים</span>
+                    </div>
+
+                    <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-8 gap-1 p-1 bg-slate-900 rounded-xl border border-slate-800 text-[10px]">
+                      {[
+                        { id: 'host', label: '🎙️ תג מגיש' },
+                        { id: 'fact', label: '⭐ עובדות' },
+                        { id: 'quote', label: '💬 ציטוט' },
+                        { id: 'banner', label: '📺 כותרת' },
+                        { id: 'rating', label: '🏆 ציונים' },
+                        { id: 'spoiler', label: '⚠️ ספוילר' },
+                        { id: 'poster', label: '🖼️ פוסטר' },
+                        { id: 'subtitles', label: '📝 כתוביות' }
+                      ].map(el => (
+                        <button
+                          key={el.id}
+                          type="button"
+                          onClick={() => setSelectedElementToStyle(el.id as any)}
+                          className={`py-1.5 px-1 rounded-lg font-bold transition-all text-center ${
+                            selectedElementToStyle === el.id
+                              ? 'bg-gradient-to-r from-cyan-600 to-indigo-600 text-white shadow'
+                              : 'text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          {el.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* PROMINENT VISIBILITY TOGGLE BANNER FOR ACTIVE ELEMENT */}
+                  <div className={`p-2.5 rounded-xl border transition-all flex items-center justify-between ${
+                    isCurrentElementVisible()
+                      ? 'bg-emerald-950/30 border-emerald-500/40 text-emerald-300'
+                      : 'bg-rose-950/30 border-rose-500/40 text-rose-300'
+                  }`}>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm">{isCurrentElementVisible() ? '🟢' : '🔴'}</span>
+                      <div>
+                        <span className="text-xs font-bold block">
+                          {isCurrentElementVisible() ? 'האלמנט פעיל ומוצג בפריים' : 'האלמנט כבוי ומוסתר כרגע'}
+                        </span>
+                        <span className="text-[10px] opacity-80">
+                          {isCurrentElementVisible() ? 'גרור בפריים או ערוך טקסטים וגדלים מטה' : 'לחץ להפעלה כדי להציגו על המסך'}
+                        </span>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => toggleCurrentElementVisibility()}
+                      className={`px-3 py-1 rounded-lg text-xs font-bold transition-all shadow ${
+                        isCurrentElementVisible()
+                          ? 'bg-rose-600 hover:bg-rose-500 text-white'
+                          : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                      }`}
+                    >
+                      {isCurrentElementVisible() ? 'הסתר מהמסך' : 'הצג בפריים ✓'}
+                    </button>
+                  </div>
+
+                  {/* 1. Quick Style Presets per element */}
+                  <div className="p-3 rounded-2xl bg-slate-900 border border-slate-800 space-y-2">
+                    <span className="text-[11px] font-bold text-slate-300 block">ערכות עיצוב מוכנות לאלמנט זה:</span>
+                    <div className="grid grid-cols-3 gap-1.5 text-[10px]">
+                      <button
+                        type="button"
+                        onClick={() => updateCurrentElementStyle({
+                          textColor: '#ffffff',
+                          secondaryTextColor: '#f59e0b',
+                          backgroundColor: '#030712',
+                          backgroundOpacity: 95,
+                          borderColor: '#f59e0b',
+                          borderWidth: 1.5,
+                          borderRadius: 16,
+                          glowColor: '#f59e0b',
+                          glowBlur: 10,
+                          fontWeight: 'bold'
+                        })}
+                        className="p-1.5 rounded-lg bg-slate-950 border border-amber-500/50 hover:border-amber-400 text-amber-300 font-bold transition-all text-center"
+                      >
+                        👑 זהב יוקרתי
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => updateCurrentElementStyle({
+                          textColor: '#ffffff',
+                          secondaryTextColor: '#06b6d4',
+                          backgroundColor: '#020617',
+                          backgroundOpacity: 95,
+                          borderColor: '#06b6d4',
+                          borderWidth: 2,
+                          borderRadius: 14,
+                          glowColor: '#06b6d4',
+                          glowBlur: 14,
+                          fontWeight: 'bold'
+                        })}
+                        className="p-1.5 rounded-lg bg-slate-950 border border-cyan-500/50 hover:border-cyan-400 text-cyan-300 font-bold transition-all text-center"
+                      >
+                        ⚡ ניאון טורקיז
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => updateCurrentElementStyle({
+                          textColor: '#ffffff',
+                          secondaryTextColor: '#94a3b8',
+                          backgroundColor: '#0f172a',
+                          backgroundOpacity: 75,
+                          borderColor: '#ffffff30',
+                          borderWidth: 1,
+                          borderRadius: 18,
+                          glowColor: '#ffffff',
+                          glowBlur: 0,
+                          fontWeight: 'bold'
+                        })}
+                        className="p-1.5 rounded-lg bg-slate-950 border border-white/20 hover:border-white/40 text-slate-200 font-bold transition-all text-center"
+                      >
+                        🧊 זכוכית כהה
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => updateCurrentElementStyle({
+                          textColor: '#ffffff',
+                          secondaryTextColor: '#f43f5e',
+                          backgroundColor: '#030712',
+                          backgroundOpacity: 95,
+                          borderColor: '#e11d48',
+                          borderWidth: 2,
+                          borderRadius: 12,
+                          glowColor: '#e11d48',
+                          glowBlur: 10,
+                          fontWeight: 'bold'
+                        })}
+                        className="p-1.5 rounded-lg bg-slate-950 border border-rose-500/50 hover:border-rose-400 text-rose-300 font-bold transition-all text-center"
+                      >
+                        🎬 קולנוע אדום
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => updateCurrentElementStyle({
+                          textColor: '#ffffff',
+                          secondaryTextColor: '#c084fc',
+                          backgroundColor: '#030712',
+                          backgroundOpacity: 95,
+                          borderColor: '#a855f7',
+                          borderWidth: 1.5,
+                          borderRadius: 16,
+                          glowColor: '#a855f7',
+                          glowBlur: 10,
+                          fontWeight: 'bold'
+                        })}
+                        className="p-1.5 rounded-lg bg-slate-950 border border-purple-500/50 hover:border-purple-400 text-purple-300 font-bold transition-all text-center"
+                      >
+                        💜 קטיפה זוהרת
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => updateCurrentElementStyle({
+                          textColor: '#ffffff',
+                          secondaryTextColor: '#94a3b8',
+                          backgroundColor: '#090d16',
+                          backgroundOpacity: 90,
+                          borderColor: '#475569',
+                          borderWidth: 1,
+                          borderRadius: 8,
+                          glowColor: '#000000',
+                          glowBlur: 0,
+                          fontWeight: 'bold'
+                        })}
+                        className="p-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-slate-500 text-slate-300 font-bold transition-all text-center"
+                      >
+                        ⚪ נקי ומינימלי
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* 2. SPECIFIC ELEMENT TEXTS & DEDICATED SIZES (טקסטים וגדלים ייעודיים) */}
+                  <div className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 space-y-3">
+                    <span className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
+                      <span>✏️ עריכת טקסטים וגדלים נפרדים (כותרת/משני/מספר פרק):</span>
+                    </span>
+
+                    {/* HOST TAG CONTROLS */}
+                    {selectedElementToStyle === 'host' && (
+                      <div className="space-y-2.5">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          <div className="space-y-1">
+                            <label className="text-[10px] text-slate-400 font-bold block">שם המגיש:</label>
+                            <input
+                              type="text"
+                              value={hostName}
+                              onChange={(e) => setHostName(e.target.value)}
+                              placeholder="שם המגיש"
+                              className="w-full px-2.5 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <div className="flex justify-between text-[10px] text-slate-400 font-bold">
+                              <span>גודל שם המגיש:</span>
+                              <span className="font-mono text-cyan-400">{getCurrentElementStyle().fontSize || 13}px</span>
+                            </div>
+                            <input
+                              type="range"
+                              min="8"
+                              max="64"
+                              value={getCurrentElementStyle().fontSize || 13}
+                              onChange={(e) => updateCurrentElementStyle({ fontSize: parseInt(e.target.value) })}
+                              className="w-full h-1.5 bg-slate-800 rounded appearance-none cursor-pointer accent-cyan-500"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 border-t border-slate-800/80">
+                          <div className="space-y-1">
+                            <label className="text-[10px] text-slate-400 font-bold block">תפקיד / כותרת המגיש:</label>
+                            <input
+                              type="text"
+                              value={hostRole}
+                              onChange={(e) => setHostRole(e.target.value)}
+                              placeholder="מנחה ראשי / מבקר קולנוע"
+                              className="w-full px-2.5 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <div className="flex justify-between text-[10px] text-slate-400 font-bold">
+                              <span>גודל תפקיד המגיש:</span>
+                              <span className="font-mono text-cyan-400">{getCurrentElementStyle().secondaryFontSize || 10}px</span>
+                            </div>
+                            <input
+                              type="range"
+                              min="8"
+                              max="44"
+                              value={getCurrentElementStyle().secondaryFontSize || 10}
+                              onChange={(e) => updateCurrentElementStyle({ secondaryFontSize: parseInt(e.target.value) })}
+                              className="w-full h-1.5 bg-slate-800 rounded appearance-none cursor-pointer accent-cyan-500"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* BANNER CONTROLS */}
+                    {selectedElementToStyle === 'banner' && (
+                      <div className="space-y-2.5">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          <div className="space-y-1">
+                            <label className="text-[10px] text-slate-400 font-bold block">שם הפרק:</label>
+                            <input
+                              type="text"
+                              value={episodeTitleText}
+                              onChange={(e) => setEpisodeTitleText(e.target.value)}
+                              placeholder="שם הפרק"
+                              className="w-full px-2.5 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <div className="flex justify-between text-[10px] text-slate-400 font-bold">
+                              <span>גודל שם הפרק:</span>
+                              <span className="font-mono text-indigo-400">{getCurrentElementStyle().fontSize || 13}px</span>
+                            </div>
+                            <input
+                              type="range"
+                              min="8"
+                              max="64"
+                              value={getCurrentElementStyle().fontSize || 13}
+                              onChange={(e) => updateCurrentElementStyle({ fontSize: parseInt(e.target.value) })}
+                              className="w-full h-1.5 bg-slate-800 rounded appearance-none cursor-pointer accent-indigo-500"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 border-t border-slate-800/80">
+                          <div className="space-y-1">
+                            <label className="text-[10px] text-slate-400 font-bold block">כותרת עליונה / מספר פרק:</label>
+                            <input
+                              type="text"
+                              value={bannerSubtitle}
+                              onChange={(e) => setBannerSubtitle(e.target.value)}
+                              placeholder={`CastFlow Studio • פרק ${episode.episodeNumber}`}
+                              className="w-full px-2.5 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <div className="flex justify-between text-[10px] text-slate-400 font-bold">
+                              <span>גודל מספר הפרק:</span>
+                              <span className="font-mono text-indigo-400">{getCurrentElementStyle().secondaryFontSize || 10}px</span>
+                            </div>
+                            <input
+                              type="range"
+                              min="8"
+                              max="44"
+                              value={getCurrentElementStyle().secondaryFontSize || 10}
+                              onChange={(e) => updateCurrentElementStyle({ secondaryFontSize: parseInt(e.target.value) })}
+                              className="w-full h-1.5 bg-slate-800 rounded appearance-none cursor-pointer accent-indigo-500"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* QUOTE CONTROLS */}
+                    {selectedElementToStyle === 'quote' && (
+                      <div className="space-y-2.5">
+                        <div className="space-y-1">
+                          <label className="text-[10px] text-slate-400 font-bold block">טקסט הציטוט:</label>
+                          <textarea
+                            value={quoteText}
+                            onChange={(e) => setQuoteText(e.target.value)}
+                            rows={2}
+                            placeholder="הקלד ציטוט מהסרט או מהפרק..."
+                            className="w-full p-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white resize-none"
+                          />
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          <div className="space-y-1">
+                            <label className="text-[10px] text-slate-400 font-bold block">שם הדובר / הסרט:</label>
+                            <input
+                              type="text"
+                              value={quoteSpeaker}
+                              onChange={(e) => setQuoteSpeaker(e.target.value)}
+                              placeholder="שם הדובר"
+                              className="w-full px-2.5 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <div className="flex justify-between text-[10px] text-slate-400 font-bold">
+                              <span>גודל שם הדובר:</span>
+                              <span className="font-mono text-purple-400">{getCurrentElementStyle().secondaryFontSize || 11}px</span>
+                            </div>
+                            <input
+                              type="range"
+                              min="8"
+                              max="44"
+                              value={getCurrentElementStyle().secondaryFontSize || 11}
+                              onChange={(e) => updateCurrentElementStyle({ secondaryFontSize: parseInt(e.target.value) })}
+                              className="w-full h-1.5 bg-slate-800 rounded appearance-none cursor-pointer accent-purple-500"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* RATING CARD CONTROLS */}
+                    {selectedElementToStyle === 'rating' && (
+                      <div className="space-y-2.5">
+                        <div className="grid grid-cols-3 gap-2">
+                          <div className="space-y-1">
+                            <label className="text-[10px] text-slate-400 font-bold block">IMDb:</label>
+                            <input
+                              type="text"
+                              value={imdbScore}
+                              onChange={(e) => setImdbScore(e.target.value)}
+                              className="w-full px-2 py-1 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white text-center font-mono"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[10px] text-slate-400 font-bold block">Rotten Tomatoes:</label>
+                            <input
+                              type="text"
+                              value={rottenScore}
+                              onChange={(e) => setRottenScore(e.target.value)}
+                              className="w-full px-2 py-1 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white text-center font-mono"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[10px] text-slate-400 font-bold block">ציון אישי:</label>
+                            <input
+                              type="text"
+                              value={personalScore}
+                              onChange={(e) => setPersonalScore(e.target.value)}
+                              className="w-full px-2 py-1 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white text-center font-mono"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2 pt-1 border-t border-slate-800">
+                          <div className="space-y-1">
+                            <div className="flex justify-between text-[10px] text-slate-400 font-bold">
+                              <span>גודל הציונים:</span>
+                              <span className="font-mono text-amber-400">{getCurrentElementStyle().fontSize || 13}px</span>
+                            </div>
+                            <input
+                              type="range"
+                              min="9"
+                              max="48"
+                              value={getCurrentElementStyle().fontSize || 13}
+                              onChange={(e) => updateCurrentElementStyle({ fontSize: parseInt(e.target.value) })}
+                              className="w-full h-1.5 bg-slate-800 rounded appearance-none cursor-pointer accent-amber-500"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <div className="flex justify-between text-[10px] text-slate-400 font-bold">
+                              <span>גודל כותרת דירוג:</span>
+                              <span className="font-mono text-amber-400">{getCurrentElementStyle().secondaryFontSize || 10}px</span>
+                            </div>
+                            <input
+                              type="range"
+                              min="8"
+                              max="36"
+                              value={getCurrentElementStyle().secondaryFontSize || 10}
+                              onChange={(e) => updateCurrentElementStyle({ secondaryFontSize: parseInt(e.target.value) })}
+                              className="w-full h-1.5 bg-slate-800 rounded appearance-none cursor-pointer accent-amber-500"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* SPOILER ALERT CONTROLS */}
+                    {selectedElementToStyle === 'spoiler' && (
+                      <div className="space-y-2">
+                        <div className="space-y-1">
+                          <label className="text-[10px] text-slate-400 font-bold block">נוסח אזהרת הספוילר:</label>
+                          <input
+                            type="text"
+                            value={spoilerText}
+                            onChange={(e) => setSpoilerText(e.target.value)}
+                            className="w-full px-2.5 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <div className="flex justify-between text-[10px] text-slate-400 font-bold">
+                            <span>גודל טקסט אזהרה:</span>
+                            <span className="font-mono text-rose-400">{getCurrentElementStyle().fontSize || 12}px</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="9"
+                            max="48"
+                            value={getCurrentElementStyle().fontSize || 12}
+                            onChange={(e) => updateCurrentElementStyle({ fontSize: parseInt(e.target.value) })}
+                            className="w-full h-1.5 bg-slate-800 rounded appearance-none cursor-pointer accent-rose-500"
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {/* POSTER & COVER PIP CONTROLS */}
+                    {selectedElementToStyle === 'poster' && (
+                      <div className="space-y-3">
+                        {/* Hidden Poster File Input */}
+                        <input
+                          ref={posterFileInputRef}
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={handlePosterFileUpload}
+                        />
+
+                        {/* Poster Preview & Upload Actions */}
+                        <div className="flex items-center gap-3 p-2.5 rounded-xl bg-slate-950 border border-slate-800">
+                          <img
+                            src={posterUrl || episode.coverImage || 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=800&q=80'}
+                            alt="Poster Preview"
+                            className="w-12 h-16 rounded-lg object-cover border border-slate-700 shadow shrink-0"
+                          />
+                          <div className="flex-1 space-y-1.5">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => posterFileInputRef.current?.click()}
+                                className="px-2.5 py-1 rounded-lg bg-pink-600 hover:bg-pink-500 text-white text-[11px] font-bold flex items-center gap-1 shadow transition-all"
+                              >
+                                <Upload className="w-3 h-3" />
+                                <span>העלאה מהמחשב</span>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setStockPickerTarget('poster');
+                                  setIsStockModalOpen(true);
+                                }}
+                                className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-300 text-[11px] font-bold flex items-center gap-1 border border-slate-700 transition-all"
+                              >
+                                <FolderOpen className="w-3 h-3" />
+                                <span>מאגר Bunny CDN</span>
+                              </button>
+                            </div>
+                            <span className="text-[10px] text-slate-400 block">בחר תמונת פוסטר לאולפן</span>
+                          </div>
+                        </div>
+
+                        {/* Direct URL input */}
+                        <div className="space-y-1">
+                          <label className="text-[10px] text-slate-400 font-bold block">כתובת URL ישירה לפוסטר:</label>
+                          <input
+                            type="text"
+                            value={posterUrl}
+                            onChange={(e) => {
+                              setPosterUrl(e.target.value);
+                              setShowPosterPip(true);
+                            }}
+                            placeholder="https://..."
+                            className="w-full px-2.5 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-pink-500"
+                          />
+                        </div>
+
+                        {/* Shape Selector */}
+                        <div className="space-y-1">
+                          <label className="text-[10px] text-slate-400 font-bold block">צורת תצוגת הפוסטר בפריים:</label>
+                          <div className="grid grid-cols-3 gap-1.5 text-xs">
+                            {[
+                              { id: 'rounded_square', label: 'ריבוע מעוגל' },
+                              { id: 'rectangle', label: 'יחס 2:3 קולנועי' },
+                              { id: 'circle', label: 'עיגול מלא' }
+                            ].map(shape => (
+                              <button
+                                key={shape.id}
+                                type="button"
+                                onClick={() => setPosterShape(shape.id as any)}
+                                className={`p-1.5 rounded-xl border font-bold text-center transition-all ${
+                                  posterShape === shape.id
+                                    ? 'bg-pink-600 border-pink-400 text-white'
+                                    : 'bg-slate-950 border-slate-800 text-slate-400'
+                                }`}
+                              >
+                                {shape.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* 3. Typography Controls (טיפוגרפיה) */}
+                  <div className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 space-y-3">
+                    <span className="text-xs font-bold text-cyan-300 flex items-center gap-1.5">
+                      <span>🔤 סגנון גופן, עובי וצבעים:</span>
+                    </span>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-slate-400 block">סוג גופן (Font):</label>
+                        <select
+                          value={getCurrentElementStyle().fontFamily || 'Rubik'}
+                          onChange={(e) => updateCurrentElementStyle({ fontFamily: e.target.value })}
+                          className="w-full p-1.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
+                        >
+                          <option value="Rubik">Rubik (רוביק מודרני)</option>
+                          <option value="Assistant">Assistant (אסיסטנט אלגנטי)</option>
+                          <option value="Secular One">Secular One (קולנועי עבה)</option>
+                          <option value="Heebo">Heebo (היבו יוקרתי)</option>
+                          <option value="Impact">Impact (אימפקט ויראלי)</option>
+                          <option value="Montserrat">Montserrat (מונטסראט)</option>
+                          <option value="Inter">Inter (אינטר)</option>
+                        </select>
+                      </div>
+
+                      <div className="space-y-1">
+                        <span className="text-[10px] text-slate-400 font-bold block">עובי אות:</span>
+                        <div className="grid grid-cols-3 gap-1 text-[10px]">
+                          {[
+                            { id: 'normal', label: 'רגיל' },
+                            { id: 'bold', label: 'מודגש' },
+                            { id: '900', label: 'שחור' }
+                          ].map(w => (
+                            <button
+                              key={w.id}
+                              type="button"
+                              onClick={() => updateCurrentElementStyle({ fontWeight: w.id as any })}
+                              className={`p-1 rounded-lg border font-bold ${
+                                (getCurrentElementStyle().fontWeight || 'bold') === w.id
+                                  ? 'bg-cyan-600 border-cyan-400 text-white'
+                                  : 'bg-slate-950 border-slate-800 text-slate-400'
+                              }`}
+                            >
+                              {w.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Text Colors: Primary & Secondary */}
+                    <div className="grid grid-cols-2 gap-2 pt-1 border-t border-slate-800">
+                      <div className="space-y-1">
+                        <span className="text-[10px] text-slate-400 font-bold block">צבע טקסט ראשי:</span>
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            type="color"
+                            value={getCurrentElementStyle().textColor || '#ffffff'}
+                            onChange={(e) => updateCurrentElementStyle({ textColor: e.target.value })}
+                            className="w-7 h-7 rounded-lg cursor-pointer bg-transparent border-0 shrink-0"
+                          />
+                          <div className="flex items-center gap-1 flex-wrap">
+                            {['#ffffff', '#facc15', '#f59e0b', '#06b6d4', '#f43f5e', '#a855f7'].map(c => (
+                              <button
+                                key={c}
+                                type="button"
+                                onClick={() => updateCurrentElementStyle({ textColor: c })}
+                                className="w-4 h-4 rounded-md border border-white/20"
+                                style={{ backgroundColor: c }}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="space-y-1">
+                        <span className="text-[10px] text-slate-400 font-bold block">צבע טקסט משני / תג:</span>
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            type="color"
+                            value={getCurrentElementStyle().secondaryTextColor || '#06b6d4'}
+                            onChange={(e) => updateCurrentElementStyle({ secondaryTextColor: e.target.value })}
+                            className="w-7 h-7 rounded-lg cursor-pointer bg-transparent border-0 shrink-0"
+                          />
+                          <div className="flex items-center gap-1 flex-wrap">
+                            {['#06b6d4', '#f59e0b', '#818cf8', '#c084fc', '#f43f5e', '#10b981'].map(c => (
+                              <button
+                                key={c}
+                                type="button"
+                                onClick={() => updateCurrentElementStyle({ secondaryTextColor: c })}
+                                className="w-4 h-4 rounded-md border border-white/20"
+                                style={{ backgroundColor: c }}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 4. Background & Border Controls (רקע ומסגרת) */}
+                  <div className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 space-y-3">
+                    <span className="text-xs font-bold text-purple-300 flex items-center gap-1.5">
+                      <span>🎨 רקע, מסגרת ופינות:</span>
+                    </span>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      {/* Background Color & Opacity */}
+                      <div className="space-y-1">
+                        <div className="flex justify-between text-[10px] text-slate-400 font-bold">
+                          <span>צבע ושקיפות רקע:</span>
+                          <span className="font-mono text-purple-400">{getCurrentElementStyle().backgroundOpacity ?? 95}%</span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            type="color"
+                            value={getCurrentElementStyle().backgroundColor || '#030712'}
+                            onChange={(e) => updateCurrentElementStyle({ backgroundColor: e.target.value })}
+                            className="w-7 h-7 rounded-lg cursor-pointer bg-transparent border-0 shrink-0"
+                          />
+                          <input
+                            type="range"
+                            min="0"
+                            max="100"
+                            value={getCurrentElementStyle().backgroundOpacity ?? 95}
+                            onChange={(e) => updateCurrentElementStyle({ backgroundOpacity: parseInt(e.target.value) })}
+                            className="w-full h-1.5 bg-slate-800 rounded appearance-none cursor-pointer accent-purple-500"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Border Width & Color */}
+                      <div className="space-y-1">
+                        <div className="flex justify-between text-[10px] text-slate-400 font-bold">
+                          <span>עובי מסגרת:</span>
+                          <span className="font-mono text-purple-400">{getCurrentElementStyle().borderWidth ?? 1.5}px</span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            type="color"
+                            value={getCurrentElementStyle().borderColor || '#06b6d4'}
+                            onChange={(e) => updateCurrentElementStyle({ borderColor: e.target.value })}
+                            className="w-7 h-7 rounded-lg cursor-pointer bg-transparent border-0 shrink-0"
+                          />
+                          <input
+                            type="range"
+                            min="0"
+                            max="6"
+                            step="0.5"
+                            value={getCurrentElementStyle().borderWidth ?? 1.5}
+                            onChange={(e) => updateCurrentElementStyle({ borderWidth: parseFloat(e.target.value) })}
+                            className="w-full h-1.5 bg-slate-800 rounded appearance-none cursor-pointer accent-purple-500"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Corner Radius & Glow Intensity */}
+                    <div className="grid grid-cols-2 gap-2 pt-1 border-t border-slate-800">
+                      <div className="space-y-1">
+                        <div className="flex justify-between text-[10px] text-slate-400 font-bold">
+                          <span>עיגול פינות (Radius):</span>
+                          <span className="font-mono text-purple-400">
+                            {(getCurrentElementStyle().borderRadius ?? 16) > 50 ? 'גלולה (Pill)' : `${getCurrentElementStyle().borderRadius ?? 16}px`}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="range"
+                            min="0"
+                            max="36"
+                            value={Math.min(36, getCurrentElementStyle().borderRadius ?? 16)}
+                            onChange={(e) => updateCurrentElementStyle({ borderRadius: parseInt(e.target.value) })}
+                            className="w-full h-1.5 bg-slate-800 rounded appearance-none cursor-pointer accent-purple-500"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => updateCurrentElementStyle({ borderRadius: 9999 })}
+                            className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-slate-800 text-purple-300 shrink-0 hover:bg-slate-700"
+                          >
+                            גלולה
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Glow & Shadow */}
+                      <div className="space-y-1">
+                        <div className="flex justify-between text-[10px] text-slate-400 font-bold">
+                          <span>זוהר ניאון / צל:</span>
+                          <span className="font-mono text-purple-400">{getCurrentElementStyle().glowBlur || 0}px</span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            type="color"
+                            value={getCurrentElementStyle().glowColor || '#06b6d4'}
+                            onChange={(e) => updateCurrentElementStyle({ glowColor: e.target.value })}
+                            className="w-7 h-7 rounded-lg cursor-pointer bg-transparent border-0 shrink-0"
+                          />
+                          <input
+                            type="range"
+                            min="0"
+                            max="25"
+                            value={getCurrentElementStyle().glowBlur || 0}
+                            onChange={(e) => updateCurrentElementStyle({ glowBlur: parseInt(e.target.value) })}
+                            className="w-full h-1.5 bg-slate-800 rounded appearance-none cursor-pointer accent-purple-500"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 5. Position, Scale & Transform Direct Numeric Controls */}
+                  <div className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
+                        <span>📐 מיקום וקנה מידה בפריים:</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (selectedElementToStyle === 'host') setHostTransform({ x: 70, y: 15, scale: 1.0 });
+                          else if (selectedElementToStyle === 'fact') setFactTransform({ x: 5, y: 8, scale: 1.0 });
+                          else if (selectedElementToStyle === 'quote') setQuoteTransform({ x: 25, y: 65, scale: 1.0 });
+                          else if (selectedElementToStyle === 'banner') setBannerTransform({ x: 65, y: 78, scale: 1.0 });
+                          else if (selectedElementToStyle === 'rating') setRatingTransform({ x: 20, y: 75, scale: 1.0 });
+                          else if (selectedElementToStyle === 'spoiler') setSpoilerTransform({ x: 25, y: 15, scale: 1.0 });
+                          else if (selectedElementToStyle === 'poster') setPosterTransform({ x: 5, y: 45, scale: 1.0 });
+                          else if (selectedElementToStyle === 'subtitles') setSubtitleTransform({ x: 15, y: 78, scale: 1.0 });
+                        }}
+                        className="text-[10px] text-amber-400 font-bold hover:underline"
+                      >
+                        איפוס מיקום ↺
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-2 text-[10px]">
+                      <div className="space-y-1">
+                        <span className="text-slate-400 block font-bold">ציר X (אופקי):</span>
+                        <input
+                          type="range"
+                          min="0"
+                          max="85"
+                          value={
+                            selectedElementToStyle === 'host' ? hostTransform.x :
+                            selectedElementToStyle === 'fact' ? factTransform.x :
+                            selectedElementToStyle === 'quote' ? quoteTransform.x :
+                            selectedElementToStyle === 'banner' ? bannerTransform.x :
+                            selectedElementToStyle === 'rating' ? ratingTransform.x :
+                            selectedElementToStyle === 'spoiler' ? spoilerTransform.x :
+                            selectedElementToStyle === 'poster' ? posterTransform.x :
+                            subtitleTransform.x
+                          }
+                          onChange={(e) => {
+                            const val = parseFloat(e.target.value);
+                            if (selectedElementToStyle === 'host') setHostTransform(prev => ({ ...prev, x: val }));
+                            else if (selectedElementToStyle === 'fact') setFactTransform(prev => ({ ...prev, x: val }));
+                            else if (selectedElementToStyle === 'quote') setQuoteTransform(prev => ({ ...prev, x: val }));
+                            else if (selectedElementToStyle === 'banner') setBannerTransform(prev => ({ ...prev, x: val }));
+                            else if (selectedElementToStyle === 'rating') setRatingTransform(prev => ({ ...prev, x: val }));
+                            else if (selectedElementToStyle === 'spoiler') setSpoilerTransform(prev => ({ ...prev, x: val }));
+                            else if (selectedElementToStyle === 'poster') setPosterTransform(prev => ({ ...prev, x: val }));
+                            else if (selectedElementToStyle === 'subtitles') setSubtitleTransform(prev => ({ ...prev, x: val }));
+                          }}
+                          className="w-full h-1.5 bg-slate-800 rounded appearance-none cursor-pointer accent-amber-500"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <span className="text-slate-400 block font-bold">ציר Y (אנכי):</span>
+                        <input
+                          type="range"
+                          min="0"
+                          max="85"
+                          value={
+                            selectedElementToStyle === 'host' ? hostTransform.y :
+                            selectedElementToStyle === 'fact' ? factTransform.y :
+                            selectedElementToStyle === 'quote' ? quoteTransform.y :
+                            selectedElementToStyle === 'banner' ? bannerTransform.y :
+                            selectedElementToStyle === 'rating' ? ratingTransform.y :
+                            selectedElementToStyle === 'spoiler' ? spoilerTransform.y :
+                            selectedElementToStyle === 'poster' ? posterTransform.y :
+                            subtitleTransform.y
+                          }
+                          onChange={(e) => {
+                            const val = parseFloat(e.target.value);
+                            if (selectedElementToStyle === 'host') setHostTransform(prev => ({ ...prev, y: val }));
+                            else if (selectedElementToStyle === 'fact') setFactTransform(prev => ({ ...prev, y: val }));
+                            else if (selectedElementToStyle === 'quote') setQuoteTransform(prev => ({ ...prev, y: val }));
+                            else if (selectedElementToStyle === 'banner') setBannerTransform(prev => ({ ...prev, y: val }));
+                            else if (selectedElementToStyle === 'rating') setRatingTransform(prev => ({ ...prev, y: val }));
+                            else if (selectedElementToStyle === 'spoiler') setSpoilerTransform(prev => ({ ...prev, y: val }));
+                            else if (selectedElementToStyle === 'poster') setPosterTransform(prev => ({ ...prev, y: val }));
+                            else if (selectedElementToStyle === 'subtitles') setSubtitleTransform(prev => ({ ...prev, y: val }));
+                          }}
+                          className="w-full h-1.5 bg-slate-800 rounded appearance-none cursor-pointer accent-amber-500"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <div className="flex justify-between text-slate-400 font-bold">
+                          <span>קנה מידה:</span>
+                          <span className="font-mono text-amber-400 font-black">
+                            {Math.round((
+                              selectedElementToStyle === 'host' ? hostTransform.scale :
+                              selectedElementToStyle === 'fact' ? factTransform.scale :
+                              selectedElementToStyle === 'quote' ? quoteTransform.scale :
+                              selectedElementToStyle === 'banner' ? bannerTransform.scale :
+                              selectedElementToStyle === 'rating' ? ratingTransform.scale :
+                              selectedElementToStyle === 'spoiler' ? spoilerTransform.scale :
+                              selectedElementToStyle === 'poster' ? posterTransform.scale :
+                              subtitleTransform.scale
+                            ) * 100)}%
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0.4"
+                          max="3.5"
+                          step="0.05"
+                          value={
+                            selectedElementToStyle === 'host' ? hostTransform.scale :
+                            selectedElementToStyle === 'fact' ? factTransform.scale :
+                            selectedElementToStyle === 'quote' ? quoteTransform.scale :
+                            selectedElementToStyle === 'banner' ? bannerTransform.scale :
+                            selectedElementToStyle === 'rating' ? ratingTransform.scale :
+                            selectedElementToStyle === 'spoiler' ? spoilerTransform.scale :
+                            selectedElementToStyle === 'poster' ? posterTransform.scale :
+                            subtitleTransform.scale
+                          }
+                          onChange={(e) => {
+                            const val = parseFloat(e.target.value);
+                            if (selectedElementToStyle === 'host') setHostTransform(prev => ({ ...prev, scale: val }));
+                            else if (selectedElementToStyle === 'fact') setFactTransform(prev => ({ ...prev, scale: val }));
+                            else if (selectedElementToStyle === 'quote') setQuoteTransform(prev => ({ ...prev, scale: val }));
+                            else if (selectedElementToStyle === 'banner') setBannerTransform(prev => ({ ...prev, scale: val }));
+                            else if (selectedElementToStyle === 'rating') setRatingTransform(prev => ({ ...prev, scale: val }));
+                            else if (selectedElementToStyle === 'spoiler') setSpoilerTransform(prev => ({ ...prev, scale: val }));
+                            else if (selectedElementToStyle === 'poster') setPosterTransform(prev => ({ ...prev, scale: val }));
+                            else if (selectedElementToStyle === 'subtitles') setSubtitleTransform(prev => ({ ...prev, scale: val }));
+                          }}
+                          className="w-full h-1.5 bg-slate-800 rounded appearance-none cursor-pointer accent-amber-500"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Quick Scale Presets */}
+                    <div className="space-y-1.5 pt-2 border-t border-slate-800">
+                      <span className="text-[10px] font-bold text-slate-400 block">קנה מידה מהיר בלחיצה:</span>
+                      <div className="grid grid-cols-6 gap-1 text-[10px]">
+                        {[
+                          { scale: 0.8, label: '0.8x' },
+                          { scale: 1.0, label: '1.0x' },
+                          { scale: 1.3, label: '1.3x' },
+                          { scale: 1.6, label: '1.6x' },
+                          { scale: 2.0, label: '2.0x' },
+                          { scale: 2.5, label: '2.5x' },
+                        ].map(s => {
+                          const curScale = selectedElementToStyle === 'host' ? hostTransform.scale :
+                            selectedElementToStyle === 'fact' ? factTransform.scale :
+                            selectedElementToStyle === 'quote' ? quoteTransform.scale :
+                            selectedElementToStyle === 'banner' ? bannerTransform.scale :
+                            selectedElementToStyle === 'rating' ? ratingTransform.scale :
+                            selectedElementToStyle === 'spoiler' ? spoilerTransform.scale :
+                            selectedElementToStyle === 'poster' ? posterTransform.scale :
+                            subtitleTransform.scale;
+                          const isActive = Math.abs(curScale - s.scale) < 0.05;
+                          return (
+                            <button
+                              key={s.scale}
+                              type="button"
+                              onClick={() => {
+                                if (selectedElementToStyle === 'host') setHostTransform(prev => ({ ...prev, scale: s.scale }));
+                                else if (selectedElementToStyle === 'fact') setFactTransform(prev => ({ ...prev, scale: s.scale }));
+                                else if (selectedElementToStyle === 'quote') setQuoteTransform(prev => ({ ...prev, scale: s.scale }));
+                                else if (selectedElementToStyle === 'banner') setBannerTransform(prev => ({ ...prev, scale: s.scale }));
+                                else if (selectedElementToStyle === 'rating') setRatingTransform(prev => ({ ...prev, scale: s.scale }));
+                                else if (selectedElementToStyle === 'spoiler') setSpoilerTransform(prev => ({ ...prev, scale: s.scale }));
+                                else if (selectedElementToStyle === 'poster') setPosterTransform(prev => ({ ...prev, scale: s.scale }));
+                                else if (selectedElementToStyle === 'subtitles') setSubtitleTransform(prev => ({ ...prev, scale: s.scale }));
+                              }}
+                              className={`py-1 rounded font-bold border transition-all text-center ${
+                                isActive
+                                  ? 'bg-amber-500 text-black border-amber-400 shadow font-black'
+                                  : 'bg-slate-950 text-slate-300 border-slate-800 hover:border-amber-500/50'
+                              }`}
+                            >
+                              {s.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* 0. BACKGROUND & WALLPAPER TAB */}
               {activeTab === 'background' && (
                 <div className="space-y-4">
+                  {/* Studio Presets Gallery */}
+                  <div className="p-3.5 rounded-2xl bg-gradient-to-r from-pink-950/40 via-purple-950/40 to-indigo-950/40 border border-pink-500/30 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-black text-white flex items-center gap-1.5">
+                        <Sparkles className="w-4 h-4 text-pink-400" />
+                        <span>תבניות סטודיו מוכנות (Presets בלחיצה אחת):</span>
+                      </span>
+                      <span className="text-[10px] text-pink-300 font-bold">6 עיצובים ויראליים</span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      {AUDIOGRAM_PRESETS.map(preset => (
+                        <button
+                          key={preset.id}
+                          type="button"
+                          onClick={() => handleApplyStudioPreset(preset)}
+                          className="p-2.5 rounded-xl bg-slate-900/90 hover:bg-slate-800 border border-slate-800 hover:border-pink-500/60 text-right transition-all group flex flex-col justify-between shadow-sm"
+                        >
+                          <span className="text-xs font-bold text-white group-hover:text-pink-300 block">{preset.name}</span>
+                          <span className="text-[10px] text-slate-400 line-clamp-1 mt-0.5">{preset.desc}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Custom Saved Templates Section */}
+                  <div className="p-3.5 rounded-2xl bg-slate-900 border border-indigo-500/30 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-black text-white flex items-center gap-1.5">
+                        <Bookmark className="w-4 h-4 text-indigo-400" />
+                        <span>התבניות האישיות שלי (My Presets):</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setIsNewTemplateModalOpen(true)}
+                        className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-bold flex items-center gap-1 transition-all shadow-sm active:scale-95"
+                      >
+                        <Plus className="w-3 h-3" />
+                        <span>שמור עיצוב נוכחי כתבנית</span>
+                      </button>
+                    </div>
+
+                    {customTemplates.length === 0 ? (
+                      <div className="text-center py-3 px-2 rounded-xl bg-slate-950/60 border border-dashed border-slate-800 text-slate-500 text-[11px]">
+                        טרם שמרת תבניות אישיות. לחץ על "שמור עיצוב נוכחי כתבנית" כדי לשמור את הסגנון לשימוש חוזר בכל הפרקים!
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-2 gap-2">
+                        {customTemplates.map(tpl => (
+                          <div
+                            key={tpl.id}
+                            onClick={() => handleApplyTemplate(tpl)}
+                            className="p-2.5 rounded-xl bg-slate-950 hover:bg-slate-800/80 border border-slate-800 hover:border-indigo-500/60 text-right transition-all group cursor-pointer flex flex-col justify-between shadow-sm relative"
+                          >
+                            <div className="flex items-start justify-between gap-1">
+                              <span className="text-xs font-bold text-white group-hover:text-indigo-300 block truncate">
+                                {tpl.name}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={(e) => handleDeleteTemplate(tpl.id, e)}
+                                className="text-slate-500 hover:text-rose-400 p-0.5 rounded transition-colors shrink-0"
+                                title="מחק תבנית"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </div>
+                            <div className="flex items-center justify-between text-[9px] text-slate-400 mt-2">
+                              <span className="font-mono">{tpl.config.aspectRatio || '16:9'} • {tpl.config.waveformStyle || 'bars'}</span>
+                              <span className="text-indigo-400 font-bold group-hover:underline">החל תבנית ↵</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
                   {/* Hidden Background Image File Input */}
                   <input
                     ref={bgFileInputRef}
@@ -1323,11 +3909,14 @@ export default function AudioEditorAudiogramStudio({
 
                           <button
                             type="button"
-                            onClick={() => setIsStockModalOpen(true)}
+                            onClick={() => {
+                              setStockPickerTarget('background');
+                              setIsStockModalOpen(true);
+                            }}
                             className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold flex items-center gap-1.5 border border-slate-700"
                           >
                             <FolderOpen className="w-3.5 h-3.5 text-indigo-400" />
-                            <span>מאגר תמונות</span>
+                            <span>מאגר תמונות & CDN</span>
                           </button>
                         </div>
                       </div>
@@ -1408,34 +3997,55 @@ export default function AudioEditorAudiogramStudio({
                       </div>
                     </div>
                   )}
+
+                  {/* Ambient Vignette Switch */}
+                  <div className="p-3 rounded-2xl bg-slate-900 border border-slate-800 flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-300 flex items-center gap-2">
+                      <span>🌑 אפקט תאורה היקפית (Vignette):</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setAmbientVignette(!ambientVignette)}
+                      className={`px-3 py-1 rounded-xl text-xs font-bold transition-all ${
+                        ambientVignette ? 'bg-pink-600 text-white shadow' : 'bg-slate-800 text-slate-400'
+                      }`}
+                    >
+                      {ambientVignette ? 'פעיל ✓' : 'כבוי'}
+                    </button>
+                  </div>
                 </div>
               )}
 
               {/* 1. WAVEFORM CUSTOMIZATION TAB */}
               {activeTab === 'waveform' && (
                 <div className="space-y-4">
-                  {/* Waveform Style Selector (6 Styles) */}
+                  {/* Waveform Style Selector (10 Styles) */}
                   <div className="space-y-1.5">
-                    <label className="text-xs font-bold text-slate-300 block">סגנון גלי הקול:</label>
-                    <div className="grid grid-cols-3 gap-2">
+                    <label className="text-xs font-bold text-slate-300 block">סגנון גלי הקול (10 סגנונות):</label>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                       {[
+                        { id: 'circle_bars', label: '🔴 מעגל קורן', desc: 'מעגל גלי קול רדיאלי' },
+                        { id: 'neon_glow_wave', label: '⚡ ניאון כפול', desc: 'זוהר עם פעימות' },
+                        { id: 'spectrum_3d', label: '✨ עמודי תלת-מימד', desc: 'השתקפות זכוכית' },
+                        { id: 'dots_matrix', label: '💡 מטריצת LED', desc: 'נקודות עתידניות' },
                         { id: 'bars', label: '📊 עמודות EQ', desc: 'קפיצות לפי בס וטרבל' },
-                        { id: 'sine', label: '〰️ גל סינוס', desc: 'רציף וזורם' },
-                        { id: 'radial', label: '🔴 מעגל פעימות', desc: 'פולס מרכזי' },
+                        { id: 'sine', label: '〰️ גל סינוס', desc: 'רציף וקלאסי' },
+                        { id: 'radial', label: '🎯 פעימות מרכז', desc: 'פולס מרכזי' },
                         { id: 'mirror', label: '🔉 עמודות מראה', desc: 'דו-כיווני' },
-                        { id: 'pulse', label: '⚡ קו דופק', desc: 'אלקטרוני זוהר' },
+                        { id: 'pulse', label: '💓 קו דופק', desc: 'אלקטרוני זוהר' },
                         { id: 'liquid', label: '🌊 גלי ים', desc: 'נוזלי דינמי' }
                       ].map(style => (
                         <button
                           key={style.id}
                           onClick={() => setWaveformStyle(style.id as WaveformStyle)}
-                          className={`p-2.5 rounded-xl border text-xs font-bold transition-all text-center ${
+                          className={`p-2.5 rounded-xl border text-xs font-bold transition-all text-right flex flex-col justify-between ${
                             waveformStyle === style.id
                               ? 'bg-cyan-600 border-cyan-400 text-white shadow-lg'
                               : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
                           }`}
                         >
-                          <span className="block">{style.label}</span>
+                          <span className="block text-xs">{style.label}</span>
+                          <span className="text-[9px] opacity-75 font-normal">{style.desc}</span>
                         </button>
                       ))}
                     </div>
@@ -1532,11 +4142,307 @@ export default function AudioEditorAudiogramStudio({
                 </div>
               )}
 
-              {/* 2. OVERLAYS & GRAPHICS TAB */}
+              {/* 2. OVERLAYS & GRAPHICS TAB (FULL CUSTOMIZATION SUITE) */}
               {activeTab === 'overlays' && (
                 <div className="space-y-4">
+                  {/* Host Name & Tag Customizer */}
+                  <div className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-bold text-cyan-300 flex items-center gap-1.5">
+                        <Mic className="w-3.5 h-3.5 text-cyan-400" />
+                        <span>תג מגיש התוכנית (Host Tag):</span>
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => setShowHostTag(!showHostTag)}
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded-lg border transition-all ${
+                          showHostTag ? 'bg-cyan-950/60 border-cyan-500 text-cyan-300' : 'bg-slate-800 border-slate-700 text-slate-400'
+                        }`}
+                      >
+                        {showHostTag ? 'פעיל בפריים ✓' : 'כבוי'}
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        type="text"
+                        value={hostName}
+                        onChange={(e) => {
+                          const newH = e.target.value;
+                          setHostName(newH);
+                          if (newH) setShowHostTag(true);
+                          const updated: Episode = {
+                            ...episode,
+                            hostName: newH.trim() || undefined,
+                            host: newH.trim() ? { name: newH.trim(), role: hostRole } : undefined
+                          };
+                          saveEpisode(updated);
+                          if (onUpdateEpisode) onUpdateEpisode(updated);
+                        }}
+                        placeholder="שם המגיש (למשל: עומר אוקון)"
+                        className="w-full p-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500"
+                      />
+
+                      <input
+                        type="text"
+                        value={hostRole}
+                        onChange={(e) => {
+                          const newR = e.target.value;
+                          setHostRole(newR);
+                          const updated: Episode = {
+                            ...episode,
+                            host: hostName ? { name: hostName, role: newR } : undefined
+                          };
+                          saveEpisode(updated);
+                          if (onUpdateEpisode) onUpdateEpisode(updated);
+                        }}
+                        placeholder="תפקיד (למשל: מנחה ראשי / עורך)"
+                        className="w-full p-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500"
+                      />
+                    </div>
+
+                    {/* Host Tag Style Selector */}
+                    <div className="space-y-1 pt-1">
+                      <span className="text-[10px] text-slate-400 font-bold block">סגנון עיצוב התג:</span>
+                      <div className="grid grid-cols-4 gap-1 text-[10px]">
+                        {[
+                          { id: 'gold_pill', label: '👑 גלולת זהב' },
+                          { id: 'neon_border', label: '⚡ ניאון טורקיז' },
+                          { id: 'dark_glass', label: '🧊 זכוכית כהה' },
+                          { id: 'minimal_text', label: '⚪ נקי' }
+                        ].map(st => (
+                          <button
+                            key={st.id}
+                            type="button"
+                            onClick={() => setHostTagStyle(st.id as any)}
+                            className={`p-1.5 rounded-lg border text-center font-bold transition-all ${
+                              hostTagStyle === st.id ? 'bg-cyan-600 border-cyan-400 text-white' : 'bg-slate-950 border-slate-800 text-slate-400'
+                            }`}
+                          >
+                            {st.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Movie Facts Overlay Customizer */}
+                  <div className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                        <Film className="w-3.5 h-3.5 text-amber-400" />
+                        <span>חלונית עובדה על הסרט ({movieFacts.length}):</span>
+                      </span>
+                      <button
+                        onClick={() => setShowFactOverlay(!showFactOverlay)}
+                        className={`px-2.5 py-1 rounded-lg text-[10px] font-bold ${
+                          showFactOverlay ? 'bg-amber-500 text-slate-950 font-black' : 'bg-slate-800 text-slate-400'
+                        }`}
+                      >
+                        {showFactOverlay ? 'מוצגת בפריים ✓' : 'מוסתרת'}
+                      </button>
+                    </div>
+
+                    {movieFacts.length > 0 && (
+                      <div className="flex items-center justify-between gap-2 p-2 bg-slate-950 rounded-xl border border-slate-800">
+                        <button
+                          onClick={() => setSelectedFactIndex(prev => (prev - 1 + movieFacts.length) % movieFacts.length)}
+                          className="p-1 rounded-lg bg-slate-800 text-slate-300 hover:text-white"
+                        >
+                          <ChevronRight className="w-4 h-4" />
+                        </button>
+                        <span className="text-xs font-medium text-slate-300 truncate max-w-[220px]">
+                          {currentFact?.fact}
+                        </span>
+                        <button
+                          onClick={() => setSelectedFactIndex(prev => (prev + 1) % movieFacts.length)}
+                          className="p-1 rounded-lg bg-slate-800 text-slate-300 hover:text-white"
+                        >
+                          <ChevronLeft className="w-4 h-4" />
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Fact Card Style Selector */}
+                    <div className="space-y-1 pt-1">
+                      <span className="text-[10px] text-slate-400 font-bold block">סגנון כרטיסיית עובדות:</span>
+                      <div className="grid grid-cols-4 gap-1 text-[10px]">
+                        {[
+                          { id: 'amber_gold', label: '⭐ זהב ענבר' },
+                          { id: 'cyan_glow', label: '⚡ ניאון זוהר' },
+                          { id: 'dark_glass', label: '🧊 זכוכית' },
+                          { id: 'cinema_red', label: '🎬 אדום קולנוע' }
+                        ].map(st => (
+                          <button
+                            key={st.id}
+                            type="button"
+                            onClick={() => setFactCardStyle(st.id as any)}
+                            className={`p-1.5 rounded-lg border text-center font-bold transition-all ${
+                              factCardStyle === st.id ? 'bg-amber-600 border-amber-400 text-white' : 'bg-slate-950 border-slate-800 text-slate-400'
+                            }`}
+                          >
+                            {st.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Quote Overlay Customizer */}
+                  <div className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-purple-300 flex items-center gap-1.5">
+                        <Quote className="w-3.5 h-3.5 text-purple-400" />
+                        <span>חלונית ציטוט (Quote Overlay):</span>
+                      </span>
+                      <button
+                        onClick={() => setShowQuoteOverlay(!showQuoteOverlay)}
+                        className={`px-2.5 py-1 rounded-lg text-[10px] font-bold ${
+                          showQuoteOverlay ? 'bg-purple-600 text-white' : 'bg-slate-800 text-slate-400'
+                        }`}
+                      >
+                        {showQuoteOverlay ? 'פעיל ✓' : 'כבוי'}
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-2">
+                      <input
+                        type="text"
+                        value={quoteText}
+                        onChange={(e) => setQuoteText(e.target.value)}
+                        placeholder="טקסט הציטוט..."
+                        className="col-span-2 p-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white placeholder-slate-500"
+                      />
+                      <input
+                        type="text"
+                        value={quoteSpeaker}
+                        onChange={(e) => setQuoteSpeaker(e.target.value)}
+                        placeholder="שם הדובר..."
+                        className="p-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white placeholder-slate-500"
+                      />
+                    </div>
+
+                    {/* Quote Style Selector */}
+                    <div className="space-y-1 pt-1">
+                      <span className="text-[10px] text-slate-400 font-bold block">סגנון חלונית הציטוט:</span>
+                      <div className="grid grid-cols-3 gap-1 text-[10px]">
+                        {[
+                          { id: 'velvet_glow', label: '💜 קטיפה זוהרת' },
+                          { id: 'quote_ribbon', label: '🎗️ סרט שמאלי' },
+                          { id: 'modern_border', label: '🪟 מסגרת שקופה' }
+                        ].map(st => (
+                          <button
+                            key={st.id}
+                            type="button"
+                            onClick={() => setQuoteCardStyle(st.id as any)}
+                            className={`p-1.5 rounded-lg border text-center font-bold transition-all ${
+                              quoteCardStyle === st.id ? 'bg-purple-600 border-purple-400 text-white' : 'bg-slate-950 border-slate-800 text-slate-400'
+                            }`}
+                          >
+                            {st.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Title Banner & Poster PIP Styles */}
+                  <div className="grid grid-cols-2 gap-3">
+                    {/* Title Banner */}
+                    <div className="p-3 rounded-2xl bg-slate-900 border border-slate-800 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-bold text-indigo-300">פס כותרת:</span>
+                        <button
+                          type="button"
+                          onClick={() => setShowBannerOverlay(!showBannerOverlay)}
+                          className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
+                            showBannerOverlay ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400'
+                          }`}
+                        >
+                          {showBannerOverlay ? '✓' : '✗'}
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-3 gap-1 text-[9px]">
+                        {[
+                          { id: 'indigo_glass', label: 'אינדיגו' },
+                          { id: 'gold_accent', label: 'זהב' },
+                          { id: 'cinema_ribbon', label: 'קולנוע' }
+                        ].map(st => (
+                          <button
+                            key={st.id}
+                            type="button"
+                            onClick={() => setTitleBannerStyle(st.id as any)}
+                            className={`p-1 rounded border font-bold ${
+                              titleBannerStyle === st.id ? 'bg-indigo-600 text-white' : 'bg-slate-950 text-slate-400 border-slate-800'
+                            }`}
+                          >
+                            {st.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Poster PIP */}
+                    <div className="p-3 rounded-2xl bg-slate-900 border border-slate-800 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-bold text-pink-300">פוסטר סרט PIP:</span>
+                        <button
+                          type="button"
+                          onClick={() => setShowPosterPip(!showPosterPip)}
+                          className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
+                            showPosterPip ? 'bg-pink-600 text-white' : 'bg-slate-800 text-slate-400'
+                          }`}
+                        >
+                          {showPosterPip ? 'פעיל ✓' : 'מוסתר'}
+                        </button>
+                      </div>
+
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => posterFileInputRef.current?.click()}
+                          className="flex-1 py-1 px-1.5 rounded-lg bg-pink-600/80 hover:bg-pink-600 text-white text-[10px] font-bold flex items-center justify-center gap-1"
+                        >
+                          <Upload className="w-3 h-3" />
+                          <span>העלה מהמחשב</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setStockPickerTarget('poster');
+                            setIsStockModalOpen(true);
+                          }}
+                          className="flex-1 py-1 px-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-300 text-[10px] font-bold flex items-center justify-center gap-1 border border-slate-700"
+                        >
+                          <FolderOpen className="w-3 h-3" />
+                          <span>Bunny CDN</span>
+                        </button>
+                      </div>
+
+                      <div className="grid grid-cols-3 gap-1 text-[9px]">
+                        {[
+                          { id: 'rounded_square', label: 'ריבוע' },
+                          { id: 'circle', label: 'עיגול' },
+                          { id: 'rectangle', label: 'מלבן' }
+                        ].map(sh => (
+                          <button
+                            key={sh.id}
+                            type="button"
+                            onClick={() => setPosterShape(sh.id as any)}
+                            className={`p-1 rounded border font-bold ${
+                              posterShape === sh.id ? 'bg-pink-600 text-white' : 'bg-slate-950 text-slate-400 border-slate-800'
+                            }`}
+                          >
+                            {sh.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
                   {/* Permanent Logo Controls (הלוגו שקבעתי) */}
-                  <div className="p-3 rounded-2xl bg-slate-900 border border-slate-800 space-y-2">
+                  <div className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 space-y-2">
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-bold text-white flex items-center gap-1.5">
                         <Sparkles className="w-3.5 h-3.5 text-pink-400" />
@@ -1556,15 +4462,15 @@ export default function AudioEditorAudiogramStudio({
                       <img
                         src={logoConfig.url}
                         alt="Logo"
-                        className="w-12 h-12 rounded-xl object-contain bg-black/60 border border-slate-800 p-1"
+                        className="w-14 h-14 rounded-xl object-contain bg-black/60 border border-slate-800 p-1 shrink-0"
                       />
-                      <div className="flex-1 space-y-1">
+                      <div className="flex-1 space-y-2">
                         <button
                           onClick={() => logoFileInputRef.current?.click()}
-                          className="px-3 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-bold text-pink-300 flex items-center gap-1"
+                          className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-bold text-pink-300 flex items-center gap-1.5 transition-colors"
                         >
-                          <Upload className="w-3 h-3" />
-                          <span>החלף לוגו</span>
+                          <Upload className="w-3.5 h-3.5" />
+                          <span>החלף קובץ לוגו (PNG / SVG)</span>
                         </button>
                         <input
                           ref={logoFileInputRef}
@@ -1575,88 +4481,197 @@ export default function AudioEditorAudiogramStudio({
                             const file = e.target.files?.[0];
                             if (file) {
                               const r = new FileReader();
-                              r.onload = () => setLogoConfig(prev => ({ ...prev, url: r.result as string }));
+                              r.onload = () => {
+                                const newUrl = r.result as string;
+                                setLogoConfig(prev => ({ ...prev, url: newUrl }));
+                                savePermanentLogo({ ...logoConfig, url: newUrl });
+                              };
                               r.readAsDataURL(file);
                             }
                           }}
                         />
+
+                        {/* Size and Opacity Controls */}
+                        <div className="grid grid-cols-2 gap-2 pt-1">
+                          <div className="space-y-0.5">
+                            <div className="flex justify-between text-[10px] text-slate-400 font-bold">
+                              <span>גודל לוגו:</span>
+                              <span className="font-mono text-pink-400">{logoConfig.size || 64}px</span>
+                            </div>
+                            <input
+                              type="range"
+                              min="32"
+                              max="360"
+                              value={logoConfig.size || 64}
+                              onChange={(e) => {
+                                const s = parseInt(e.target.value);
+                                setLogoConfig(prev => ({ ...prev, size: s }));
+                                savePermanentLogo({ ...logoConfig, size: s });
+                              }}
+                              className="w-full h-1 bg-slate-800 rounded appearance-none cursor-pointer accent-pink-500"
+                            />
+                          </div>
+
+                          <div className="space-y-0.5">
+                            <div className="flex justify-between text-[10px] text-slate-400 font-bold">
+                              <span>שקיפות:</span>
+                              <span className="font-mono text-pink-400">{Math.round((logoConfig.opacity ?? 0.9) * 100)}%</span>
+                            </div>
+                            <input
+                              type="range"
+                              min="0.1"
+                              max="1"
+                              step="0.05"
+                              value={logoConfig.opacity ?? 0.9}
+                              onChange={(e) => {
+                                const op = parseFloat(e.target.value);
+                                setLogoConfig(prev => ({ ...prev, opacity: op }));
+                                savePermanentLogo({ ...logoConfig, opacity: op });
+                              }}
+                              className="w-full h-1 bg-slate-800 rounded appearance-none cursor-pointer accent-pink-500"
+                            />
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </div>
 
-                  {/* Movie Facts Overlay (חלוניות עובדות על הסרט) */}
+                  {/* Rating Card Overlay Quick Box */}
                   <div className="p-3 rounded-2xl bg-slate-900 border border-slate-800 space-y-2">
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-white flex items-center gap-1.5">
-                        <Film className="w-3.5 h-3.5 text-amber-400" />
-                        <span>חלונית עובדה על הסרט ({movieFacts.length}):</span>
+                      <span className="text-xs font-bold text-amber-400 flex items-center gap-1.5">
+                        <Star className="w-3.5 h-3.5" />
+                        <span>ציוני סרט וביקורת (Rating Card):</span>
                       </span>
                       <button
-                        onClick={() => setShowFactOverlay(!showFactOverlay)}
-                        className={`px-2.5 py-1 rounded-lg text-[10px] font-bold ${
-                          showFactOverlay ? 'bg-amber-500 text-slate-950 font-black' : 'bg-slate-800 text-slate-400'
+                        type="button"
+                        onClick={() => setShowRatingOverlay(!showRatingOverlay)}
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded-lg border transition-all ${
+                          showRatingOverlay ? 'bg-amber-500 text-slate-950 font-black' : 'bg-slate-800 border-slate-700 text-slate-400'
                         }`}
                       >
-                        {showFactOverlay ? 'מוצגת בפריים ✓' : 'מוסתרת'}
+                        {showRatingOverlay ? 'פעיל בפריים ✓' : 'מוסתר'}
                       </button>
                     </div>
-
-                    {movieFacts.length > 0 && (
-                      <div className="flex items-center justify-between gap-2">
-                        <button
-                          onClick={() => setSelectedFactIndex(prev => (prev - 1 + movieFacts.length) % movieFacts.length)}
-                          className="p-1 rounded-lg bg-slate-800 text-slate-300"
-                        >
-                          <ChevronRight className="w-4 h-4" />
-                        </button>
-                        <span className="text-xs font-medium text-slate-300 truncate max-w-[200px]">
-                          {currentFact?.fact}
-                        </span>
-                        <button
-                          onClick={() => setSelectedFactIndex(prev => (prev + 1) % movieFacts.length)}
-                          className="p-1 rounded-lg bg-slate-800 text-slate-300"
-                        >
-                          <ChevronLeft className="w-4 h-4" />
-                        </button>
-                      </div>
-                    )}
+                    <div className="grid grid-cols-3 gap-1.5">
+                      <input
+                        type="text"
+                        value={imdbScore}
+                        onChange={(e) => setImdbScore(e.target.value)}
+                        placeholder="IMDb"
+                        className="p-1.5 rounded-lg bg-slate-950 border border-slate-800 text-xs text-center text-white font-mono"
+                      />
+                      <input
+                        type="text"
+                        value={rottenScore}
+                        onChange={(e) => setRottenScore(e.target.value)}
+                        placeholder="RT"
+                        className="p-1.5 rounded-lg bg-slate-950 border border-slate-800 text-xs text-center text-white font-mono"
+                      />
+                      <input
+                        type="text"
+                        value={personalScore}
+                        onChange={(e) => setPersonalScore(e.target.value)}
+                        placeholder="אישי"
+                        className="p-1.5 rounded-lg bg-slate-950 border border-slate-800 text-xs text-center text-white font-mono"
+                      />
+                    </div>
                   </div>
 
-                  {/* Quote & Banner Overlays */}
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      onClick={() => setShowQuoteOverlay(!showQuoteOverlay)}
-                      className={`p-2.5 rounded-xl border text-xs font-bold flex items-center justify-between ${
-                        showQuoteOverlay ? 'bg-purple-950/60 border-purple-500 text-purple-300' : 'bg-slate-900 border-slate-800 text-slate-400'
-                      }`}
-                    >
-                      <span>💬 חלונית ציטוט</span>
-                      <span>{showQuoteOverlay ? '✓' : ''}</span>
-                    </button>
+                  {/* Spoiler Alert Quick Box */}
+                  <div className="p-3 rounded-2xl bg-slate-900 border border-slate-800 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-rose-400 flex items-center gap-1.5">
+                        <AlertTriangle className="w-3.5 h-3.5" />
+                        <span>אזהרת ספוילר (Spoiler Alert):</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setShowSpoilerOverlay(!showSpoilerOverlay)}
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded-lg border transition-all ${
+                          showSpoilerOverlay ? 'bg-rose-600 text-white' : 'bg-slate-800 border-slate-700 text-slate-400'
+                        }`}
+                      >
+                        {showSpoilerOverlay ? 'פעיל בפריים ✓' : 'מוסתר'}
+                      </button>
+                    </div>
+                    <input
+                      type="text"
+                      value={spoilerText}
+                      onChange={(e) => setSpoilerText(e.target.value)}
+                      placeholder="נוסח אזהרת הספוילר..."
+                      className="w-full p-1.5 rounded-lg bg-slate-950 border border-slate-800 text-xs text-white"
+                    />
+                  </div>
 
+                  {/* Subtitles Quick Box */}
+                  <div className="p-3 rounded-2xl bg-slate-900 border border-slate-800 flex items-center justify-between">
+                    <span className="text-xs font-bold text-yellow-300 flex items-center gap-1.5">
+                      <Type className="w-3.5 h-3.5" />
+                      <span>כתוביות מסונכרנות (Subtitles):</span>
+                    </span>
                     <button
-                      onClick={() => setShowBannerOverlay(!showBannerOverlay)}
-                      className={`p-2.5 rounded-xl border text-xs font-bold flex items-center justify-between ${
-                        showBannerOverlay ? 'bg-indigo-950/60 border-indigo-500 text-indigo-300' : 'bg-slate-900 border-slate-800 text-slate-400'
+                      type="button"
+                      onClick={() => setShowSubtitles(!showSubtitles)}
+                      className={`text-[10px] font-bold px-2.5 py-1 rounded-lg border transition-all ${
+                        showSubtitles ? 'bg-yellow-500 text-slate-950 font-black' : 'bg-slate-800 border-slate-700 text-slate-400'
                       }`}
                     >
-                      <span>📺 פס כותרת ושם הפרק</span>
-                      <span>{showBannerOverlay ? '✓' : ''}</span>
+                      {showSubtitles ? 'פעיל בפריים ✓' : 'מוסתר'}
                     </button>
                   </div>
                 </div>
               )}
 
-              {/* 3. AUDIO TRIMMER & CUTTING TAB */}
+              {/* 3. AUDIO TRIMMER & SOUND FX TAB */}
               {activeTab === 'trimmer' && (
                 <div className="space-y-4">
-                  <div className="p-3 rounded-2xl bg-slate-900 border border-slate-800 space-y-3">
-                    <h4 className="text-xs font-bold text-amber-400 flex items-center gap-1.5">
-                      <Scissors className="w-4 h-4" />
-                      <span>חיתוך טווח סאונד מותאם אישית:</span>
-                    </h4>
+                  <div className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-xs font-bold text-amber-400 flex items-center gap-1.5">
+                        <Scissors className="w-4 h-4" />
+                        <span>חיתוך מקטע מהיר (Reels / Shorts):</span>
+                      </h4>
+                      <span className="text-[10px] font-mono text-slate-400">
+                        סה״כ: {formatTime(duration, true)}
+                      </span>
+                    </div>
 
-                    <div className="grid grid-cols-2 gap-3">
+                    {/* Quick Clip Presets */}
+                    <div className="grid grid-cols-3 gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setTrimStart(0);
+                          setTrimEnd(Math.min(30, duration));
+                        }}
+                        className="py-1.5 px-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-[10px] font-bold text-amber-300 border border-slate-700 text-center transition-colors"
+                      >
+                        ⚡ 30 שנ׳ (טיקטוק)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setTrimStart(0);
+                          setTrimEnd(Math.min(60, duration));
+                        }}
+                        className="py-1.5 px-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-[10px] font-bold text-amber-300 border border-slate-700 text-center transition-colors"
+                      >
+                        🎬 60 שנ׳ (Reels)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setTrimStart(0);
+                          setTrimEnd(Math.min(90, duration));
+                        }}
+                        className="py-1.5 px-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-[10px] font-bold text-amber-300 border border-slate-700 text-center transition-colors"
+                      >
+                        🌟 90 שנ׳ (Shorts)
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3 pt-1">
                       <div className="space-y-1">
                         <label className="text-[10px] text-slate-400 block">נקודת התחלה (In-Point):</label>
                         <input
@@ -1686,6 +4701,217 @@ export default function AudioEditorAudiogramStudio({
                       </div>
                     </div>
 
+                    <div className="p-2 rounded-xl bg-slate-950/80 border border-slate-800 flex items-center justify-between text-xs">
+                      <span className="text-slate-400">אורך המקטע הנבחר:</span>
+                      <span className="font-mono font-bold text-amber-400">
+                        {formatTime(Math.max(0, trimEnd - trimStart), true)}
+                      </span>
+                    </div>
+
+                    <button
+                      onClick={handlePerformTrim}
+                      disabled={isTrimming}
+                      className="w-full py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-slate-950 font-black text-xs shadow-lg transition-all active:scale-95 disabled:opacity-50"
+                    >
+                      {isTrimming ? 'חותך שמע...' : '✂️ חתוך ושמור מקטע זה'}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* 4. EXPORT AUDIOGRAM VIDEO TAB */}
+              {activeTab === 'export' && (
+                <div className="space-y-4">
+                  <div className="p-4 rounded-2xl bg-gradient-to-r from-purple-950/60 to-indigo-950/60 border border-purple-500/40 space-y-3">
+                    <h4 className="text-sm font-black text-white flex items-center gap-2">
+                      <Film className="w-4 h-4 text-purple-400" />
+                      <span>ייצוא וידאו אודיוגרמה (Video Podcast Export)</span>
+                    </h4>
+                    <p className="text-xs text-slate-300 leading-relaxed">
+                      יוצר קובץ וידאו באיכות גבוהה עם גלי הקול המונפשים, הרקע, הלוגו, הכתוביות והחלוניות להעלאה ליוטיוב, ספוטיפיי וידאו, אינסטגרם רילס וטיקטוק!
+                    </p>
+
+                    {/* Resolution Selector: FHD 1080p vs HD 720p vs 4K */}
+                    <div className="space-y-1.5 pt-1">
+                      <label className="text-[11px] font-bold text-slate-300 block">איכות ורזולוציית הווידאו:</label>
+                      <div className="grid grid-cols-3 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setExportResolution('1080p')}
+                          className={`p-2 rounded-xl border text-xs font-bold flex flex-col items-center justify-center gap-0.5 transition-all ${
+                            exportResolution === '1080p'
+                              ? 'bg-gradient-to-r from-purple-600 to-indigo-600 border-purple-400 text-white shadow-lg shadow-purple-600/30'
+                              : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          <span className="font-bold">FHD 1080p</span>
+                          <span className="text-[9px] opacity-75">(מומלץ לסושיאל)</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setExportResolution('720p')}
+                          className={`p-2 rounded-xl border text-xs font-bold flex flex-col items-center justify-center gap-0.5 transition-all ${
+                            exportResolution === '720p'
+                              ? 'bg-gradient-to-r from-purple-600 to-indigo-600 border-purple-400 text-white shadow-lg shadow-purple-600/30'
+                              : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          <span className="font-bold">HD 720p</span>
+                          <span className="text-[9px] opacity-75">(קובץ קל ומהיר)</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setExportResolution('4k')}
+                          className={`p-2 rounded-xl border text-xs font-bold flex flex-col items-center justify-center gap-0.5 transition-all ${
+                            exportResolution === '4k'
+                              ? 'bg-gradient-to-r from-purple-600 to-indigo-600 border-purple-400 text-white shadow-lg shadow-purple-600/30'
+                              : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          <span className="font-bold">4K UHD</span>
+                          <span className="text-[9px] opacity-75">(איכות מקסימלית)</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Format Selector: MP4 vs WEBM */}
+                    <div className="space-y-1.5 pt-1">
+                      <label className="text-[11px] font-bold text-slate-300 block">פורמט קובץ הווידאו:</label>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setExportFormat('mp4')}
+                          className={`p-2 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                            exportFormat === 'mp4'
+                              ? 'bg-purple-600 border-purple-400 text-white shadow-lg shadow-purple-600/30'
+                              : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          <span>🎬 MP4 (H.264 / AAC)</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setExportFormat('webm')}
+                          className={`p-2 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                            exportFormat === 'webm'
+                              ? 'bg-purple-600 border-purple-400 text-white shadow-lg shadow-purple-600/30'
+                              : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          <span>🌐 WebM (VP9 / Opus)</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Export Action Button */}
+                    <button
+                      onClick={handleExportAudiogramVideo}
+                      disabled={isExportingVideo || duration === 0}
+                      className="w-full py-3 rounded-2xl bg-gradient-to-r from-purple-600 via-pink-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-black text-sm shadow-xl shadow-purple-600/30 transition-all active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2 mt-2"
+                    >
+                      {isExportingVideo ? (
+                        <>
+                          <Activity className="w-4 h-4 animate-spin text-white" />
+                          <span>מייצא וידאו... ({exportProgress}%)</span>
+                        </>
+                      ) : (
+                        <>
+                          <Download className="w-4 h-4" />
+                          <span>ייצא וידאו {exportFormat.toUpperCase()} עכשיו</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* 3. AUDIO TRIMMER & CUTTING TAB */}
+              {activeTab === 'trimmer' && (
+                <div className="space-y-4">
+                  <div className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-xs font-bold text-amber-400 flex items-center gap-1.5">
+                        <Scissors className="w-4 h-4" />
+                        <span>חיתוך מקטע מהיר (Reels / Shorts):</span>
+                      </h4>
+                      <span className="text-[10px] font-mono text-slate-400">
+                        סה״כ: {formatTime(duration, true)}
+                      </span>
+                    </div>
+
+                    {/* Quick Clip Presets */}
+                    <div className="grid grid-cols-3 gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setTrimStart(0);
+                          setTrimEnd(Math.min(30, duration));
+                        }}
+                        className="py-1.5 px-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-[10px] font-bold text-amber-300 border border-slate-700 text-center transition-colors"
+                      >
+                        ⚡ 30 שנ׳ (טיקטוק)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setTrimStart(0);
+                          setTrimEnd(Math.min(60, duration));
+                        }}
+                        className="py-1.5 px-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-[10px] font-bold text-amber-300 border border-slate-700 text-center transition-colors"
+                      >
+                        🎬 60 שנ׳ (Reels)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setTrimStart(0);
+                          setTrimEnd(Math.min(90, duration));
+                        }}
+                        className="py-1.5 px-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-[10px] font-bold text-amber-300 border border-slate-700 text-center transition-colors"
+                      >
+                        🌟 90 שנ׳ (Shorts)
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3 pt-1">
+                      <div className="space-y-1">
+                        <label className="text-[10px] text-slate-400 block">נקודת התחלה (In-Point):</label>
+                        <input
+                          type="number"
+                          min="0"
+                          max={duration}
+                          step="0.5"
+                          value={trimStart}
+                          onChange={(e) => setTrimStart(parseFloat(e.target.value) || 0)}
+                          className="w-full p-2 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono text-white"
+                        />
+                        <span className="text-[10px] text-slate-500 font-mono">{formatTime(trimStart, true)}</span>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[10px] text-slate-400 block">נקודת סיום (Out-Point):</label>
+                        <input
+                          type="number"
+                          min="0"
+                          max={duration}
+                          step="0.5"
+                          value={trimEnd}
+                          onChange={(e) => setTrimEnd(parseFloat(e.target.value) || duration)}
+                          className="w-full p-2 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono text-white"
+                        />
+                        <span className="text-[10px] text-slate-500 font-mono">{formatTime(trimEnd, true)}</span>
+                      </div>
+                    </div>
+
+                    <div className="p-2 rounded-xl bg-slate-950/80 border border-slate-800 flex items-center justify-between text-xs">
+                      <span className="text-slate-400">אורך המקטע הנבחר:</span>
+                      <span className="font-mono font-bold text-amber-400">
+                        {formatTime(Math.max(0, trimEnd - trimStart), true)}
+                      </span>
+                    </div>
+
                     <button
                       onClick={handlePerformTrim}
                       disabled={isTrimming}
@@ -1709,15 +4935,108 @@ export default function AudioEditorAudiogramStudio({
                       יוצר קובץ וידאו HD מושלם עם גלי הקול המונפשים, הרקע, הלוגו, הכתוביות והחלוניות להעלאה ליוטיוב, ספוטיפיי וידאו, אינסטגרם רילס וטיקטוק!
                     </p>
 
+                    {/* Resolution Selector: FHD 1080p vs HD 720p vs 4K */}
+                    <div className="space-y-1.5 pt-1">
+                      <label className="text-[11px] font-bold text-slate-300 block">איכות ורזולוציית הווידאו:</label>
+                      <div className="grid grid-cols-3 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setExportResolution('1080p')}
+                          className={`p-2 rounded-xl border text-xs font-bold flex flex-col items-center justify-center gap-0.5 transition-all ${
+                            exportResolution === '1080p'
+                              ? 'bg-gradient-to-r from-purple-600 to-indigo-600 border-purple-400 text-white shadow-lg shadow-purple-600/30'
+                              : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          <span className="font-black text-xs">💎 Full HD 1080p</span>
+                          <span className="text-[10px] text-purple-200 font-mono">1920×1080 (מומלץ)</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setExportResolution('720p')}
+                          className={`p-2 rounded-xl border text-xs font-bold flex flex-col items-center justify-center gap-0.5 transition-all ${
+                            exportResolution === '720p'
+                              ? 'bg-gradient-to-r from-indigo-600 to-cyan-600 border-indigo-400 text-white shadow-lg shadow-indigo-600/30'
+                              : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          <span className="font-black text-xs">⚡ HD 720p</span>
+                          <span className="text-[10px] text-indigo-200 font-mono">1280×720 (מהיר)</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setExportResolution('4k')}
+                          className={`p-2 rounded-xl border text-xs font-bold flex flex-col items-center justify-center gap-0.5 transition-all ${
+                            exportResolution === '4k'
+                              ? 'bg-gradient-to-r from-amber-600 to-rose-600 border-amber-400 text-white shadow-lg shadow-amber-600/30'
+                              : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          <span className="font-black text-xs">🚀 4K Ultra HD</span>
+                          <span className="text-[10px] text-amber-200 font-mono">3840×2160 (מקסימום)</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Format Selector: MP4 vs WebM */}
+                    <div className="space-y-1.5 pt-1">
+                      <label className="text-[11px] font-bold text-slate-300 block">פורמט קובץ הווידאו לייצוא:</label>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setExportFormat('mp4')}
+                          className={`p-2.5 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
+                            exportFormat === 'mp4'
+                              ? 'bg-gradient-to-r from-purple-600 to-indigo-600 border-purple-400 text-white shadow-lg shadow-purple-600/30'
+                              : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          <Film className="w-3.5 h-3.5" />
+                          <span>🎬 MP4 (H.264 / AAC - מומלץ)</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setExportFormat('webm')}
+                          className={`p-2.5 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
+                            exportFormat === 'webm'
+                              ? 'bg-gradient-to-r from-cyan-600 to-teal-600 border-cyan-400 text-white shadow-lg shadow-cyan-600/30'
+                              : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          <Video className="w-3.5 h-3.5" />
+                          <span>🌐 WebM (Google / Web)</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Duration Notice */}
+                    <div className="p-2.5 rounded-xl bg-slate-900/90 border border-purple-500/30 flex items-center justify-between text-xs">
+                      <span className="text-slate-300 flex items-center gap-1.5">
+                        <Clock className="w-3.5 h-3.5 text-purple-400" />
+                        <span>משך הווידאו שייוצר:</span>
+                      </span>
+                      <span className="font-mono font-bold text-purple-300">
+                        {formatTime(trimEnd > trimStart ? trimEnd - trimStart : duration, true)}
+                      </span>
+                    </div>
+
+                    {/* Helpful Speed Tip */}
+                    <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-300 leading-snug">
+                      💡 <strong>איכות Full HD מובטחת</strong>: הרינדור מבוצע באיכות 1080p FHD גבוהה (12 Mbps). לקבלת סרטון מהיר לרשתות, ניתן לחתוך ל-30–60 שניות בלשונית ה-<strong>✂️ חיתוך</strong>.
+                    </div>
+
                     {isExportingVideo && (
                       <div className="space-y-1.5 pt-2">
                         <div className="flex justify-between text-xs text-purple-300 font-bold">
-                          <span>מייצא וידאו...</span>
+                          <span>מייצא וידאו {exportResolution.toUpperCase()} {exportFormat.toUpperCase()}...</span>
                           <span className="font-mono">{exportProgress}%</span>
                         </div>
-                        <div className="w-full h-2 bg-slate-900 rounded-full overflow-hidden">
+                        <div className="w-full h-2.5 bg-slate-900 rounded-full overflow-hidden p-0.5 border border-slate-800">
                           <div
-                            className="h-full bg-gradient-to-r from-cyan-400 to-purple-500 transition-all duration-300"
+                            className="h-full bg-gradient-to-r from-cyan-400 to-purple-500 rounded-full transition-all duration-300"
                             style={{ width: `${exportProgress}%` }}
                           />
                         </div>
@@ -1727,10 +5046,10 @@ export default function AudioEditorAudiogramStudio({
                     <button
                       onClick={handleExportAudiogramVideo}
                       disabled={isExportingVideo}
-                      className="w-full py-3 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold text-xs shadow-xl shadow-purple-600/30 flex items-center justify-center gap-2 active:scale-95 transition-all disabled:opacity-50"
+                      className="w-full py-3.5 rounded-xl bg-gradient-to-r from-purple-600 via-indigo-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white font-black text-xs shadow-xl shadow-purple-600/30 flex items-center justify-center gap-2 active:scale-95 transition-all disabled:opacity-50"
                     >
                       <Download className="w-4 h-4" />
-                      <span>{isExportingVideo ? 'מרנדר וידאו אודיוגרמה...' : 'ייצא והורד וידאו אודיוגרמה (HD MP4/WebM)'}</span>
+                      <span>{isExportingVideo ? `מרנדר וידאו (${exportResolution.toUpperCase()} ${exportFormat.toUpperCase()})...` : `ייצא והורד וידאו ב-${exportResolution === '1080p' ? 'Full HD 1080p' : exportResolution.toUpperCase()} (${exportFormat.toUpperCase()})`}</span>
                     </button>
                   </div>
                 </div>
@@ -1740,17 +5059,78 @@ export default function AudioEditorAudiogramStudio({
         </div>
       </div>
 
-      {/* Stock Image Picker Modal */}
+      {/* Stock Image, Poster & Logo Picker Modal */}
       {isStockModalOpen && (
         <ImageStockPickerModal
           isOpen={isStockModalOpen}
+          initialTarget={stockPickerTarget}
           onClose={() => setIsStockModalOpen(false)}
           onSelectImage={(url) => {
-            setCustomBgImage(url);
-            setBgType('image');
+            if (stockPickerTarget === 'poster') {
+              setPosterUrl(url);
+              setShowPosterPip(true);
+            } else if (stockPickerTarget === 'logo') {
+              setLogoConfig(prev => ({ ...prev, url, show: true }));
+              savePermanentLogo({ ...logoConfig, url, showByDefault: true });
+            } else {
+              setCustomBgImage(url);
+              setBgType('image');
+            }
             setIsStockModalOpen(false);
           }}
         />
+      )}
+
+      {/* Modal for Saving New Custom Template */}
+      {isNewTemplateModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in">
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl p-5 max-w-sm w-full space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <h4 className="text-sm font-black text-white flex items-center gap-2">
+                <Bookmark className="w-4 h-4 text-indigo-400" />
+                <span>שמירת תבנית עיצוב אישית</span>
+              </h4>
+              <button
+                onClick={() => setIsNewTemplateModalOpen(false)}
+                className="text-slate-400 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <p className="text-xs text-slate-300">
+              התבנית תשמור את כל הגדרות הרקע, גלי הקול, הצבעים, הפונטים ומיקומי האלמנטים שעיצבת, ותאפשר להחיל אותם בלחיצה אחת על כל פרק אחר.
+            </p>
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-slate-400">שם התבנית:</label>
+              <input
+                type="text"
+                value={newTemplateName}
+                onChange={(e) => setNewTemplateName(e.target.value)}
+                placeholder="למשל: סגנון סייברפאנק לרילס / קולנוע יוקרתי"
+                className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white focus:outline-none focus:border-indigo-500"
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleSaveAsTemplate(newTemplateName);
+                }}
+              />
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                onClick={() => setIsNewTemplateModalOpen(false)}
+                className="px-3 py-1.5 rounded-xl bg-slate-800 text-xs font-bold text-slate-300 hover:bg-slate-700"
+              >
+                ביטול
+              </button>
+              <button
+                onClick={() => handleSaveAsTemplate(newTemplateName)}
+                disabled={!newTemplateName.trim()}
+                className="px-4 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-bold text-white disabled:opacity-50 transition-all shadow"
+              >
+                שמור תבנית
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

@@ -22,6 +22,7 @@ import {
   MicOff, 
   Video, 
   VideoOff, 
+  Headphones,
   Smartphone, 
   Settings, 
   Clock, 
@@ -69,6 +70,7 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
   const [audioDevices, setAudioDevices] = useState<AudioInputDevice[]>([]);
   const [videoDevices, setVideoDevices] = useState<VideoInputDevice[]>([]);
   const [selectedAudioId, setSelectedAudioId] = useState<string>('');
+  const [audioChannelMode, setAudioChannelMode] = useState<'stereo' | 'mono'>('stereo');
   const [selectedVideoId, setSelectedVideoId] = useState<string>('');
   const [currentStream, setCurrentStream] = useState<MediaStream | null>(null);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
@@ -479,7 +481,7 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
           }
         }
 
-        // 2. Acquire Audio Stream (Studio broadcast constraints: 48kHz, no browser clipping)
+        // 2. Acquire Audio Stream (Studio broadcast constraints: 48kHz, stereo/mono selectable)
         let audioTrack: MediaStreamTrack | null = null;
         try {
           const aStream = await navigator.mediaDevices.getUserMedia({
@@ -488,7 +490,7 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
               echoCancellation: false,
               noiseSuppression: false,
               autoGainControl: false,
-              channelCount: { ideal: 2 },
+              channelCount: { ideal: audioChannelMode === 'stereo' ? 2 : 1 },
               sampleRate: { ideal: 48000 },
               sampleSize: { ideal: 16 }
             },
@@ -502,7 +504,8 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
               audio: {
                 echoCancellation: false,
                 noiseSuppression: false,
-                autoGainControl: false
+                autoGainControl: false,
+                channelCount: { ideal: audioChannelMode === 'stereo' ? 2 : 1 }
               }, 
               video: false 
             });
@@ -1830,17 +1833,27 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
             </div>
           </div>
 
-          {/* Audio & Video DSP Studio Controls (Gain, Noise Cancellation & Bokeh) */}
-          <div className="p-4 rounded-2xl bg-[#121620] border border-slate-800 space-y-4 shadow-lg">
-            {/* Devices & Resolution Selection Row (3 Columns) */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {/* 1. Camera Selection + iPhone Connect */}
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
-                    <Video className="w-3.5 h-3.5 text-indigo-400" />
-                    בחירת מצלמה
-                  </label>
+          {/* Audio & Video DSP Studio Controls - Clean Balanced Broadcast Layout */}
+          <div className="p-4 sm:p-5 rounded-3xl bg-[#121620]/95 border border-slate-800/90 shadow-2xl space-y-4">
+            {/* Top Row: Two Symmetrical Cards (Video & Camera on Right, Mic & Sound on Left) */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              
+              {/* CARD 1: Video & Camera Controls */}
+              <div className="p-4 rounded-2xl bg-slate-950/70 border border-slate-800/90 space-y-3 flex flex-col justify-between">
+                {/* Header */}
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <div className="p-1.5 rounded-lg bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                      <Video className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-bold text-white">מצלמת שידור ווידאו</h4>
+                      <p className="text-[10px] font-mono text-slate-400">
+                        {videoResolution === '4k' ? '3840×2160 (35 Mbps 4K)' : videoResolution === '1080p' ? '1920×1080 (8 Mbps FHD)' : '1280×720 (3 Mbps HD)'}
+                      </p>
+                    </div>
+                  </div>
+
                   <div className="flex items-center gap-1.5">
                     <button
                       onClick={async () => {
@@ -1848,22 +1861,24 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
                         setAudioDevices(audioInputs);
                         setVideoDevices(videoInputs);
                       }}
-                      className="text-[11px] text-slate-400 hover:text-white flex items-center gap-1 bg-slate-900 px-2 py-0.5 rounded-lg border border-slate-800"
+                      className="text-[10px] font-medium text-slate-400 hover:text-white flex items-center gap-1 bg-slate-900 px-2 py-1 rounded-lg border border-slate-800 transition-colors"
                       title="רענן רשימת התקנים"
                     >
                       <RotateCw className="w-3 h-3" />
                       <span>רענן</span>
                     </button>
+
                     <button
                       onClick={() => setIsRemoteModalOpen(true)}
-                      className="text-[11px] font-bold text-indigo-400 hover:text-indigo-300 flex items-center gap-1 bg-indigo-500/10 px-2 py-0.5 rounded-lg border border-indigo-500/20"
+                      className="text-[10px] font-bold text-indigo-400 hover:text-indigo-300 flex items-center gap-1 bg-indigo-500/10 px-2 py-1 rounded-lg border border-indigo-500/30 transition-all hover:bg-indigo-500/20"
                     >
                       <Smartphone className="w-3 h-3" />
-                      חיבור iPhone
+                      <span>חיבור iPhone</span>
                     </button>
                   </div>
                 </div>
 
+                {/* Camera Dropdown & Toggle */}
                 <div className="flex items-center gap-2">
                   <select
                     value={isUsingRemoteCam ? 'remote-iphone' : selectedVideoId}
@@ -1875,7 +1890,7 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
                         setSelectedVideoId(e.target.value);
                       }
                     }}
-                    className="flex-1 px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 text-xs text-white focus:outline-none focus:border-indigo-500"
+                    className="flex-1 px-3 py-2 rounded-xl bg-slate-900 border border-slate-700/80 text-xs text-white focus:outline-none focus:border-indigo-500 transition-colors"
                   >
                     {remoteStream && (
                       <option value="remote-iphone">📱 iPhone Remote Camera (מחובר בשידור חי)</option>
@@ -1889,26 +1904,118 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
 
                   <button
                     onClick={toggleCam}
-                    className={`p-2 rounded-xl border transition-colors ${isVideoMuted ? 'bg-rose-600 border-rose-500 text-white' : 'bg-slate-800 border-slate-700 text-slate-300'}`}
+                    className={`p-2.5 rounded-xl border transition-all ${isVideoMuted ? 'bg-rose-600 border-rose-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-300 hover:text-white'}`}
                     title={isVideoMuted ? 'הפעל מצלמה' : 'כבה מצלמה'}
                   >
                     {isVideoMuted ? <VideoOff className="w-4 h-4" /> : <Video className="w-4 h-4" />}
                   </button>
                 </div>
+
+                {/* Sub-row: Resolution Switcher + Cinematic Bokeh Toggle */}
+                <div className="grid grid-cols-4 gap-1.5 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setVideoResolution('4k')}
+                    className={`py-1.5 px-1 rounded-lg text-[11px] font-bold transition-all text-center ${
+                      videoResolution === '4k'
+                        ? 'bg-gradient-to-r from-amber-500 to-yellow-600 text-slate-950 font-black shadow'
+                        : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    4K UHD 🌟
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setVideoResolution('1080p')}
+                    className={`py-1.5 px-1 rounded-lg text-[11px] font-bold transition-all text-center ${
+                      videoResolution === '1080p'
+                        ? 'bg-indigo-600 text-white shadow'
+                        : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    FHD 1080p 🎬
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setVideoResolution('720p')}
+                    className={`py-1.5 px-1 rounded-lg text-[11px] font-bold transition-all text-center ${
+                      videoResolution === '720p'
+                        ? 'bg-slate-700 text-white shadow'
+                        : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    HD 720p
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setDepthOfField(!depthOfField)}
+                    className={`py-1.5 px-1 rounded-lg text-[11px] font-bold transition-all flex items-center justify-center gap-1 border ${
+                      depthOfField
+                        ? 'bg-purple-600 border-purple-500 text-white shadow'
+                        : 'bg-slate-900 border-slate-800 text-purple-300/80 hover:text-purple-200'
+                    }`}
+                    title="טשטוש רקע קולנועי (Depth of Field Bokeh)"
+                  >
+                    <Focus className="w-3 h-3" />
+                    <span>בוקה</span>
+                  </button>
+                </div>
               </div>
 
-              {/* 2. Microphone Selection + Mute */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
-                  <Mic className="w-3.5 h-3.5 text-indigo-400" />
-                  בחירת מיקרופון
-                </label>
+              {/* CARD 2: Microphone & Audio DSP Controls */}
+              <div className="p-4 rounded-2xl bg-slate-950/70 border border-slate-800/90 space-y-3 flex flex-col justify-between">
+                {/* Header */}
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <div className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                      <Mic className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-bold text-white">מיקרופון ראשי וסאונד</h4>
+                      <p className="text-[10px] font-mono text-slate-400">
+                        {audioChannelMode === 'stereo' ? 'Stereo (2-Channel 48kHz)' : 'Mono (1-Channel 48kHz)'}
+                      </p>
+                    </div>
+                  </div>
 
+                  {/* Audio Channel Mode Segment (Stereo vs Mono) */}
+                  <div className="flex items-center gap-1 bg-slate-900 p-0.5 rounded-xl border border-slate-800">
+                    <button
+                      type="button"
+                      onClick={() => setAudioChannelMode('stereo')}
+                      className={`px-2 py-0.5 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1 ${
+                        audioChannelMode === 'stereo'
+                          ? 'bg-cyan-600 text-white shadow'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      <Headphones className="w-2.5 h-2.5" />
+                      <span>סטריאו</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAudioChannelMode('mono')}
+                      className={`px-2 py-0.5 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1 ${
+                        audioChannelMode === 'mono'
+                          ? 'bg-teal-600 text-white shadow'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      <Mic className="w-2.5 h-2.5" />
+                      <span>מונו</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Mic Dropdown & Mute */}
                 <div className="flex items-center gap-2">
                   <select
                     value={selectedAudioId}
                     onChange={(e) => setSelectedAudioId(e.target.value)}
-                    className="flex-1 px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 text-xs text-white focus:outline-none focus:border-indigo-500"
+                    className="flex-1 px-3 py-2 rounded-xl bg-slate-900 border border-slate-700/80 text-xs text-white focus:outline-none focus:border-indigo-500 transition-colors"
                   >
                     {audioDevices.map(a => (
                       <option key={a.deviceId} value={a.deviceId}>
@@ -1919,140 +2026,76 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
 
                   <button
                     onClick={toggleMic}
-                    className={`p-2 rounded-xl border transition-colors ${isAudioMuted ? 'bg-rose-600 border-rose-500 text-white' : 'bg-slate-800 border-slate-700 text-slate-300'}`}
+                    className={`p-2.5 rounded-xl border transition-all ${isAudioMuted ? 'bg-rose-600 border-rose-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-300 hover:text-white'}`}
                     title={isAudioMuted ? 'בטל השתקה' : 'השתק מיקרופון'}
                   >
                     {isAudioMuted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
                   </button>
                 </div>
-              </div>
 
-              {/* 3. Video Resolution Quality Switcher (4K UHD / 1080p FHD / 720p HD) */}
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
-                    <Sliders className="w-3.5 h-3.5 text-amber-400" />
-                    איכות צילום (רזולוציה)
-                  </label>
-                  <span className="text-[10px] font-mono font-bold text-amber-400">
-                    {videoResolution === '4k' ? '3840×2160 (35 Mbps)' : videoResolution === '1080p' ? '1920×1080 (8 Mbps)' : '1280×720 (3 Mbps)'}
-                  </span>
-                </div>
+                {/* Sub-row: Gain Slider + DSP Noise Filter Toggle */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                  {/* Gain Slider */}
+                  <div className="p-2 rounded-xl bg-slate-900 border border-slate-800 flex items-center gap-2">
+                    <div className="flex items-center gap-1 text-[11px] font-bold text-slate-300 shrink-0">
+                      <Volume2 className="w-3.5 h-3.5 text-indigo-400" />
+                      <span>Gain:</span>
+                      <span className="font-mono text-indigo-400">{Math.round(micGain * 100)}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0"
+                      max="2"
+                      step="0.05"
+                      value={micGain}
+                      onChange={(e) => handleGainChange(parseFloat(e.target.value))}
+                      className="w-full accent-indigo-500 cursor-pointer h-1.5 bg-slate-800 rounded-lg"
+                    />
+                  </div>
 
-                <div className="grid grid-cols-3 gap-1.5 bg-slate-900 p-1 rounded-xl border border-slate-700">
+                  {/* Noise Filter Toggle */}
                   <button
                     type="button"
-                    onClick={() => setVideoResolution('4k')}
-                    className={`py-1.5 px-1 rounded-lg text-xs font-bold transition-all text-center ${
-                      videoResolution === '4k' 
-                        ? 'bg-gradient-to-r from-amber-500 to-yellow-600 text-slate-950 shadow-md font-black' 
-                        : 'text-slate-400 hover:text-white'
+                    onClick={handleToggleNoiseSuppression}
+                    className={`p-2 rounded-xl border text-[11px] font-bold flex items-center justify-between transition-all ${
+                      noiseSuppression
+                        ? 'bg-emerald-950/60 border-emerald-500/40 text-emerald-300 shadow'
+                        : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
                     }`}
                   >
-                    🌟 4K UHD
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setVideoResolution('1080p')}
-                    className={`py-1.5 px-1 rounded-lg text-xs font-bold transition-all text-center ${
-                      videoResolution === '1080p' 
-                        ? 'bg-indigo-600 text-white shadow-md' 
-                        : 'text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    🎬 FHD 1080p
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setVideoResolution('720p')}
-                    className={`py-1.5 px-1 rounded-lg text-xs font-bold transition-all text-center ${
-                      videoResolution === '720p' 
-                        ? 'bg-slate-700 text-white shadow-md' 
-                        : 'text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    HD 720p
+                    <div className="flex items-center gap-1.5">
+                      <Wand2 className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>ניקוי רעשים DSP</span>
+                    </div>
+                    <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold ${
+                      noiseSuppression ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-400'
+                    }`}>
+                      {noiseSuppression ? 'פעיל ✓' : 'כבוי'}
+                    </span>
                   </button>
                 </div>
               </div>
+
             </div>
 
-            {/* Audio Effects Bar: Mic Gain Slider + Noise Cancellation + Depth of Field */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3 border-t border-slate-800/80">
-              {/* Mic Gain Slider */}
-              <div className="p-2.5 rounded-xl bg-slate-900/90 border border-slate-800 space-y-1.5">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="font-bold text-slate-300 flex items-center gap-1">
-                    <Volume2 className="w-3.5 h-3.5 text-indigo-400" />
-                    עוצמת דיבור (Gain):
-                  </span>
-                  <span className="text-indigo-300 font-mono font-bold">{Math.round(micGain * 100)}%</span>
-                </div>
-                <input
-                  type="range"
-                  min="0"
-                  max="2"
-                  step="0.05"
-                  value={micGain}
-                  onChange={(e) => handleGainChange(parseFloat(e.target.value))}
-                  className="w-full accent-indigo-500 cursor-pointer h-1.5 bg-slate-800 rounded-lg"
-                />
-              </div>
-
-              {/* Noise Suppression DSP Toggle */}
-              <button
-                onClick={handleToggleNoiseSuppression}
-                className={`p-2.5 rounded-xl border text-xs font-bold flex items-center justify-between transition-all ${
-                  noiseSuppression 
-                    ? 'bg-indigo-950/60 border-indigo-500/40 text-indigo-300 shadow-md' 
-                    : 'bg-slate-900/90 border-slate-800 text-slate-400 hover:text-white'
-                }`}
-              >
-                <div className="flex items-center gap-1.5">
-                  <Wand2 className="w-3.5 h-3.5 text-indigo-400" />
-                  <span>ניקוי רעשים DSP</span>
-                </div>
-                <span className={`text-[10px] px-2 py-0.5 rounded font-bold ${
-                  noiseSuppression ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400'
-                }`}>
-                  {noiseSuppression ? 'מופעל ✓' : 'כבוי'}
-                </span>
-              </button>
-
-              {/* Cinematic Depth of Field Toggle */}
-              <button
-                onClick={() => setDepthOfField(!depthOfField)}
-                className={`p-2.5 rounded-xl border text-xs font-bold flex items-center justify-between transition-all ${
-                  depthOfField 
-                    ? 'bg-purple-950/60 border-purple-500/40 text-purple-300 shadow-md' 
-                    : 'bg-slate-900/90 border-slate-800 text-slate-400 hover:text-white'
-                }`}
-              >
-                <div className="flex items-center gap-1.5">
-                  <Focus className="w-3.5 h-3.5 text-purple-400" />
-                  <span>עומק שדה (Bokeh)</span>
-                </div>
-                <span className={`text-[10px] px-2 py-0.5 rounded font-bold ${
-                  depthOfField ? 'bg-purple-600 text-white' : 'bg-slate-800 text-slate-400'
-                }`}>
-                  {depthOfField ? 'קולנועי ✓' : 'כבוי'}
-                </span>
-              </button>
-            </div>
-
-            {/* Live VU Meter & Audio Waveform */}
-            <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between gap-4">
-              <div className="flex items-center gap-3 flex-1">
-                <div className="flex items-center gap-1.5 text-xs text-slate-400 shrink-0">
-                  <Mic className="w-3.5 h-3.5 text-indigo-400" />
-                  <span>עוצמת שמע:</span>
+            {/* Bottom Strip: Real-Time Broadcast Audio Level VU Meter */}
+            <div className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-3 flex-1 min-w-[240px]">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-slate-300 shrink-0">
+                  <Activity className="w-4 h-4 text-cyan-400" />
+                  <span>עוצמת שידור חיה (VU Meter):</span>
+                  <span className="font-mono text-cyan-400 font-bold text-xs">{audioLevel}%</span>
                 </div>
 
-                {/* Meter Bar */}
+                {/* Gradient VU Meter Bar */}
                 <div className="flex-1 h-3 rounded-full bg-slate-900 overflow-hidden p-0.5 border border-slate-800">
                   <div
                     className={`h-full rounded-full transition-all duration-75 ${
-                      isClipping ? 'bg-rose-500' : audioLevel > 70 ? 'bg-amber-400' : 'bg-indigo-500'
+                      isClipping
+                        ? 'bg-gradient-to-r from-rose-500 to-rose-600'
+                        : audioLevel > 70
+                        ? 'bg-gradient-to-r from-emerald-500 via-amber-400 to-rose-500'
+                        : 'bg-gradient-to-r from-indigo-500 to-cyan-400'
                     }`}
                     style={{ width: `${Math.min(100, audioLevel)}%` }}
                   />
@@ -2060,15 +2103,15 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
 
                 {/* Clipping alert badge */}
                 {isClipping && (
-                  <span className="text-[10px] font-bold text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded border border-rose-500/30 shrink-0 animate-pulse">
+                  <span className="text-[10px] font-bold text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded-full border border-rose-500/30 shrink-0 animate-pulse">
                     ⚠️ Clipping / חזק מדי
                   </span>
                 )}
               </div>
 
-              {/* Waveform Canvas */}
-              <div className="shrink-0 bg-slate-900/90 rounded-xl p-1 border border-slate-800">
-                <canvas ref={canvasRef} width={100} height={20} className="rounded" />
+              {/* Live Mini Oscilloscope Waveform Canvas */}
+              <div className="shrink-0 bg-slate-900 rounded-xl p-1 border border-slate-800">
+                <canvas ref={canvasRef} width={120} height={22} className="rounded" />
               </div>
             </div>
           </div>

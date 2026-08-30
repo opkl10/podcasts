@@ -26,45 +26,69 @@ export async function POST(req: NextRequest) {
 
     // 1. Movie Facts Generation Mode
     if (mode === 'movie_facts') {
-      const factPrompt = `
-אתה מומחה לקולנוע וטריוויה קולנועית עמוקה. עבור הסרט: "${querySubject}", חלץ בדיוק 12 עד 16 עובדות קולנוע מרתקות, מפורטות, מעמיקות ומאומתות מ-IMDb, ויקיפדיה, Rotten Tomatoes, Letterboxd וראיונות.
+      const webInfo = await fetchMultiSourceWebResearch(querySubject);
 
-קטגוריות מבוקשות (שלב לפחות 2 מכל סוג):
-- "behind_the_scenes": סודות הפקה ואפקטים מעשיים (צילומים, אתגרים טכניים, פעלולים)
-- "cast_secret": ליהוק ושחקנים (הכנות לתפקיד, אודישנים, אלתורים מפורסמים)
-- "director_vision": חזון הבמאי ותסריט (כתיבה, השראות, סצינות שנחתכו)
-- "easter_egg": איסטר אגז, רמזים חבויים ומשמעויות נסתרות בעלילה
-- "critical_reception": ציוני IMDb, Rotten Tomatoes, הכנסות ושיאי קופות, פרסי אוסקר
-- "trivia": טריוויה מדהימה ופרטים נדירים על הפסקול וההפקה
+      const factPrompt = `
+אתה היסטוריון ומבקר קולנוע בכיר עם ידע אנציקלופדי מדויק ומעמיק ביותר על הסרט: "${querySubject}".
+להלן מידע עובדתי אמיתי שנאסף מהרשת על הסרט:
+- תקציר ועלילה: ${webInfo.fullPlot}
+- שחקנים ודמויות: ${webInfo.cast.join(', ')}
+- הפקה ובימוי: ${webInfo.productionFacts.join(' ')}
+- ביקורות, הכנסות וקופות: ${webInfo.criticalReception}
+
+עליך לייצר בין 15 ל-20 כרטיסיות מידע ועובדות עמוקות, מרתקות, ספציפיות ומדויקות ביותר על "${querySubject}".
+
+קריטי - איסור מוחלט על ניסוחים כלליים, גנריים או מעורפלים!
+חוקי דיוק עובדתי מחייבים לכל אחת מ-5 הקטגוריות (לפחות 3 כרטיסיות מכל קטגוריה):
+
+1. "plot" (עלילה):
+   - ציין במפורש את שמות הדמויות, מיקומי ההתרחשות, נקודת המפנה המרכזית, סצנת הפתיחה/הסיום ומשמעות הסרט.
+   - אסור לכתוב משפטים כלליים כמו "העלילה עוקבת אחר מאבק פנימי". חובה לפרט מי הדמות, מה הקונפליקט ומה קורה בסצנות מפתח!
+
+2. "cast" (שחקנים):
+   - ציין שמות שחקנים מלאים ושמות דמויות מדויקים (למשל: לא "השחקן הראשי", אלא שם השחקן ושם הדמות).
+   - פרט אודישנים אמיתיים, שחקנים אחרים שנשקלו לתפקיד, הכנות פיזיות או נפשיות קיצוניות, ואלתורים אמיתיים על הסט.
+
+3. "production_crew" (צוותי הפקה + בימוי ויתר התפקידים):
+   - ציין שמות אמיתיים של הבמאי, התסריטאי, הצלם הראשי (Cinematographer), המלחין (Composer), ועורכי הסאונד והאפקטים.
+   - פרט ציוד צילום אמיתי (למשל IMAX 70mm, מצלמות 35mm), לוקיישנים אמיתיים (שמות ערים/מדינות), תקציב הפקה ($), ושיטות צילום מעשיות.
+
+4. "reviews" (ביקורות כלליות):
+   - ציין נתונים מדויקים: ציון IMDb מדויק, אחוז Rotten Tomatoes אמיתי, דירוג ב-Letterboxd או Metacritic.
+   - ציין הכנסות עולמיות בקופות במספרים מדויקים ($), ורשימת פרסי אוסקר/פסטיבלים שבהם הסרט זכה או היה מועמד.
+
+5. "behind_the_scenes" (סיפורי מאחורי הקלעים):
+   - ספק אנקדוטות אמיתיות שקרו על הסט: פציעות, תקלות צילום שהפכו לחלק מהסרט, סודות צילום ואיסטר אגז חבויים.
 
 החזר אך ורק JSON תקין במבנה הבא:
 {
   "movieTitle": "${querySubject}",
   "facts": [
     {
-      "category": "behind_the_scenes",
-      "fact": "ניסוח מלא ומעמיק של העובדה.",
-      "source": "IMDb",
+      "category": "plot",
+      "fact": "ניסוח מלא, ספציפי עם שמות ופרטים מדויקים.",
+      "source": "Wikipedia",
       "ratingScore": "8.8/10",
       "year": "2010",
-      "tags": ["הפקה", "נולאן"]
+      "tags": ["שם דמות", "פרט ספציפי"]
     }
   ]
 }
 `;
 
-      if (apiKey && apiKey.trim().startsWith('AIza')) {
+      const effectiveKey = apiKey || process.env.GEMINI_API_KEY || '';
+      if (effectiveKey && effectiveKey.trim().startsWith('AIza')) {
         const models = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'];
         for (const model of models) {
           try {
-            const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey.trim()}`, {
+            const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${effectiveKey.trim()}`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 contents: [{ parts: [{ text: factPrompt }] }],
                 generationConfig: {
                   responseMimeType: 'application/json',
-                  temperature: 0.7
+                  temperature: 0.5
                 }
               })
             });
@@ -74,11 +98,13 @@ export async function POST(req: NextRequest) {
               const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
               if (text) {
                 const parsed = JSON.parse(text.replace(/```json/g, '').replace(/```/g, '').trim());
-                return NextResponse.json({
-                  success: true,
-                  source: `Gemini AI (${model})`,
-                  data: parsed
-                });
+                if (parsed.facts && parsed.facts.length > 0) {
+                  return NextResponse.json({
+                    success: true,
+                    source: `Gemini AI Grounded (${model})`,
+                    data: parsed
+                  });
+                }
               }
             }
           } catch (e) {}
@@ -94,16 +120,23 @@ export async function POST(req: NextRequest) {
       const models = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'];
 
       const prompt = `
-אתה עורך תוכן ראשי לפודקאסט. עליך לייצר ראשי פרקים מובנים ומדויקים עבור: "${querySubject}".
+אתה עורך תוכן ראשי לפודקאסט קולנוע ותרבות. עליך לייצר ראשי פרקים מובנים, מרתקים ומדויקים עבור: "${querySubject}".
 ${webInfo.found ? `מידע עובדתי מהרשת: ${webInfo.fullPlot} ${webInfo.productionFacts.join(' ')}` : ''}
 ${userReview?.trim() ? `ביקורת המגיש: "${userReview.trim()}"` : ''}
 ${guestName ? `אורח: ${guestName} (${guestRole || ''})` : ''}
 
+מבנה פרק הפודקאסט המבוקש (חלק את ראשי הפרקים לפי 5 הצירים הבאים):
+1. 🎬 עלילה ותמות (ניתוח הנרטיב, קונפליקט מרכזי, סצנות מפתח, רבדים פילוסופיים)
+2. 🎭 שחקנים ודמויות (ליהוקים, הופעות בולטות, דינמיקה, אלתורים ואתגרי משחק)
+3. 🎥 צוותי הפקה + בימוי ויתר התפקידים (חזון הבמאי, צילום, פסקול ומוזיקה, עיצוב ועריכה)
+4. ⭐ ביקורות כלליות וציונים (תגובת הקהל והמבקרים, דירוגים, הישגים בקופות ובפסטיבלים)
+5. 🤫 סיפורי מאחורי הקלעים (אנקדוטות מהסט, סודות הפקה, תקלות שהפכו לקאלט)
+
 חוקי ניסוח קריטיים:
 1. משפטים מלאים ושלמים בלבד! אל תקטע משפטים באמצע ואל תשתמש בשלוש נקודות (...).
 2. שדה "notes": משפט אחד מלא ומדויק.
-3. שדה "talkingPoints": 3-4 נקודות מפתח שלמות וקצרות.
-4. שדה "questions": 2-3 שאלות עומק חדות.
+3. שדה "talkingPoints": 3-4 נקודות מפתח שלמות, עמוקות וחדות.
+4. שדה "questions": 2-3 שאלות עומק חדות ומעוררות דיון.
 
 החזר JSON תקין בלבד:
 {

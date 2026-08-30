@@ -112,6 +112,7 @@ export default function NewEpisodePage() {
   const [mediaType, setMediaType] = useState<'video' | 'audio_only'>('video');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
+  const [hostName, setHostName] = useState('');
   const [guestName, setGuestName] = useState('');
   const [guestRole, setGuestRole] = useState('');
   const [season, setSeason] = useState(1);
@@ -123,6 +124,9 @@ export default function NewEpisodePage() {
     setPodcasts(existingPods);
     if (existingPods.length > 0) {
       setSelectedPodcastId(existingPods[0].id);
+      if (existingPods[0].hostName) {
+        setHostName(existingPods[0].hostName);
+      }
     }
 
     const existingEps = getEpisodes();
@@ -146,6 +150,8 @@ export default function NewEpisodePage() {
       status: 'research',
       mediaType,
       description: description.trim(),
+      hostName: hostName.trim() || undefined,
+      host: hostName.trim() ? { name: hostName.trim() } : undefined,
       targetDurationMinutes: Number(targetDuration) || template.targetDuration,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -355,30 +361,46 @@ export default function NewEpisodePage() {
             />
           </div>
 
-          {/* Guest fields */}
-          <div className="p-4 rounded-2xl bg-slate-900/60 border border-slate-800 space-y-3">
-            <h4 className="text-xs font-bold text-indigo-300 flex items-center gap-1.5">
-              <User className="w-3.5 h-3.5" />
-              פרטי אורח/ת (אופציונלי)
-            </h4>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <input
-                  type="text"
-                  placeholder="שם האורח/ת (למשל: דניאל לוי)"
-                  value={guestName}
-                  onChange={(e) => setGuestName(e.target.value)}
-                  className="w-full px-3.5 py-2 rounded-xl bg-slate-800 border border-slate-700 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
-                />
-              </div>
-              <div>
-                <input
-                  type="text"
-                  placeholder="תפקיד / חברה (למשל: מנהל טכנולוגיות ראשי)"
-                  value={guestRole}
-                  onChange={(e) => setGuestRole(e.target.value)}
-                  className="w-full px-3.5 py-2 rounded-xl bg-slate-800 border border-slate-700 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
-                />
+          {/* Host & Guest fields */}
+          <div className="p-4 rounded-2xl bg-slate-900/60 border border-slate-800 space-y-4">
+            <div>
+              <label className="text-xs font-bold text-cyan-300 flex items-center gap-1.5 mb-1.5">
+                <Mic className="w-3.5 h-3.5" />
+                שם המגיש / מנחה הפרק (אופציונלי)
+              </label>
+              <input
+                type="text"
+                placeholder="למשל: עומר אוקון"
+                value={hostName}
+                onChange={(e) => setHostName(e.target.value)}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500"
+              />
+            </div>
+
+            <div className="pt-2 border-t border-slate-800 space-y-3">
+              <h4 className="text-xs font-bold text-indigo-300 flex items-center gap-1.5">
+                <User className="w-3.5 h-3.5" />
+                פרטי אורח/ת (אופציונלי)
+              </h4>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <input
+                    type="text"
+                    placeholder="שם האורח/ת (למשל: דניאל לוי)"
+                    value={guestName}
+                    onChange={(e) => setGuestName(e.target.value)}
+                    className="w-full px-3.5 py-2 rounded-xl bg-slate-800 border border-slate-700 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+                <div>
+                  <input
+                    type="text"
+                    placeholder="תפקיד / חברה (למשל: מנהל טכנולוגיות ראשי)"
+                    value={guestRole}
+                    onChange={(e) => setGuestRole(e.target.value)}
+                    className="w-full px-3.5 py-2 rounded-xl bg-slate-800 border border-slate-700 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
               </div>
             </div>
           </div>

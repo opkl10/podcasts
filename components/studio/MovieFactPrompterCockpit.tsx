@@ -40,9 +40,15 @@ export default function MovieFactPrompterCockpit({
   const [activeCardIndex, setActiveCardIndex] = useState(0);
   const [usedFactIds, setUsedFactIds] = useState<Set<string>>(new Set());
 
-  const filteredFacts = filterCategory === 'all' 
-    ? movieFacts 
-    : movieFacts.filter(f => f.category === filterCategory);
+  const filteredFacts = movieFacts.filter(f => {
+    if (filterCategory === 'all') return true;
+    if (filterCategory === 'plot') return f.category === 'plot';
+    if (filterCategory === 'cast') return f.category === 'cast' || f.category === 'cast_secret';
+    if (filterCategory === 'production_crew') return f.category === 'production_crew' || f.category === 'director_vision';
+    if (filterCategory === 'reviews') return f.category === 'reviews' || f.category === 'critical_reception' || f.category === 'box_office';
+    if (filterCategory === 'behind_the_scenes') return f.category === 'behind_the_scenes' || f.category === 'trivia' || f.category === 'easter_egg';
+    return f.category === filterCategory;
+  });
 
   const currentFact = filteredFacts[activeCardIndex] || filteredFacts[0] || null;
 
@@ -94,15 +100,15 @@ export default function MovieFactPrompterCockpit({
 
   return (
     <div className="space-y-3">
-      {/* Category Mini Tabs */}
+      {/* Category Mini Tabs (5 Standard Cinema Categories) */}
       <div className="flex items-center gap-1 overflow-x-auto pb-1 text-[11px]">
         {[
-          { id: 'all', label: `כל העובדות (${movieFacts.length})` },
-          { id: 'behind_the_scenes', label: '🎬 הפקה' },
-          { id: 'critical_reception', label: '🏆 ציונים' },
-          { id: 'easter_egg', label: '🥚 איסטר אגז' },
-          { id: 'director_vision', label: '🎥 בימוי' },
-          { id: 'trivia', label: '💡 טריוויה' }
+          { id: 'all', label: `הכל (${movieFacts.length})` },
+          { id: 'plot', label: '🎬 עלילה' },
+          { id: 'cast', label: '🎭 שחקנים' },
+          { id: 'production_crew', label: '🎥 הפקה ובימוי' },
+          { id: 'reviews', label: '⭐ ביקורות' },
+          { id: 'behind_the_scenes', label: '🤫 מאחורי הקלעים' }
         ].map(cat => (
           <button
             key={cat.id}
