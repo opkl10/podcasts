@@ -1416,20 +1416,36 @@ export default function AudioEditorAudiogramStudio({
         // High-DPI / Full HD Resolution scale factor relative to the stage editor baseline (720px)
         const resScale = Math.max(1.0, W / 720);
 
-        // 1. Logo
+        // 1. Logo Overlay (Preserves Natural Aspect Ratio - NO Distorting Squish)
         if (logoConfig.show && logoImageObjectRef.current) {
           try {
             ctx.save();
-            ctx.globalAlpha = logoConfig.opacity || 0.9;
             const lx = (logoTransform.x / 100) * W;
             const ly = (logoTransform.y / 100) * H;
-            const lSize = (logoConfig.size || 80) * (logoTransform.scale || 1.0) * (resScale * 0.7);
-            ctx.drawImage(logoImageObjectRef.current, lx, ly, lSize, lSize);
+            const lScale = (logoTransform.scale || 1.0) * resScale;
+            ctx.translate(lx, ly);
+            ctx.scale(lScale, lScale);
+            ctx.globalAlpha = logoConfig.opacity || 0.9;
+
+            const baseSize = logoConfig.size || 80;
+            const img = logoImageObjectRef.current;
+            const aspect = (img.naturalWidth && img.naturalHeight)
+              ? img.naturalWidth / img.naturalHeight
+              : 1;
+
+            let lw = baseSize;
+            let lh = baseSize;
+            if (aspect >= 1) {
+              lh = baseSize / aspect;
+            } else {
+              lw = baseSize * aspect;
+            }
+            ctx.drawImage(img, 0, 0, lw, lh);
             ctx.restore();
           } catch (e) {}
         }
 
-        // 2. Host Tag Overlay
+        // 2. Host Tag Badge (Dynamic sizing, icon circle, auto-fitting text)
         if (showHostTag && hostName) {
           try {
             ctx.save();
@@ -1438,6 +1454,22 @@ export default function AudioEditorAudiogramStudio({
             const hScale = (hostTransform.scale || 1.0) * resScale;
             ctx.translate(hx, hy);
             ctx.scale(hScale, hScale);
+
+            const nameFontSize = hostCustomStyle.fontSize || 13;
+            const roleFontSize = hostCustomStyle.secondaryFontSize || 10;
+            const fontFamily = hostCustomStyle.fontFamily || 'Rubik, sans-serif';
+
+            ctx.font = `${hostCustomStyle.fontWeight || 'bold'} ${nameFontSize}px ${fontFamily}`;
+            const nameW = ctx.measureText(hostName).width;
+            ctx.font = `500 ${roleFontSize}px ${fontFamily}`;
+            const roleW = hostRole ? ctx.measureText(hostRole).width : 0;
+
+            const padX = 14;
+            const padY = hostCustomStyle.padding || 8;
+            const iconSize = 22;
+            const textW = Math.max(nameW, roleW);
+            const totalW = textW + iconSize + padX * 2 + 10;
+            const totalH = Math.max(iconSize + padY * 2, nameFontSize + (hostRole ? roleFontSize + 4 : 0) + padY * 2 + 4);
 
             const bgRgba = hexToRgba(hostCustomStyle.backgroundColor || '#030712', hostCustomStyle.backgroundOpacity ?? 95);
             ctx.fillStyle = bgRgba;
@@ -1449,29 +1481,45 @@ export default function AudioEditorAudiogramStudio({
               ctx.shadowBlur = hostCustomStyle.glowBlur || 0;
             }
 
-            const hRadius = hostCustomStyle.borderRadius ?? 20;
+            const hRadius = hostCustomStyle.borderRadius ?? 9999;
             ctx.beginPath();
-            if (ctx.roundRect) ctx.roundRect(0, 0, 190, 52, Math.min(26, hRadius));
-            else ctx.rect(0, 0, 190, 52);
+            if (ctx.roundRect) ctx.roundRect(0, 0, totalW, totalH, Math.min(totalH / 2, hRadius));
+            else ctx.rect(0, 0, totalW, totalH);
             ctx.fill();
-            if (hostCustomStyle.borderWidth && hostCustomStyle.borderWidth > 0) ctx.stroke();
-
+            if ((hostCustomStyle.borderWidth ?? 0) > 0) ctx.stroke();
             ctx.shadowBlur = 0;
+
+            // Draw Mic Icon Circle
+            ctx.fillStyle = `${hostCustomStyle.borderColor || '#06b6d4'}33`;
+            ctx.beginPath();
+            ctx.arc(totalW - padX - iconSize / 2, totalH / 2, iconSize / 2, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = hostCustomStyle.borderColor || '#06b6d4';
+            ctx.font = `bold 10px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('🎙️', totalW - padX - iconSize / 2, totalH / 2);
+
+            // Draw Host Name & Role Text
+            const textRightX = totalW - padX - iconSize - 8;
+            ctx.textAlign = 'right';
+            ctx.textBaseline = 'alphabetic';
             ctx.fillStyle = hostCustomStyle.textColor || '#ffffff';
-            ctx.font = `${hostCustomStyle.fontWeight || 'bold'} ${hostCustomStyle.fontSize || 13}px ${hostCustomStyle.fontFamily || 'sans-serif'}`;
-            ctx.direction = 'rtl';
-            ctx.fillText(`🎙️ ${hostName}`, 175, 23);
+            ctx.font = `${hostCustomStyle.fontWeight || 'bold'} ${nameFontSize}px ${fontFamily}`;
 
             if (hostRole) {
+              ctx.fillText(hostName, textRightX, padY + nameFontSize);
               ctx.fillStyle = hostCustomStyle.secondaryTextColor || hostCustomStyle.borderColor || '#06b6d4';
-              ctx.font = `600 ${hostCustomStyle.secondaryFontSize || 10}px ${hostCustomStyle.fontFamily || 'sans-serif'}`;
-              ctx.fillText(hostRole, 175, 41);
+              ctx.font = `500 ${roleFontSize}px ${fontFamily}`;
+              ctx.fillText(hostRole, textRightX, padY + nameFontSize + roleFontSize + 4);
+            } else {
+              ctx.fillText(hostName, textRightX, totalH / 2 + nameFontSize / 3);
             }
             ctx.restore();
           } catch (e) {}
         }
 
-        // 3. Fact Card Overlay
+        // 3. Fact Card Overlay (Multi-line word wrap & auto card sizing)
         if (showFactOverlay && currentFact) {
           try {
             ctx.save();
@@ -1480,6 +1528,32 @@ export default function AudioEditorAudiogramStudio({
             const fScale = (factTransform.scale || 1.0) * resScale;
             ctx.translate(fx, fy);
             ctx.scale(fScale, fScale);
+
+            const fFontSize = factCustomStyle.fontSize || 12;
+            const fSubFontSize = factCustomStyle.secondaryFontSize || 9;
+            const fPad = factCustomStyle.padding || 12;
+            const fCardW = 280;
+            const fontFamily = factCustomStyle.fontFamily || 'Rubik, sans-serif';
+
+            // Word wrap
+            ctx.font = `${factCustomStyle.fontWeight || 'bold'} ${fFontSize}px ${fontFamily}`;
+            const words = currentFact.fact.split(' ');
+            const lines: string[] = [];
+            let cur = '';
+            for (const w of words) {
+              const test = cur ? `${cur} ${w}` : w;
+              if (ctx.measureText(test).width > fCardW - fPad * 2) {
+                if (cur) lines.push(cur);
+                cur = w;
+                if (lines.length >= 3) break;
+              } else {
+                cur = test;
+              }
+            }
+            if (cur && lines.length < 3) lines.push(cur);
+
+            const fBadgeH = fSubFontSize + 6;
+            const fCardH = fPad * 2 + fBadgeH + 8 + lines.length * (fFontSize + 4);
 
             const fBg = hexToRgba(factCustomStyle.backgroundColor || '#030712', factCustomStyle.backgroundOpacity ?? 95);
             ctx.fillStyle = fBg;
@@ -1493,39 +1567,50 @@ export default function AudioEditorAudiogramStudio({
 
             const fRadius = factCustomStyle.borderRadius ?? 16;
             ctx.beginPath();
-            if (ctx.roundRect) ctx.roundRect(0, 0, 240, 85, Math.min(20, fRadius));
-            else ctx.rect(0, 0, 240, 85);
+            if (ctx.roundRect) ctx.roundRect(0, 0, fCardW, fCardH, Math.min(fCardH / 2, fRadius));
+            else ctx.rect(0, 0, fCardW, fCardH);
             ctx.fill();
-            if (factCustomStyle.borderWidth && factCustomStyle.borderWidth > 0) ctx.stroke();
-
+            if ((factCustomStyle.borderWidth ?? 0) > 0) ctx.stroke();
             ctx.shadowBlur = 0;
-            ctx.fillStyle = factCustomStyle.secondaryTextColor || factCustomStyle.borderColor || '#f59e0b';
-            ctx.font = `bold ${factCustomStyle.secondaryFontSize || 10}px ${factCustomStyle.fontFamily || 'sans-serif'}`;
-            ctx.direction = 'rtl';
-            ctx.fillText(currentFact.source || 'עובדה על הסרט', 225, 20);
 
-            ctx.fillStyle = factCustomStyle.textColor || '#ffffff';
-            ctx.font = `${factCustomStyle.fontWeight || 'bold'} ${factCustomStyle.fontSize || 11}px ${factCustomStyle.fontFamily || 'sans-serif'}`;
-            const words = currentFact.fact.split(' ');
-            let curL = '';
-            let curY = 38;
-            for (let w of words) {
-              const test = curL + w + ' ';
-              if (ctx.measureText(test).width > 210) {
-                ctx.fillText(curL, 225, curY);
-                curL = w + ' ';
-                curY += 16;
-                if (curY > 75) break;
-              } else {
-                curL = test;
-              }
+            // Source Badge
+            ctx.fillStyle = factCustomStyle.borderColor || '#f59e0b';
+            ctx.font = `bold ${fSubFontSize}px ${fontFamily}`;
+            const badgeW = ctx.measureText(currentFact.source).width + 12;
+            ctx.beginPath();
+            if (ctx.roundRect) ctx.roundRect(fCardW - fPad - badgeW, fPad, badgeW, fBadgeH, 4);
+            else ctx.rect(fCardW - fPad - badgeW, fPad, badgeW, fBadgeH);
+            ctx.fill();
+
+            ctx.fillStyle = '#030712';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(currentFact.source, fCardW - fPad - badgeW / 2, fPad + fBadgeH / 2);
+
+            // Rating if present
+            if (currentFact.ratingScore) {
+              ctx.fillStyle = factCustomStyle.secondaryTextColor || factCustomStyle.borderColor || '#f59e0b';
+              ctx.textAlign = 'left';
+              ctx.textBaseline = 'middle';
+              ctx.font = `bold ${fSubFontSize + 1}px ${fontFamily}`;
+              ctx.fillText(`⭐ ${currentFact.ratingScore}`, fPad, fPad + fBadgeH / 2);
             }
-            ctx.fillText(curL, 225, curY);
+
+            // Body text lines
+            ctx.textAlign = 'right';
+            ctx.textBaseline = 'alphabetic';
+            ctx.fillStyle = factCustomStyle.textColor || '#ffffff';
+            ctx.font = `${factCustomStyle.fontWeight || 'bold'} ${fFontSize}px ${fontFamily}`;
+            let lineY = fPad + fBadgeH + 8 + fFontSize;
+            for (const l of lines) {
+              ctx.fillText(l, fCardW - fPad, lineY);
+              lineY += fFontSize + 4;
+            }
             ctx.restore();
           } catch (e) {}
         }
 
-        // 4. Quote Overlay
+        // 4. Quote Card Overlay
         if (showQuoteOverlay && quoteText) {
           try {
             ctx.save();
@@ -1534,6 +1619,33 @@ export default function AudioEditorAudiogramStudio({
             const qScale = (quoteTransform.scale || 1.0) * resScale;
             ctx.translate(qx, qy);
             ctx.scale(qScale, qScale);
+
+            const qFontSize = quoteCustomStyle.fontSize || 14;
+            const qSubFontSize = quoteCustomStyle.secondaryFontSize || 10;
+            const qPad = quoteCustomStyle.padding || 14;
+            const fontFamily = quoteCustomStyle.fontFamily || 'Assistant, sans-serif';
+
+            ctx.font = `italic ${quoteCustomStyle.fontWeight || 'bold'} ${qFontSize}px ${fontFamily}`;
+            const qTextW = ctx.measureText(quoteText).width;
+            const qSpeakerW = quoteSpeaker ? ctx.measureText(`— ${quoteSpeaker}`).width : 0;
+            const qCardW = Math.min(380, Math.max(220, Math.max(qTextW, qSpeakerW) + qPad * 2));
+
+            // Word wrap
+            const qWords = quoteText.split(' ');
+            const qLines: string[] = [];
+            let qCur = '';
+            for (const w of qWords) {
+              const test = qCur ? `${qCur} ${w}` : w;
+              if (ctx.measureText(test).width > qCardW - qPad * 2) {
+                if (qCur) qLines.push(qCur);
+                qCur = w;
+              } else {
+                qCur = test;
+              }
+            }
+            if (qCur) qLines.push(qCur);
+
+            const qCardH = qPad * 2 + qLines.length * (qFontSize + 4) + (quoteSpeaker ? qSubFontSize + 6 : 0);
 
             const qBg = hexToRgba(quoteCustomStyle.backgroundColor || '#030712', quoteCustomStyle.backgroundOpacity ?? 95);
             ctx.fillStyle = qBg;
@@ -1547,22 +1659,25 @@ export default function AudioEditorAudiogramStudio({
 
             const qRadius = quoteCustomStyle.borderRadius ?? 16;
             ctx.beginPath();
-            if (ctx.roundRect) ctx.roundRect(-140, 0, 280, 68, Math.min(16, qRadius));
-            else ctx.rect(-140, 0, 280, 68);
+            if (ctx.roundRect) ctx.roundRect(0, 0, qCardW, qCardH, Math.min(qCardH / 2, qRadius));
+            else ctx.rect(0, 0, qCardW, qCardH);
             ctx.fill();
-            if (quoteCustomStyle.borderWidth && quoteCustomStyle.borderWidth > 0) ctx.stroke();
-
+            if ((quoteCustomStyle.borderWidth ?? 0) > 0) ctx.stroke();
             ctx.shadowBlur = 0;
-            ctx.fillStyle = quoteCustomStyle.textColor || '#ffffff';
-            ctx.font = `italic ${quoteCustomStyle.fontWeight || 'bold'} ${quoteCustomStyle.fontSize || 12}px ${quoteCustomStyle.fontFamily || 'sans-serif'}`;
-            ctx.direction = 'rtl';
-            ctx.textAlign = 'center';
-            ctx.fillText(`"${quoteText.slice(0, 42)}"`, 0, 28);
 
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'alphabetic';
+            ctx.fillStyle = quoteCustomStyle.textColor || '#ffffff';
+            ctx.font = `italic ${quoteCustomStyle.fontWeight || 'bold'} ${qFontSize}px ${fontFamily}`;
+            let qY = qPad + qFontSize;
+            for (const l of qLines) {
+              ctx.fillText(l, qCardW / 2, qY);
+              qY += qFontSize + 4;
+            }
             if (quoteSpeaker) {
               ctx.fillStyle = quoteCustomStyle.secondaryTextColor || quoteCustomStyle.borderColor || '#c084fc';
-              ctx.font = `600 ${quoteCustomStyle.secondaryFontSize || 10}px ${quoteCustomStyle.fontFamily || 'sans-serif'}`;
-              ctx.fillText(`— ${quoteSpeaker}`, 0, 50);
+              ctx.font = `600 ${qSubFontSize}px ${fontFamily}`;
+              ctx.fillText(`— ${quoteSpeaker}`, qCardW / 2, qY + 2);
             }
             ctx.restore();
           } catch (e) {}
@@ -1578,6 +1693,20 @@ export default function AudioEditorAudiogramStudio({
             ctx.translate(bx, by);
             ctx.scale(bScale, bScale);
 
+            const titleFontSize = bannerCustomStyle.fontSize || 13;
+            const subFontSize = bannerCustomStyle.secondaryFontSize || 9;
+            const fontFamily = bannerCustomStyle.fontFamily || 'Rubik, sans-serif';
+
+            ctx.font = `${bannerCustomStyle.fontWeight || '900'} ${titleFontSize}px ${fontFamily}`;
+            const titleW = ctx.measureText(episodeTitleText).width;
+            ctx.font = `bold ${subFontSize}px ${fontFamily}`;
+            const subW = ctx.measureText(bannerSubtitle).width;
+
+            const bPadX = 14;
+            const bPadY = bannerCustomStyle.padding || 10;
+            const bTotalW = Math.max(160, Math.max(titleW, subW) + bPadX * 2);
+            const bTotalH = titleFontSize + subFontSize + bPadY * 2 + 6;
+
             const bBg = hexToRgba(bannerCustomStyle.backgroundColor || '#030712', bannerCustomStyle.backgroundOpacity ?? 90);
             ctx.fillStyle = bBg;
             ctx.strokeStyle = bannerCustomStyle.borderColor || '#6366f1';
@@ -1590,20 +1719,21 @@ export default function AudioEditorAudiogramStudio({
 
             const bRadius = bannerCustomStyle.borderRadius ?? 12;
             ctx.beginPath();
-            if (ctx.roundRect) ctx.roundRect(0, 0, 230, 54, Math.min(16, bRadius));
-            else ctx.rect(0, 0, 230, 54);
+            if (ctx.roundRect) ctx.roundRect(0, 0, bTotalW, bTotalH, Math.min(bTotalH / 2, bRadius));
+            else ctx.rect(0, 0, bTotalW, bTotalH);
             ctx.fill();
-            if (bannerCustomStyle.borderWidth && bannerCustomStyle.borderWidth > 0) ctx.stroke();
-
+            if ((bannerCustomStyle.borderWidth ?? 0) > 0) ctx.stroke();
             ctx.shadowBlur = 0;
+
+            ctx.textAlign = 'right';
+            ctx.textBaseline = 'alphabetic';
             ctx.fillStyle = bannerCustomStyle.secondaryTextColor || bannerCustomStyle.borderColor || '#818cf8';
-            ctx.font = `bold ${bannerCustomStyle.secondaryFontSize || 10}px ${bannerCustomStyle.fontFamily || 'sans-serif'}`;
-            ctx.direction = 'rtl';
-            ctx.fillText(bannerSubtitle, 218, 20);
+            ctx.font = `bold ${subFontSize}px ${fontFamily}`;
+            ctx.fillText(bannerSubtitle, bTotalW - bPadX, bPadY + subFontSize);
 
             ctx.fillStyle = bannerCustomStyle.textColor || '#ffffff';
-            ctx.font = `${bannerCustomStyle.fontWeight || 'bold'} ${bannerCustomStyle.fontSize || 12}px ${bannerCustomStyle.fontFamily || 'sans-serif'}`;
-            ctx.fillText(episodeTitleText.slice(0, 28), 218, 40);
+            ctx.font = `${bannerCustomStyle.fontWeight || '900'} ${titleFontSize}px ${fontFamily}`;
+            ctx.fillText(episodeTitleText, bTotalW - bPadX, bPadY + subFontSize + titleFontSize + 4);
             ctx.restore();
           } catch (e) {}
         }
@@ -1618,27 +1748,48 @@ export default function AudioEditorAudiogramStudio({
             ctx.translate(rx, ry);
             ctx.scale(rScale, rScale);
 
+            const rFontSize = ratingCustomStyle.fontSize || 13;
+            const rSubFontSize = ratingCustomStyle.secondaryFontSize || 10;
+            const rPadX = 14;
+            const rPadY = ratingCustomStyle.padding || 10;
+            const fontFamily = ratingCustomStyle.fontFamily || 'Rubik, sans-serif';
+
+            const scoreStr = `IMDb: ${imdbScore}  •  RT: ${rottenScore}  •  ציון: ${personalScore}`;
+            ctx.font = `bold ${rFontSize}px font-mono, sans-serif`;
+            const scoreW = ctx.measureText(scoreStr).width;
+            ctx.font = `bold ${rSubFontSize}px ${fontFamily}`;
+            const titleW = ctx.measureText('🏆 ציוני ודירוגי ביקורת').width;
+
+            const rCardW = Math.max(scoreW, titleW) + rPadX * 2;
+            const rCardH = rFontSize + rSubFontSize + rPadY * 2 + 8;
+
             const rBg = hexToRgba(ratingCustomStyle.backgroundColor || '#030712', ratingCustomStyle.backgroundOpacity ?? 95);
             ctx.fillStyle = rBg;
             ctx.strokeStyle = ratingCustomStyle.borderColor || '#f59e0b';
             ctx.lineWidth = ratingCustomStyle.borderWidth ?? 1.5;
 
+            if ((ratingCustomStyle.glowBlur ?? 0) > 0) {
+              ctx.shadowColor = ratingCustomStyle.glowColor || '#f59e0b';
+              ctx.shadowBlur = ratingCustomStyle.glowBlur || 0;
+            }
+
             const rRadius = ratingCustomStyle.borderRadius ?? 16;
             ctx.beginPath();
-            if (ctx.roundRect) ctx.roundRect(-100, 0, 200, 52, Math.min(16, rRadius));
-            else ctx.rect(-100, 0, 200, 52);
+            if (ctx.roundRect) ctx.roundRect(0, 0, rCardW, rCardH, Math.min(rCardH / 2, rRadius));
+            else ctx.rect(0, 0, rCardW, rCardH);
             ctx.fill();
-            if (ratingCustomStyle.borderWidth && ratingCustomStyle.borderWidth > 0) ctx.stroke();
+            if ((ratingCustomStyle.borderWidth ?? 0) > 0) ctx.stroke();
+            ctx.shadowBlur = 0;
 
-            ctx.fillStyle = ratingCustomStyle.secondaryTextColor || '#f59e0b';
-            ctx.font = `bold ${ratingCustomStyle.secondaryFontSize || 10}px ${ratingCustomStyle.fontFamily || 'sans-serif'}`;
-            ctx.direction = 'rtl';
             ctx.textAlign = 'center';
-            ctx.fillText('🏆 ציוני ודירוגי ביקורת', 0, 18);
+            ctx.textBaseline = 'alphabetic';
+            ctx.fillStyle = ratingCustomStyle.secondaryTextColor || ratingCustomStyle.borderColor || '#f59e0b';
+            ctx.font = `bold ${rSubFontSize}px ${fontFamily}`;
+            ctx.fillText('🏆 ציוני ודירוגי ביקורת', rCardW / 2, rPadY + rSubFontSize);
 
             ctx.fillStyle = ratingCustomStyle.textColor || '#ffffff';
-            ctx.font = `${ratingCustomStyle.fontWeight || 'bold'} ${ratingCustomStyle.fontSize || 12}px ${ratingCustomStyle.fontFamily || 'sans-serif'}`;
-            ctx.fillText(`IMDb: ${imdbScore}  •  RT: ${rottenScore}  •  ציון: ${personalScore}`, 0, 38);
+            ctx.font = `bold ${rFontSize}px font-mono, sans-serif`;
+            ctx.fillText(scoreStr, rCardW / 2, rPadY + rSubFontSize + rFontSize + 5);
             ctx.restore();
           } catch (e) {}
         }
@@ -1653,57 +1804,85 @@ export default function AudioEditorAudiogramStudio({
             ctx.translate(spx, spy);
             ctx.scale(spScale, spScale);
 
+            const spFontSize = spoilerCustomStyle.fontSize || 12;
+            const spPadX = 14;
+            const spPadY = spoilerCustomStyle.padding || 10;
+            const fontFamily = spoilerCustomStyle.fontFamily || 'Rubik, sans-serif';
+
+            const spFullText = `⚠️ ${spoilerText}`;
+            ctx.font = `${spoilerCustomStyle.fontWeight || 'bold'} ${spFontSize}px ${fontFamily}`;
+            const spTextW = ctx.measureText(spFullText).width;
+            const spCardW = spTextW + spPadX * 2;
+            const spCardH = spFontSize + spPadY * 2 + 4;
+
             const spBg = hexToRgba(spoilerCustomStyle.backgroundColor || '#450a0a', spoilerCustomStyle.backgroundOpacity ?? 95);
             ctx.fillStyle = spBg;
             ctx.strokeStyle = spoilerCustomStyle.borderColor || '#ef4444';
             ctx.lineWidth = spoilerCustomStyle.borderWidth ?? 1.5;
 
+            if ((spoilerCustomStyle.glowBlur ?? 0) > 0) {
+              ctx.shadowColor = spoilerCustomStyle.glowColor || '#ef4444';
+              ctx.shadowBlur = spoilerCustomStyle.glowBlur || 0;
+            }
+
             const spRadius = spoilerCustomStyle.borderRadius ?? 12;
             ctx.beginPath();
-            if (ctx.roundRect) ctx.roundRect(-120, 0, 240, 42, Math.min(12, spRadius));
-            else ctx.rect(-120, 0, 240, 42);
+            if (ctx.roundRect) ctx.roundRect(0, 0, spCardW, spCardH, Math.min(spCardH / 2, spRadius));
+            else ctx.rect(0, 0, spCardW, spCardH);
             ctx.fill();
-            if (spoilerCustomStyle.borderWidth && spoilerCustomStyle.borderWidth > 0) ctx.stroke();
+            if ((spoilerCustomStyle.borderWidth ?? 0) > 0) ctx.stroke();
+            ctx.shadowBlur = 0;
 
-            ctx.fillStyle = spoilerCustomStyle.textColor || '#ffffff';
-            ctx.font = `${spoilerCustomStyle.fontWeight || 'bold'} ${spoilerCustomStyle.fontSize || 11}px ${spoilerCustomStyle.fontFamily || 'sans-serif'}`;
-            ctx.direction = 'rtl';
             ctx.textAlign = 'center';
-            ctx.fillText(spoilerText.slice(0, 38), 0, 26);
+            ctx.textBaseline = 'alphabetic';
+            ctx.fillStyle = spoilerCustomStyle.textColor || '#ffffff';
+            ctx.fillText(spFullText, spCardW / 2, spPadY + spFontSize);
             ctx.restore();
           } catch (e) {}
         }
 
-        // 8. Poster PIP Overlay
+        // 8. Poster PIP Overlay (Center Object-Cover Crop - NO Stretch/Squish)
         if (showPosterPip && posterUrl && posterImageObjectRef.current) {
           try {
             ctx.save();
             const px = (posterTransform.x / 100) * W;
             const py = (posterTransform.y / 100) * H;
             const pScale = (posterTransform.scale || 1.0) * resScale;
-            const pw = 112 * pScale;
-            const ph = posterShape === 'rectangle' ? 168 * pScale : pw;
             ctx.translate(px, py);
+            ctx.scale(pScale, pScale);
+
+            const pw = 112;
+            const ph = posterShape === 'rectangle' ? 168 : pw;
 
             if ((posterCustomStyle.glowBlur ?? 0) > 0) {
               ctx.shadowColor = posterCustomStyle.glowColor || '#6366f1';
-              ctx.shadowBlur = (posterCustomStyle.glowBlur || 0) * resScale;
+              ctx.shadowBlur = posterCustomStyle.glowBlur || 0;
             }
 
-            const pRadius = posterShape === 'circle' ? pw / 2 : ((posterCustomStyle.borderRadius ?? 16) * pScale);
+            const pRadius = posterShape === 'circle' ? pw / 2 : (posterCustomStyle.borderRadius ?? 16);
             ctx.beginPath();
-            if (ctx.roundRect) ctx.roundRect(0, 0, pw, ph, pRadius);
+            if (ctx.roundRect) ctx.roundRect(0, 0, pw, ph, Math.min(pw / 2, pRadius));
             else ctx.rect(0, 0, pw, ph);
             ctx.save();
             ctx.clip();
-            ctx.drawImage(posterImageObjectRef.current, 0, 0, pw, ph);
+
+            // Object-cover center crop calculation
+            const img = posterImageObjectRef.current;
+            const nw = img.naturalWidth || pw;
+            const nh = img.naturalHeight || ph;
+            const coverScale = Math.max(pw / nw, ph / nh);
+            const sw = pw / coverScale;
+            const sh = ph / coverScale;
+            const sx = (nw - sw) / 2;
+            const sy = (nh - sh) / 2;
+            ctx.drawImage(img, sx, sy, sw, sh, 0, 0, pw, ph);
             ctx.restore();
 
             if ((posterCustomStyle.borderWidth ?? 2) > 0) {
               ctx.strokeStyle = posterCustomStyle.borderColor || '#6366f1';
-              ctx.lineWidth = (posterCustomStyle.borderWidth ?? 2) * pScale;
+              ctx.lineWidth = posterCustomStyle.borderWidth ?? 2;
               ctx.beginPath();
-              if (ctx.roundRect) ctx.roundRect(0, 0, pw, ph, pRadius);
+              if (ctx.roundRect) ctx.roundRect(0, 0, pw, ph, Math.min(pw / 2, pRadius));
               else ctx.rect(0, 0, pw, ph);
               ctx.stroke();
             }
@@ -1711,7 +1890,7 @@ export default function AudioEditorAudiogramStudio({
           } catch (e) {}
         }
 
-        // 9. Subtitles
+        // 9. Subtitles Overlay
         if (showSubtitles && activeSubtitle) {
           try {
             ctx.save();
@@ -1721,12 +1900,17 @@ export default function AudioEditorAudiogramStudio({
             ctx.translate(sx, sy);
             ctx.scale(sScale, sScale);
 
-            ctx.font = `${subtitleCustomStyle.fontWeight || 'bold'} ${subtitleCustomStyle.fontSize || 20}px ${subtitleCustomStyle.fontFamily || 'sans-serif'}`;
+            const subFontSize = subtitleCustomStyle.fontSize || 20;
+            const fontFamily = subtitleCustomStyle.fontFamily || 'Rubik, sans-serif';
+            ctx.font = `${subtitleCustomStyle.fontWeight || 'bold'} ${subFontSize}px ${fontFamily}`;
             ctx.direction = 'rtl';
             ctx.textAlign = 'center';
+            ctx.textBaseline = 'alphabetic';
+
             const subText = activeSubtitle.text;
             const metrics = ctx.measureText(subText);
             const subW = metrics.width + 32;
+            const subH = subFontSize + 18;
 
             const sBg = hexToRgba(subtitleCustomStyle.backgroundColor || '#000000', subtitleCustomStyle.backgroundOpacity ?? 80);
             ctx.fillStyle = sBg;
@@ -1740,8 +1924,8 @@ export default function AudioEditorAudiogramStudio({
 
             const sRadius = subtitleCustomStyle.borderRadius ?? 12;
             ctx.beginPath();
-            if (ctx.roundRect) ctx.roundRect(-subW / 2, -26, subW, 38, Math.min(16, sRadius));
-            else ctx.rect(-subW / 2, -26, subW, 38);
+            if (ctx.roundRect) ctx.roundRect(-subW / 2, -subH + 4, subW, subH, Math.min(subH / 2, sRadius));
+            else ctx.rect(-subW / 2, -subH + 4, subW, subH);
             ctx.fill();
             if (subtitleCustomStyle.borderWidth && subtitleCustomStyle.borderWidth > 0) ctx.stroke();
 
