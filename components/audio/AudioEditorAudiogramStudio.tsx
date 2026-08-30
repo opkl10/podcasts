@@ -593,6 +593,25 @@ export default function AudioEditorAudiogramStudio({
   const animFrameRef = useRef<number | null>(null);
   const logoFileInputRef = useRef<HTMLInputElement | null>(null);
   const posterFileInputRef = useRef<HTMLInputElement | null>(null);
+  const stageContainerRef = useRef<HTMLDivElement | null>(null);
+  const [stageSize, setStageSize] = useState<{ width: number; height: number }>({ width: 720, height: 405 });
+
+  // Track live stage viewport dimensions for exact 1:1 pixel-perfect canvas export ratio
+  useEffect(() => {
+    if (!stageContainerRef.current) return;
+    const updateSize = () => {
+      if (stageContainerRef.current) {
+        const rect = stageContainerRef.current.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0) {
+          setStageSize({ width: rect.width, height: rect.height });
+        }
+      }
+    };
+    updateSize();
+    const ro = new ResizeObserver(updateSize);
+    ro.observe(stageContainerRef.current);
+    return () => ro.disconnect();
+  }, [isOpen, aspectRatio]);
 
   const handlePosterFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -1413,8 +1432,8 @@ export default function AudioEditorAudiogramStudio({
 
       // E. DRAW OVERLAYS ON CANVAS ONLY DURING VIDEO EXPORT (Prevents duplicate double-layer ghosting in editor view)
       if (isExportingVideo) {
-        // High-DPI / Full HD Resolution scale factor relative to the stage editor baseline (720px)
-        const resScale = Math.max(1.0, W / 720);
+        // High-DPI / Full HD Resolution scale factor calibrated 1:1 with the live stage editor viewport
+        const resScale = stageSize.width > 0 ? (W / stageSize.width) : Math.max(1.0, W / 720);
 
         // 1. Logo Overlay (Preserves Natural Aspect Ratio - NO Distorting Squish)
         if (logoConfig.show && logoImageObjectRef.current) {
@@ -1900,17 +1919,17 @@ export default function AudioEditorAudiogramStudio({
             ctx.translate(sx, sy);
             ctx.scale(sScale, sScale);
 
-            const subFontSize = subtitleCustomStyle.fontSize || 20;
+            const subFontSize = subtitleCustomStyle.fontSize || 22;
             const fontFamily = subtitleCustomStyle.fontFamily || 'Rubik, sans-serif';
-            ctx.font = `${subtitleCustomStyle.fontWeight || 'bold'} ${subFontSize}px ${fontFamily}`;
+            ctx.font = `${subtitleCustomStyle.fontWeight || '900'} ${subFontSize}px ${fontFamily}`;
             ctx.direction = 'rtl';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'alphabetic';
 
             const subText = activeSubtitle.text;
             const metrics = ctx.measureText(subText);
-            const subW = metrics.width + 32;
-            const subH = subFontSize + 18;
+            const padX = 18;
+            const padY = subtitleCustomStyle.padding || 8;
+            const subW = metrics.width + padX * 2;
+            const subH = subFontSize + padY * 2 + 4;
 
             const sBg = hexToRgba(subtitleCustomStyle.backgroundColor || '#000000', subtitleCustomStyle.backgroundOpacity ?? 80);
             ctx.fillStyle = sBg;
@@ -1918,20 +1937,22 @@ export default function AudioEditorAudiogramStudio({
             ctx.lineWidth = subtitleCustomStyle.borderWidth ?? 0;
 
             if ((subtitleCustomStyle.glowBlur ?? 0) > 0) {
-              ctx.shadowColor = subtitleCustomStyle.glowColor || '#000000';
+              ctx.shadowColor = subtitleCustomStyle.glowColor || '#facc15';
               ctx.shadowBlur = subtitleCustomStyle.glowBlur || 0;
             }
 
             const sRadius = subtitleCustomStyle.borderRadius ?? 12;
             ctx.beginPath();
-            if (ctx.roundRect) ctx.roundRect(-subW / 2, -subH + 4, subW, subH, Math.min(subH / 2, sRadius));
-            else ctx.rect(-subW / 2, -subH + 4, subW, subH);
+            if (ctx.roundRect) ctx.roundRect(0, 0, subW, subH, Math.min(subH / 2, sRadius));
+            else ctx.rect(0, 0, subW, subH);
             ctx.fill();
             if (subtitleCustomStyle.borderWidth && subtitleCustomStyle.borderWidth > 0) ctx.stroke();
 
             ctx.shadowBlur = 0;
             ctx.fillStyle = subtitleCustomStyle.textColor || '#ffffff';
-            ctx.fillText(subText, 0, 0);
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'alphabetic';
+            ctx.fillText(subText, subW / 2, padY + subFontSize);
             ctx.restore();
           } catch (e) {}
         }
@@ -2339,9 +2360,12 @@ export default function AudioEditorAudiogramStudio({
             </div>
 
             {/* Visual Canvas Stage Viewport */}
-            <div className={`relative w-full rounded-3xl overflow-hidden border border-slate-800 shadow-2xl bg-black flex items-center justify-center group ${
-              aspectRatio === '16:9' ? 'aspect-video' : aspectRatio === '9:16' ? 'aspect-[9/16] max-h-[460px] mx-auto' : 'aspect-square max-h-[440px] mx-auto'
-            }`}>
+            <div
+              ref={stageContainerRef}
+              className={`relative w-full rounded-3xl overflow-hidden border border-slate-800 shadow-2xl bg-black flex items-center justify-center group ${
+                aspectRatio === '16:9' ? 'aspect-video' : aspectRatio === '9:16' ? 'aspect-[9/16] max-h-[460px] mx-auto' : 'aspect-square max-h-[440px] mx-auto'
+              }`}
+            >
               <canvas
                 ref={canvasRef}
                 width={aspectRatio === '16:9' ? 1920 : aspectRatio === '9:16' ? 1080 : 1080}
