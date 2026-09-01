@@ -220,8 +220,10 @@ export default function AudioEditorAudiogramStudio({
   const [voiceWarmth, setVoiceWarmth] = useState<boolean>(false);
 
   // Audio Trimming & Cutting State
-  const [trimStart, setTrimStart] = useState<number>(0);
-  const [trimEnd, setTrimEnd] = useState<number>(0);
+  const [trimStart, setTrimStart] = useState<number>(initialClip ? initialClip.startTime : 0);
+  const [trimEnd, setTrimEnd] = useState<number>(initialClip ? initialClip.endTime : 0);
+  const [isClipLockMode, setIsClipLockMode] = useState<boolean>(!!initialClip);
+  const [activeClipTitle, setActiveClipTitle] = useState<string>(initialClip?.title || '');
   const [isTrimming, setIsTrimming] = useState<boolean>(false);
   const [isExportingVideo, setIsExportingVideo] = useState<boolean>(false);
   const [exportProgress, setExportProgress] = useState<number>(0);
@@ -2030,6 +2032,15 @@ export default function AudioEditorAudiogramStudio({
     } else {
       audioElementRef.current.volume = isMuted ? 0 : (audioVolume || 1.0);
       audioElementRef.current.muted = isMuted;
+
+      // If in Clip Mode, ensure we start playback at trimStart if out of bounds
+      if (isClipLockMode && trimEnd > trimStart) {
+        if (audioElementRef.current.currentTime < trimStart || audioElementRef.current.currentTime >= trimEnd - 0.2) {
+          audioElementRef.current.currentTime = trimStart;
+          setCurrentTime(trimStart);
+        }
+      }
+
       audioElementRef.current.play().then(() => {
         setIsPlaying(true);
         if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
@@ -2044,14 +2055,33 @@ export default function AudioEditorAudiogramStudio({
 
   const handleTimeUpdate = () => {
     if (!audioElementRef.current) return;
-    setCurrentTime(audioElementRef.current.currentTime);
+    const cur = audioElementRef.current.currentTime;
+    setCurrentTime(cur);
+
+    // If in Clip Mode, auto-stop and reset to start of clip when reaching the end
+    if (isClipLockMode && trimEnd > trimStart && cur >= trimEnd) {
+      audioElementRef.current.pause();
+      audioElementRef.current.currentTime = trimStart;
+      setIsPlaying(false);
+      setCurrentTime(trimStart);
+    }
   };
 
   const handleLoadedMetadata = () => {
     if (!audioElementRef.current) return;
     const dur = audioElementRef.current.duration || 0;
     setDuration(dur);
-    setTrimEnd(dur);
+    if (initialClip) {
+      const s = Math.max(0, initialClip.startTime);
+      const e = Math.min(dur, initialClip.endTime > s ? initialClip.endTime : s + 45);
+      setTrimStart(s);
+      setTrimEnd(e);
+      setIsClipLockMode(true);
+      audioElementRef.current.currentTime = s;
+      setCurrentTime(s);
+    } else {
+      setTrimEnd(prev => (prev > 0 && prev < dur ? prev : dur));
+    }
   };
 
   const handleSeek = (newTime: number) => {
@@ -2838,19 +2868,59 @@ export default function AudioEditorAudiogramStudio({
               )}
             </div>
 
+            {/* Clip Active Mode Bar */}
+            {isClipLockMode && trimEnd > trimStart && (
+              <div className="p-3 rounded-2xl bg-gradient-to-r from-amber-950/80 via-slate-900 to-rose-950/80 border border-amber-500/50 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2 shadow-xl animate-in fade-in">
+                <div className="flex items-center gap-2.5 truncate">
+                  <div className="p-1.5 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/40 shrink-0">
+                    <Flame className="w-4 h-4" />
+                  </div>
+                  <div className="truncate">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-black text-amber-200 truncate">
+                        🎬 מצב עריכת סרטון קצר: {activeClipTitle || episode.title}
+                      </span>
+                      <span className="text-[10px] font-mono text-amber-400 bg-amber-950/90 px-2 py-0.5 rounded-lg border border-amber-500/40 font-bold shrink-0">
+                        {formatTime(trimStart, true)} - {formatTime(trimEnd, true)} ({Math.round(trimEnd - trimStart)} שנ׳)
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-slate-400">
+                      הנגן וייצוא הווידאו מוגבלים ומכוונים אוטומטית לקטע זה בלבד.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsClipLockMode(!isClipLockMode);
+                    }}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all ${
+                      isClipLockMode 
+                        ? 'bg-amber-500 text-slate-950 font-black border-amber-400 shadow-md' 
+                        : 'bg-slate-900 border-slate-700 text-slate-300 hover:text-white'
+                    }`}
+                  >
+                    {isClipLockMode ? '🔒 נעול לקליפ' : '🌐 הצג פרק מלא'}
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Audio Playback Controls & Scrubber */}
             <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-2">
                   <button
                     onClick={handleTogglePlay}
-                    className="w-10 h-10 rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 text-white flex items-center justify-center shadow-lg shadow-cyan-500/20 active:scale-95 transition-all"
+                    className="w-10 h-10 rounded-xl bg-gradient-to-r from-amber-500 via-rose-500 to-indigo-600 hover:from-amber-400 hover:to-indigo-500 text-white flex items-center justify-center shadow-lg shadow-amber-500/20 active:scale-95 transition-all"
                   >
                     {isPlaying ? <Pause className="w-5 h-5 fill-white" /> : <Play className="w-5 h-5 fill-white ml-0.5" />}
                   </button>
 
                   <button
-                    onClick={() => handleSeek(Math.max(0, currentTime - 5))}
+                    onClick={() => handleSeek(Math.max(isClipLockMode ? trimStart : 0, currentTime - 5))}
                     className="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800 text-xs font-bold transition-colors"
                     title="5 שניות אחורה"
                   >
@@ -2858,7 +2928,7 @@ export default function AudioEditorAudiogramStudio({
                   </button>
 
                   <button
-                    onClick={() => handleSeek(Math.min(duration, currentTime + 5))}
+                    onClick={() => handleSeek(Math.min(isClipLockMode && trimEnd > trimStart ? trimEnd : duration, currentTime + 5))}
                     className="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800 text-xs font-bold transition-colors"
                     title="5 שניות קדימה"
                   >
@@ -2898,8 +2968,19 @@ export default function AudioEditorAudiogramStudio({
                 </div>
 
                 {/* Time Display */}
-                <div className="font-mono text-xs font-bold text-cyan-400 bg-slate-900 px-3 py-1.5 rounded-xl border border-slate-800">
-                  {formatTime(currentTime, true)} / {formatTime(duration, true)}
+                <div className="font-mono text-xs font-bold text-cyan-400 bg-slate-900 px-3 py-1.5 rounded-xl border border-slate-800 flex items-center gap-1.5">
+                  {isClipLockMode && trimEnd > trimStart ? (
+                    <>
+                      <span className="text-amber-300 font-black">
+                        🎬 {formatTime(Math.max(0, currentTime - trimStart), true)} / {formatTime(trimEnd - trimStart, true)}
+                      </span>
+                      <span className="text-[10px] text-slate-500 font-mono">
+                        (מקור: {formatTime(currentTime, true)})
+                      </span>
+                    </>
+                  ) : (
+                    <span>{formatTime(currentTime, true)} / {formatTime(duration, true)}</span>
+                  )}
                 </div>
 
                 {/* Volume Slider */}
@@ -2930,12 +3011,12 @@ export default function AudioEditorAudiogramStudio({
               <div className="space-y-1">
                 <input
                   type="range"
-                  min="0"
-                  max={duration || 100}
+                  min={isClipLockMode && trimEnd > trimStart ? trimStart : 0}
+                  max={isClipLockMode && trimEnd > trimStart ? trimEnd : (duration || 100)}
                   step="0.1"
-                  value={currentTime}
+                  value={Math.max(isClipLockMode && trimEnd > trimStart ? trimStart : 0, Math.min(isClipLockMode && trimEnd > trimStart ? trimEnd : duration, currentTime))}
                   onChange={(e) => handleSeek(parseFloat(e.target.value))}
-                  className="w-full h-2 bg-slate-900 rounded-lg appearance-none cursor-pointer accent-cyan-400"
+                  className="w-full h-2 bg-slate-900 rounded-lg appearance-none cursor-pointer accent-amber-400"
                 />
               </div>
             </div>
