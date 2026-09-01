@@ -97,13 +97,12 @@ export default function HighlightClipsManager({
 
   // AI Detect Clips Trigger
   const handleDetectClips = async () => {
-    if (!hasSubtitles) {
-      alert('נדרשות כתוביות או תמליל עבור הפרק כדי לזהות קטעים. ניתן להפיק כתוביות באולפן הכתוביות.');
-      return;
-    }
-
     setIsDetecting(true);
-    setDetectStatusMessage('מנתח את תמליל הפרק ומחפש רגעי שיא ויראליים...');
+    setDetectStatusMessage(
+      hasSubtitles 
+        ? 'מנתח את תמליל וכתוביות הפרק ומאתר הוקים ויראליים...' 
+        : 'מנתח את נושאי הפרק והמחקר ומייצר קליפים מומלצים ל-Shorts...'
+    );
 
     try {
       const aiSettings = getAISettings();
@@ -111,9 +110,10 @@ export default function HighlightClipsManager({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          subtitles: episode.subtitles,
-          topics: episode.topics,
+          subtitles: episode.subtitles || [],
+          topics: episode.topics || [],
           episodeTitle: episode.title,
+          description: episode.description || '',
           apiKey: aiSettings.geminiApiKey || aiSettings.openaiApiKey || undefined
         })
       });
@@ -261,7 +261,7 @@ export default function HighlightClipsManager({
         <div className="flex items-center gap-2.5 flex-wrap">
           <button
             onClick={handleDetectClips}
-            disabled={isDetecting || !hasSubtitles}
+            disabled={isDetecting}
             className="flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-gradient-to-r from-amber-500 to-rose-600 hover:from-amber-400 hover:to-rose-500 text-slate-950 font-black text-xs shadow-xl shadow-amber-500/20 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isDetecting ? (
@@ -297,18 +297,24 @@ export default function HighlightClipsManager({
 
       {/* Notice if no subtitles */}
       {!hasSubtitles && (
-        <div className="p-5 rounded-3xl bg-slate-900/60 border border-slate-800 flex items-center justify-between gap-4">
+        <div className="p-4 rounded-3xl bg-slate-900/60 border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <div className="p-3 rounded-2xl bg-purple-500/10 text-purple-400 border border-purple-500/20">
-              <FileText className="w-6 h-6" />
+            <div className="p-2.5 rounded-2xl bg-purple-500/10 text-purple-400 border border-purple-500/20 shrink-0">
+              <FileText className="w-5 h-5" />
             </div>
             <div>
-              <h4 className="text-sm font-bold text-white">עדיין לא הופקו כתוביות לפרק זה</h4>
-              <p className="text-xs text-slate-400">
-                כדי שה-AI יוכל לנתח ולזהות את ההוקים המדויקים, יש לפתוח את אולפן הכתוביות ולבצע תמלול אוטומטי או ייבוא SRT.
+              <h4 className="text-xs sm:text-sm font-bold text-white">טרם הופקו כתוביות לפרק זה</h4>
+              <p className="text-[11px] text-slate-400">
+                ה-AI יכול לזהות רגעים מתוך נושאי השיחה, או שתוכל לתמלל את השמע לקבלת דיוק של 100% לפי זמני דיבור.
               </p>
             </div>
           </div>
+          <a
+            href={`/episodes/${episode.id}/subtitles`}
+            className="px-3.5 py-1.5 rounded-xl bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 hover:text-white border border-purple-500/40 text-xs font-bold transition-all shrink-0 text-center"
+          >
+            🎙️ פתח אולפן כתוביות
+          </a>
         </div>
       )}
 
