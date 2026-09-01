@@ -2,17 +2,16 @@
 
 import React, { useState, useEffect, use } from 'react';
 import { notFound, useRouter } from 'next/navigation';
-import { Episode, TopicItem } from '@/lib/types';
+import { Episode, TopicItem, MovieFactCard, HighlightClip } from '@/lib/types';
 import { getEpisodeById, saveEpisode } from '@/lib/storage';
 import EpisodeDetailsHeader from '@/components/research/EpisodeDetailsHeader';
 import TopicManager from '@/components/research/TopicManager';
 import ShowNotesExportModal from '@/components/research/ShowNotesExportModal';
 import DeepResearchModal from '@/components/research/DeepResearchModal';
 import AudioEditorAudiogramStudio from '@/components/audio/AudioEditorAudiogramStudio';
-
 import MovieFactCardsManager from '@/components/research/MovieFactCardsManager';
-import { MovieFactCard } from '@/lib/types';
-import { ListChecks, Film } from 'lucide-react';
+import HighlightClipsManager from '@/components/research/HighlightClipsManager';
+import { ListChecks, Film, Flame } from 'lucide-react';
 
 interface EpisodePageProps {
   params: Promise<{ id: string }>;
@@ -22,10 +21,11 @@ export default function EpisodePage({ params }: EpisodePageProps) {
   const resolvedParams = use(params);
   const router = useRouter();
   const [episode, setEpisode] = useState<Episode | null>(null);
-  const [activeResearchTab, setActiveResearchTab] = useState<'topics' | 'facts'>('topics');
+  const [activeResearchTab, setActiveResearchTab] = useState<'topics' | 'facts' | 'clips'>('topics');
   const [isExportOpen, setIsExportOpen] = useState(false);
   const [isDeepResearchOpen, setIsDeepResearchOpen] = useState(false);
   const [isAudiogramOpen, setIsAudiogramOpen] = useState(false);
+  const [selectedClipForStudio, setSelectedClipForStudio] = useState<HighlightClip | null>(null);
   const [isLoaded, setIsLoaded] = useState(false);
 
   useEffect(() => {
@@ -86,6 +86,11 @@ export default function EpisodePage({ params }: EpisodePageProps) {
     handleUpdateEpisode(updated);
   };
 
+  const handleOpenAudiogramForClip = (clip: HighlightClip) => {
+    setSelectedClipForStudio(clip);
+    setIsAudiogramOpen(true);
+  };
+
   if (!isLoaded) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
@@ -116,11 +121,14 @@ export default function EpisodePage({ params }: EpisodePageProps) {
         episode={episode}
         onUpdateEpisode={handleUpdateEpisode}
         onOpenExport={() => setIsExportOpen(true)}
-        onOpenAudiogram={() => setIsAudiogramOpen(true)}
+        onOpenAudiogram={() => {
+          setSelectedClipForStudio(null);
+          setIsAudiogramOpen(true);
+        }}
       />
 
       {/* Research Tabs Switcher */}
-      <div className="flex items-center gap-2 p-1.5 rounded-2xl bg-slate-900/80 border border-slate-800 w-fit">
+      <div className="flex items-center gap-2 p-1.5 rounded-2xl bg-slate-900/80 border border-slate-800 w-fit flex-wrap">
         <button
           onClick={() => setActiveResearchTab('topics')}
           className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
@@ -144,9 +152,21 @@ export default function EpisodePage({ params }: EpisodePageProps) {
           <Film className="w-4 h-4" />
           <span>כרטיסיות עובדות קולנוע ומקורות ({episode.movieFacts?.length || 0})</span>
         </button>
+
+        <button
+          onClick={() => setActiveResearchTab('clips')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black transition-all ${
+            activeResearchTab === 'clips'
+              ? 'bg-gradient-to-r from-rose-500 to-amber-500 text-white shadow-lg shadow-rose-500/30'
+              : 'text-slate-400 hover:text-amber-300'
+          }`}
+        >
+          <Flame className="w-4 h-4 text-amber-400" />
+          <span>🔥 קליפים ויראליים ו-Shorts ({episode.highlightClips?.length || 0})</span>
+        </button>
       </div>
 
-      {/* Main View: Topics vs Movie Facts */}
+      {/* Main View: Topics vs Movie Facts vs Viral Clips */}
       {activeResearchTab === 'topics' ? (
         <TopicManager
           topics={episode.topics}
@@ -155,12 +175,18 @@ export default function EpisodePage({ params }: EpisodePageProps) {
           onUpdateTopics={handleUpdateTopics}
           onOpenDeepResearch={() => setIsDeepResearchOpen(true)}
         />
-      ) : (
+      ) : activeResearchTab === 'facts' ? (
         <MovieFactCardsManager
           movieFacts={episode.movieFacts || []}
           episodeTitle={episode.title}
           onUpdateMovieFacts={handleUpdateMovieFacts}
           onAddFactAsTopicPoint={handleAddFactAsTopicPoint}
+        />
+      ) : (
+        <HighlightClipsManager
+          episode={episode}
+          onUpdateEpisode={handleUpdateEpisode}
+          onOpenAudiogramForClip={handleOpenAudiogramForClip}
         />
       )}
 
@@ -187,7 +213,11 @@ export default function EpisodePage({ params }: EpisodePageProps) {
         <AudioEditorAudiogramStudio
           episode={episode}
           isOpen={isAudiogramOpen}
-          onClose={() => setIsAudiogramOpen(false)}
+          initialClip={selectedClipForStudio}
+          onClose={() => {
+            setIsAudiogramOpen(false);
+            setSelectedClipForStudio(null);
+          }}
           onUpdateEpisode={handleUpdateEpisode}
         />
       )}

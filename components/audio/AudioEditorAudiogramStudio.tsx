@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Episode, SubtitleItem, MovieFactCard, ElementTransform, CustomOverlayStyle, AudiogramStudioConfig, AudiogramStudioTemplate } from '@/lib/types';
+import { Episode, SubtitleItem, MovieFactCard, ElementTransform, CustomOverlayStyle, AudiogramStudioConfig, AudiogramStudioTemplate, HighlightClip } from '@/lib/types';
 import { getMediaBlob, saveMediaBlob, formatTime, getPermanentLogo, savePermanentLogo, saveEpisode } from '@/lib/storage';
 import { trimAudioBlob } from '@/lib/audioUtils';
 import { 
@@ -47,7 +47,8 @@ import {
   Unlock,
   Type,
   Mic,
-  User
+  User,
+  Flame
 } from 'lucide-react';
 import ImageStockPickerModal from '../studio/ImageStockPickerModal';
 import DraggableOverlay from '../studio/DraggableOverlay';
@@ -57,6 +58,7 @@ interface AudioEditorAudiogramStudioProps {
   isOpen: boolean;
   onClose: () => void;
   onUpdateEpisode?: (updated: Episode) => void;
+  initialClip?: HighlightClip | null;
 }
 
 export type WaveformStyle = 
@@ -198,10 +200,13 @@ export default function AudioEditorAudiogramStudio({
   episode,
   isOpen,
   onClose,
-  onUpdateEpisode
+  onUpdateEpisode,
+  initialClip
 }: AudioEditorAudiogramStudioProps) {
   // Aspect Ratio & Layout
-  const [aspectRatio, setAspectRatio] = useState<StudioAspectRatio>('16:9');
+  const [aspectRatio, setAspectRatio] = useState<StudioAspectRatio>(
+    initialClip ? (initialClip.suggestedAspectRatio || '9:16') : '16:9'
+  );
 
   // Audio state
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
@@ -727,6 +732,23 @@ export default function AudioEditorAudiogramStudio({
       console.error('Error loading saved audiogram studio config:', e);
     }
   }, [isOpen, episode.id]);
+
+  // Handle initialClip passed to studio (e.g. from AI Viral Shorts Hunter)
+  useEffect(() => {
+    if (!isOpen || !initialClip) return;
+    if (initialClip.suggestedAspectRatio) {
+      setAspectRatio(initialClip.suggestedAspectRatio);
+    } else {
+      setAspectRatio('9:16'); // Optimized for vertical Shorts/Reels/TikTok
+    }
+    setTrimStart(initialClip.startTime);
+    setTrimEnd(initialClip.endTime);
+    setCurrentTime(initialClip.startTime);
+    if (initialClip.title) {
+      setBannerSubtitle(initialClip.title);
+      setShowBannerOverlay(true);
+    }
+  }, [isOpen, initialClip]);
 
   const buildCurrentStudioConfig = (): AudiogramStudioConfig => ({
     aspectRatio,
@@ -4908,6 +4930,51 @@ export default function AudioEditorAudiogramStudio({
                         <span className="text-[10px] text-slate-500 font-mono">{formatTime(trimEnd, true)}</span>
                       </div>
                     </div>
+
+                    {/* Saved Highlight Clips Picker */}
+                    {episode.highlightClips && episode.highlightClips.length > 0 && (
+                      <div className="p-3 rounded-2xl bg-amber-950/20 border border-amber-500/30 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
+                            <Flame className="w-3.5 h-3.5 text-amber-400" />
+                            <span>קליפים ויראליים שזוהו בפרק (Reels / Shorts):</span>
+                          </span>
+                          <span className="text-[10px] text-amber-400/80 font-mono">
+                            {episode.highlightClips.length} קטעים
+                          </span>
+                        </div>
+                        <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                          {episode.highlightClips.map((clip) => (
+                            <button
+                              key={clip.id}
+                              type="button"
+                              onClick={() => {
+                                setTrimStart(clip.startTime);
+                                setTrimEnd(clip.endTime);
+                                setCurrentTime(clip.startTime);
+                                setBannerSubtitle(clip.title);
+                                setShowBannerOverlay(true);
+                              }}
+                              className={`w-full p-2 rounded-xl text-right transition-all flex items-center justify-between text-xs border ${
+                                trimStart === clip.startTime && trimEnd === clip.endTime
+                                  ? 'bg-amber-500/20 border-amber-500/50 text-amber-200 font-bold shadow-md'
+                                  : 'bg-slate-900/80 hover:bg-slate-900 border-slate-800 text-slate-300'
+                              }`}
+                            >
+                              <div className="truncate max-w-[200px]">
+                                <span className="font-bold block truncate">{clip.title}</span>
+                                <span className="text-[10px] text-slate-400 font-mono">
+                                  {formatTime(clip.startTime, true)} - {formatTime(clip.endTime, true)} ({Math.round(clip.duration)} שנ׳)
+                                </span>
+                              </div>
+                              <span className="text-[10px] px-1.5 py-0.5 rounded-lg bg-amber-500/20 text-amber-300 font-mono font-bold shrink-0">
+                                {clip.viralScore}%
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
 
                     <div className="p-2 rounded-xl bg-slate-950/80 border border-slate-800 flex items-center justify-between text-xs">
                       <span className="text-slate-400">אורך המקטע הנבחר:</span>

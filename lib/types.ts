@@ -103,6 +103,22 @@ export interface SubtitleItem {
   customStyle?: SubtitleStyle;
 }
 
+export interface HighlightClip {
+  id: string;
+  title: string;           // כותרת הקליפ / הוק מושך
+  headline?: string;        // כותרת עליונה משנית
+  startTime: number;       // זמן התחלה בשניות
+  endTime: number;         // זמן סיום בשניות
+  duration: number;        // משך הקטע בשניות
+  viralScore: number;      // ציון ויראליות 1-100
+  category: 'debate' | 'punchline' | 'insight' | 'behind_the_scenes' | 'emotional' | 'quote' | 'highlight';
+  reason: string;          // הסבר מדוע הקטע ויראלי ומתאים לסושיאל
+  summary: string;         // תמצית תוכן הקטע
+  suggestedAspectRatio?: '9:16' | '16:9' | '1:1';
+  hookText?: string;       // טקסט ה-Hook להצגה מיידית
+  tags?: string[];
+}
+
 export interface Episode {
   id: string;
   podcastId: string; // מסווג לפודקאסט מסוים
@@ -126,6 +142,7 @@ export interface Episode {
   coverImage?: string;
   tags?: string[];
   audiogramStudioConfig?: AudiogramStudioConfig;
+  highlightClips?: HighlightClip[];
 }
 
 export interface AudioInputDevice {
