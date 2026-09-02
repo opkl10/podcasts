@@ -1,17 +1,20 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import React, { useEffect, useState, Suspense } from 'react';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { getEpisodeById, saveEpisode } from '@/lib/storage';
 import { Episode } from '@/lib/types';
 import SubtitleStudio from '@/components/subtitles/SubtitleStudio';
 import { ArrowRight, Sparkles, Subtitles } from 'lucide-react';
 import Link from 'next/link';
 
-export default function StandaloneSubtitlesPage() {
+function SubtitlesPageContent() {
   const params = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const id = params?.id as string;
+  const clipId = searchParams?.get('clipId') || undefined;
+
   const [episode, setEpisode] = useState<Episode | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -59,6 +62,7 @@ export default function StandaloneSubtitlesPage() {
         episode={episode}
         isOpen={true}
         isStandalonePage={true}
+        initialClipId={clipId}
         onClose={() => router.push(`/episodes/${episode.id}`)}
         onBack={() => router.push(`/episodes/${episode.id}`)}
         onUpdateEpisode={(updated) => {
@@ -67,5 +71,17 @@ export default function StandaloneSubtitlesPage() {
         }}
       />
     </div>
+  );
+}
+
+export default function StandaloneSubtitlesPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-[#0a0d14] flex items-center justify-center text-white">
+        <div className="w-10 h-10 border-4 border-purple-500/30 border-t-purple-500 rounded-full animate-spin" />
+      </div>
+    }>
+      <SubtitlesPageContent />
+    </Suspense>
   );
 }

@@ -417,6 +417,16 @@ export default function HighlightClipsManager({
                   </button>
 
                   <div className="flex items-center gap-1.5">
+                    {/* Transcribe Clip Subtitles Button */}
+                    <a
+                      href={`/episodes/${episode.id}/subtitles?clipId=${clip.id}`}
+                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 hover:text-white border border-purple-500/30 text-xs font-bold transition-all"
+                      title="תמלול ועריכת כתוביות ממוקדות עבור קטע זה באולפן הכתוביות"
+                    >
+                      <FileText className="w-3.5 h-3.5 text-purple-400" />
+                      <span>תמלל כתוביות</span>
+                    </a>
+
                     {/* Open in 9:16 Video Studio Button */}
                     <button
                       onClick={() => onOpenAudiogramForClip(clip)}

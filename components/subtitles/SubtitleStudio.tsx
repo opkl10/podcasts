@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Episode, SubtitleItem, SubtitleStyle } from '@/lib/types';
+import { Episode, SubtitleItem, SubtitleStyle, HighlightClip } from '@/lib/types';
 import { saveEpisode, getMediaBlob, saveMediaBlob } from '@/lib/storage';
 import { 
   exportToSRT, 
@@ -25,7 +25,8 @@ import {
   parseVTT,
   generateSubtitlesFromTopics,
   sliceAudioBlobIntoChunks,
-  blobToBase64
+  blobToBase64,
+  trimAudioBlob
 } from '@/lib/audioUtils';
 import { 
   Subtitles, 
@@ -68,7 +69,10 @@ import {
   ArrowRight,
   Split,
   Zap,
-  Bookmark
+  Bookmark,
+  Flame,
+  Film,
+  Filter
 } from 'lucide-react';
 import { getAISettings, AISettingsConfig } from '@/lib/apiConfig';
 import SubtitleAISettingsModal from './SubtitleAISettingsModal';
@@ -80,6 +84,7 @@ interface SubtitleStudioProps {
   onUpdateEpisode?: (updated: Episode) => void;
   isStandalonePage?: boolean;
   onBack?: () => void;
+  initialClipId?: string;
 }
 
 const DEFAULT_STYLE: SubtitleStyle = {
@@ -235,8 +240,24 @@ export default function SubtitleStudio({
   onClose,
   onUpdateEpisode,
   isStandalonePage = false,
-  onBack
+  onBack,
+  initialClipId
 }: SubtitleStudioProps) {
+  const [selectedTranscriptionScope, setSelectedTranscriptionScope] = useState<string>(initialClipId || 'full');
+  const [filterSubtitlesByClip, setFilterSubtitlesByClip] = useState<boolean>(!!initialClipId);
+
+  // Active Highlight Clip if one is chosen
+  const activeClip: HighlightClip | undefined = selectedTranscriptionScope !== 'full'
+    ? (episode.highlightClips || []).find(c => c.id === selectedTranscriptionScope)
+    : undefined;
+
+  useEffect(() => {
+    if (initialClipId) {
+      setSelectedTranscriptionScope(initialClipId);
+      setFilterSubtitlesByClip(true);
+    }
+  }, [initialClipId]);
+
   const [subtitles, setSubtitles] = useState<SubtitleItem[]>([]);
   const [globalStyle, setGlobalStyle] = useState<SubtitleStyle>(DEFAULT_STYLE);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -382,6 +403,125 @@ export default function SubtitleStudio({
       if (!audioBlob) {
         alert('לא נמצא קובץ הקלטה שמור עבור פרק זה. נא להקליט את הפרק באולפן או להעלות קובץ שמע מהמחשב לפני הפעלת תמלול.');
         setIsTranscribing(false);
+        return;
+      }
+
+      // SPECIAL SCOPE: If an active Highlight Clip is selected, transcribe ONLY that clip!
+      if (activeClip) {
+        setTranscribeStatus(`גוזר ומכין את הקטע "${activeClip.title}" (${formatSrtTimestamp(activeClip.startTime).slice(3, 8)} - ${formatSrtTimestamp(activeClip.endTime).slice(3, 8)})...`);
+        
+        const clipDuration = Math.max(5, activeClip.endTime - activeClip.startTime);
+        let clipBlob: Blob | null = null;
+        try {
+          clipBlob = await trimAudioBlob(audioBlob, activeClip.startTime, activeClip.endTime);
+        } catch (trimErr) {
+          console.warn('trimAudioBlob error, fallback to audioBlob:', trimErr);
+        }
+
+        const effectiveBlob = clipBlob || audioBlob;
+        setTranscribeStatus(`מתמלל את הקטע "${activeClip.title}" (${Math.round(clipDuration)} שנ׳) עם AI...`);
+        
+        let clipSubs: SubtitleItem[] = [];
+        const clipBase64 = await blobToBase64(effectiveBlob);
+        const cleanClipBase64 = clipBase64.replace(/^data:[^;]+;base64,/, '');
+
+        // Attempt 1: Server Transcribe
+        try {
+          const res = await fetch('/api/ai/transcribe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              audioBase64: clipBase64,
+              mimeType: 'audio/wav',
+              wordsPerLine,
+              duration: clipDuration,
+              apiKey: currentSettings.geminiApiKey,
+              openaiApiKey: currentSettings.openaiApiKey,
+              provider: currentSettings.transcriptionProvider
+            })
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (data.subtitles && Array.isArray(data.subtitles) && data.subtitles.length > 0) {
+              clipSubs = data.subtitles;
+            }
+          }
+        } catch (sErr) {
+          console.warn('Clip transcribe server error:', sErr);
+        }
+
+        // Attempt 2: Direct Gemini
+        if (clipSubs.length === 0 && currentSettings.geminiApiKey?.trim()) {
+          try {
+            const geminiPrompt = `אתה מודל תמלול אודיו מקצועי לפודקאסטים בעברית.
+תמלל בדיוק של 100% מילה במילה את הדיבור באודיו לעברית (Verbatim Hebrew Speech-to-Text).
+חלק לכתוביות קצרות של ${wordsPerLine} עד ${wordsPerLine + 2} מילים בשורה, עם תזמונים (startTime, endTime) בשניות (משך קטע זה: ${clipDuration} שניות).
+החזר אך ורק מערך JSON תקין: [{"startTime": 0.5, "endTime": 3.0, "text": "טקסט שנאמר"}]`;
+
+            const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${currentSettings.geminiApiKey.trim()}`;
+            const gRes = await fetch(geminiUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                contents: [{
+                  parts: [
+                    { inlineData: { mimeType: 'audio/wav', data: cleanClipBase64 } },
+                    { text: geminiPrompt }
+                  ]
+                }],
+                generationConfig: { temperature: 0.1, responseMimeType: 'application/json' }
+              })
+            });
+            if (gRes.ok) {
+              const gJson = await gRes.json();
+              const rawText = gJson.candidates?.[0]?.content?.parts?.[0]?.text;
+              if (rawText) {
+                const parsed = JSON.parse(rawText.replace(/```json/g, '').replace(/```/g, '').trim());
+                clipSubs = Array.isArray(parsed) ? parsed : (parsed.subtitles || []);
+              }
+            }
+          } catch (gErr) {
+            console.warn('Clip Gemini direct error:', gErr);
+          }
+        }
+
+        // Fallback: If still empty, use summary / hook
+        if (clipSubs.length === 0) {
+          const fallbackText = cleanAndPolishHebrewSubtitleText(activeClip.summary || activeClip.hookText || activeClip.title || '');
+          clipSubs = splitTextIntoPacedSubtitles(fallbackText, wordsPerLine, 1, 0, clipDuration);
+        }
+
+        // Normalize and offset timestamps to seamlessly match episode timeline
+        const offsetSubs: SubtitleItem[] = clipSubs.map((s, idx) => {
+          const relStart = typeof s.startTime === 'number' ? s.startTime : idx * 3;
+          const relEnd = typeof s.endTime === 'number' ? s.endTime : (relStart + 3);
+          return {
+            id: `sub_clip_${Date.now()}_${idx}`,
+            startTime: Number((activeClip.startTime + relStart).toFixed(2)),
+            endTime: Number((activeClip.startTime + Math.max(relStart + 0.5, relEnd)).toFixed(2)),
+            text: cleanAndPolishHebrewSubtitleText(s.text)
+          };
+        });
+
+        // Merge: Remove any existing subtitles overlapping with this clip and insert new ones
+        const remainingSubs = subtitles.filter(s => s.endTime < activeClip.startTime || s.startTime > activeClip.endTime);
+        const merged = [...remainingSubs, ...offsetSubs].sort((a, b) => a.startTime - b.startTime);
+
+        setSubtitles(merged);
+        const updated = { ...episode, subtitles: merged };
+        saveEpisode(updated);
+        if (onUpdateEpisode) onUpdateEpisode(updated);
+
+        setIsTranscribing(false);
+        setTranscribeProgress(null);
+        setFilterSubtitlesByClip(true);
+
+        if (videoRef.current) {
+          videoRef.current.currentTime = activeClip.startTime;
+          setCurrentTime(activeClip.startTime);
+        }
+
+        alert(`✨ תמלול הקטע "${activeClip.title}" הושלם בהצלחה תוך שניות! נוצרו ${offsetSubs.length} כתוביות מדויקות לקטע זה.`);
         return;
       }
 
@@ -1088,18 +1228,65 @@ export default function SubtitleStudio({
               title="העלאת קובץ הקלטה (MP3/WAV) מהמחשב לתמלול מיידי"
             >
               <Upload className="w-3.5 h-3.5 text-emerald-400" />
-              <span>טען שמע מהמחשב</span>
+              <span>טען שמע</span>
             </button>
+
+            {/* Scope Selector: Full Episode OR Cut Clips */}
+            <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-700/80 rounded-xl px-2.5 py-1.5 text-xs shadow-inner">
+              <span className="text-slate-400 font-bold shrink-0 text-[11px] flex items-center gap-1">
+                <Scissors className="w-3 h-3 text-amber-400" />
+                <span>מקור תמלול:</span>
+              </span>
+              <select
+                value={selectedTranscriptionScope}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setSelectedTranscriptionScope(val);
+                  setFilterSubtitlesByClip(val !== 'full');
+                  if (val !== 'full') {
+                    const c = (episode.highlightClips || []).find(clip => clip.id === val);
+                    if (c && videoRef.current) {
+                      videoRef.current.currentTime = c.startTime;
+                      setCurrentTime(c.startTime);
+                    }
+                  }
+                }}
+                className="bg-transparent text-white font-bold text-xs focus:outline-none cursor-pointer max-w-[190px] truncate"
+              >
+                <option value="full" className="bg-slate-900 text-white font-semibold">
+                  🎙️ כל הפרק המלא ({formatSrtTimestamp(episode.recording?.duration || (episode.targetDurationMinutes * 60)).slice(3, 8)})
+                </option>
+                {episode.highlightClips && episode.highlightClips.length > 0 && (
+                  <optgroup label="🎬 קטעים גזורים מהפרק (Shorts):" className="bg-slate-900 text-amber-400 font-bold">
+                    {episode.highlightClips.map((clip, i) => (
+                      <option key={clip.id} value={clip.id} className="bg-slate-900 text-white font-normal">
+                        #{i + 1} {clip.title} ({formatSrtTimestamp(clip.startTime).slice(3, 8)} - {formatSrtTimestamp(clip.endTime).slice(3, 8)})
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+              </select>
+            </div>
 
             {/* AI Transcribe Spoken Audio Button */}
             <button
               onClick={handleTranscribeRecordedAudio}
               disabled={isTranscribing}
-              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-xs font-bold text-white shadow-lg shadow-amber-600/30 transition-all active:scale-98 disabled:opacity-50"
-              title="תמלל מילים בפועל מקובץ האודיו של הפרק"
+              className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold text-white shadow-lg transition-all active:scale-98 disabled:opacity-50 ${
+                activeClip 
+                  ? 'bg-gradient-to-r from-amber-500 to-rose-600 hover:from-amber-400 hover:to-rose-500 shadow-amber-600/40 ring-1 ring-amber-400/50' 
+                  : 'bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 shadow-amber-600/30'
+              }`}
+              title={activeClip ? `תמלל עם AI רק את הקטע הנבחר (${formatSrtTimestamp(activeClip.startTime).slice(3, 8)} - ${formatSrtTimestamp(activeClip.endTime).slice(3, 8)})` : 'תמלל מילים בפועל מקובץ האודיו של הפרק'}
             >
               <Wand2 className={`w-3.5 h-3.5 ${isTranscribing ? 'animate-spin' : ''}`} />
-              <span>{isTranscribing ? 'מתמלל אודיו...' : 'תמלל דיבור מהקלטה (AI)'}</span>
+              <span>
+                {isTranscribing 
+                  ? 'מתמלל...' 
+                  : activeClip 
+                  ? `תמלל קטע נבחר (AI)` 
+                  : 'תמלל פרק מלא (AI)'}
+              </span>
             </button>
 
             {/* Auto Generate from Topics Button */}
@@ -1187,6 +1374,62 @@ export default function SubtitleStudio({
             </button>
           </div>
         </div>
+
+        {/* Active Clip Scope Indicator Banner */}
+        {activeClip && (
+          <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2 bg-gradient-to-r from-amber-950/80 via-slate-900 to-purple-950/80 border-b border-amber-500/30 text-xs text-amber-200 shrink-0">
+            <div className="flex items-center gap-2">
+              <span className="p-1 rounded-lg bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                <Flame className="w-3.5 h-3.5" />
+              </span>
+              <span className="font-bold text-slate-300">נבחר קטע גזור לעבודה:</span>
+              <span className="font-black text-white">{activeClip.title}</span>
+              <span className="font-mono bg-slate-950 px-2 py-0.5 rounded-md text-amber-400 border border-slate-800">
+                {formatSrtTimestamp(activeClip.startTime).slice(3, 8)} - {formatSrtTimestamp(activeClip.endTime).slice(3, 8)} ({Math.round(activeClip.duration)} שנ׳)
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  if (videoRef.current) {
+                    videoRef.current.currentTime = activeClip.startTime;
+                    setCurrentTime(activeClip.startTime);
+                  }
+                }}
+                className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white font-bold text-[11px] border border-slate-700 flex items-center gap-1"
+              >
+                <Play className="w-3 h-3 text-emerald-400 fill-emerald-400" />
+                <span>קפוץ לנגן קטע זה</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setFilterSubtitlesByClip(!filterSubtitlesByClip)}
+                className={`px-2.5 py-1 rounded-lg font-bold text-[11px] border transition-all flex items-center gap-1 ${
+                  filterSubtitlesByClip 
+                    ? 'bg-amber-500 text-slate-950 border-amber-400 shadow-md font-black' 
+                    : 'bg-slate-800 text-slate-300 border-slate-700 hover:text-white'
+                }`}
+              >
+                <Filter className="w-3 h-3" />
+                <span>{filterSubtitlesByClip ? 'מציג כתוביות של קטע זה בלבד' : 'הצג את כל כתוביות הפרק'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedTranscriptionScope('full');
+                  setFilterSubtitlesByClip(false);
+                }}
+                className="text-slate-400 hover:text-rose-400 text-[11px] underline ml-2 transition-colors"
+              >
+                בטל וחזור לפרק מלא
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Transcribing Progress Banner */}
         {isTranscribing && (
@@ -1531,10 +1774,49 @@ export default function SubtitleStudio({
                   </div>
                 )}
 
+                {/* Active Clip Filter Indicator if Active */}
+                {filterSubtitlesByClip && activeClip && (
+                  <div className="mb-2 p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between text-xs text-amber-300 shrink-0">
+                    <span className="font-bold flex items-center gap-1.5">
+                      <Filter className="w-3.5 h-3.5 text-amber-400" />
+                      <span>מציג כתוביות של: {activeClip.title}</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setFilterSubtitlesByClip(false)}
+                      className="text-xs font-bold text-slate-400 hover:text-white underline"
+                    >
+                      הצג הכל ({subtitles.length})
+                    </button>
+                  </div>
+                )}
+
                 {/* Subtitle List */}
                 <div className="flex-1 overflow-y-auto space-y-2.5 py-2 pr-1">
-                  {subtitles.length > 0 ? (
-                    subtitles.map((sub, idx) => {
+                  {(() => {
+                    const displayedSubs = (filterSubtitlesByClip && activeClip)
+                      ? subtitles.filter(s => s.startTime >= activeClip.startTime - 0.5 && s.endTime <= activeClip.endTime + 0.5)
+                      : subtitles;
+
+                    if (subtitles.length > 0 && displayedSubs.length === 0) {
+                      return (
+                        <div className="py-8 px-5 text-center rounded-3xl bg-slate-900/60 border border-slate-800/80 space-y-3">
+                          <p className="text-xs text-slate-300 font-bold">
+                            לא נמצאו כתוביות בטווח הקטע &quot;{activeClip?.title}&quot; ({formatSrtTimestamp(activeClip?.startTime || 0).slice(3, 8)} - {formatSrtTimestamp(activeClip?.endTime || 0).slice(3, 8)})
+                          </p>
+                          <button
+                            type="button"
+                            onClick={handleTranscribeRecordedAudio}
+                            className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-rose-600 text-white font-bold text-xs shadow-lg"
+                          >
+                            ✨ תמלל קטע זה עכשיו עם AI
+                          </button>
+                        </div>
+                      );
+                    }
+
+                    return displayedSubs.length > 0 ? (
+                      displayedSubs.map((sub, idx) => {
                       const isSelected = selectedIds.includes(sub.id);
                       const isActive = currentTime >= sub.startTime && currentTime <= sub.endTime;
 
@@ -1804,8 +2086,9 @@ export default function SubtitleStudio({
                         <span>או הוסף כתובית ידנית בנקודת הזמן הנוכחית</span>
                       </button>
                     </div>
-                  )}
-                </div>
+                  );
+                })()}
+              </div>
               </div>
             )}
 
