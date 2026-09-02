@@ -245,18 +245,42 @@ export default function SubtitleStudio({
 }: SubtitleStudioProps) {
   const [selectedTranscriptionScope, setSelectedTranscriptionScope] = useState<string>(initialClipId || 'full');
   const [filterSubtitlesByClip, setFilterSubtitlesByClip] = useState<boolean>(!!initialClipId);
+  const [isShortsAspect, setIsShortsAspect] = useState<boolean>(!!initialClipId);
 
   // Active Highlight Clip if one is chosen
   const activeClip: HighlightClip | undefined = selectedTranscriptionScope !== 'full'
     ? (episode.highlightClips || []).find(c => c.id === selectedTranscriptionScope)
     : undefined;
 
+  // Format seconds to mm:ss
+  const formatTime = (secs: number) => {
+    const m = Math.floor(Math.max(0, secs) / 60);
+    const s = Math.floor(Math.max(0, secs) % 60);
+    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  };
+
   useEffect(() => {
     if (initialClipId) {
       setSelectedTranscriptionScope(initialClipId);
       setFilterSubtitlesByClip(true);
+      setIsShortsAspect(true);
     }
   }, [initialClipId]);
+
+  // Sync player position when activeClip changes
+  useEffect(() => {
+    if (activeClip) {
+      setCurrentTime(activeClip.startTime);
+      if (videoRef.current) {
+        videoRef.current.currentTime = activeClip.startTime;
+      }
+      setIsShortsAspect(true);
+      setFilterSubtitlesByClip(true);
+    } else {
+      setIsShortsAspect(false);
+      setFilterSubtitlesByClip(false);
+    }
+  }, [activeClip?.id]);
 
   const [subtitles, setSubtitles] = useState<SubtitleItem[]>([]);
   const [globalStyle, setGlobalStyle] = useState<SubtitleStyle>(DEFAULT_STYLE);
@@ -922,6 +946,12 @@ export default function SubtitleStudio({
       videoRef.current.pause();
       setIsPlaying(false);
     } else {
+      if (activeClip) {
+        if (currentTime < activeClip.startTime || currentTime >= activeClip.endTime) {
+          videoRef.current.currentTime = activeClip.startTime;
+          setCurrentTime(activeClip.startTime);
+        }
+      }
       videoRef.current.play();
       setIsPlaying(true);
     }
@@ -929,8 +959,14 @@ export default function SubtitleStudio({
 
   const jumpToTime = (seconds: number) => {
     if (videoRef.current) {
-      videoRef.current.currentTime = seconds;
-      setCurrentTime(seconds);
+      let target = seconds;
+      if (activeClip) {
+        target = Math.max(activeClip.startTime, Math.min(activeClip.endTime, target));
+      } else {
+        target = Math.max(0, target);
+      }
+      videoRef.current.currentTime = target;
+      setCurrentTime(target);
     }
   };
 
@@ -1147,24 +1183,46 @@ export default function SubtitleStudio({
 
   // Export SRT & VTT
   const handleExportSRT = () => {
-    const srtContent = exportToSRT(subtitles);
+    let targetSubs = subtitles;
+    let fileName = `${episode.title}_subtitles.srt`;
+    if (activeClip) {
+      const clipSubs = subtitles.filter(s => s.startTime >= activeClip.startTime - 0.5 && s.endTime <= activeClip.endTime + 0.5);
+      targetSubs = clipSubs.map(s => ({
+        ...s,
+        startTime: Math.max(0, Number((s.startTime - activeClip.startTime).toFixed(2))),
+        endTime: Math.max(0.5, Number((s.endTime - activeClip.startTime).toFixed(2)))
+      }));
+      fileName = `${episode.title}_${activeClip.title.replace(/\s+/g, '_')}_short.srt`;
+    }
+    const srtContent = exportToSRT(targetSubs);
     const blob = new Blob([srtContent], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `${episode.title}_subtitles.srt`;
+    link.download = fileName;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
   };
 
   const handleExportVTT = () => {
-    const vttContent = exportToVTT(subtitles);
+    let targetSubs = subtitles;
+    let fileName = `${episode.title}_subtitles.vtt`;
+    if (activeClip) {
+      const clipSubs = subtitles.filter(s => s.startTime >= activeClip.startTime - 0.5 && s.endTime <= activeClip.endTime + 0.5);
+      targetSubs = clipSubs.map(s => ({
+        ...s,
+        startTime: Math.max(0, Number((s.startTime - activeClip.startTime).toFixed(2))),
+        endTime: Math.max(0.5, Number((s.endTime - activeClip.startTime).toFixed(2)))
+      }));
+      fileName = `${episode.title}_${activeClip.title.replace(/\s+/g, '_')}_short.vtt`;
+    }
+    const vttContent = exportToVTT(targetSubs);
     const blob = new Blob([vttContent], { type: 'text/vtt;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `${episode.title}_subtitles.vtt`;
+    link.download = fileName;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -1460,15 +1518,28 @@ export default function SubtitleStudio({
           {/* Left Column: Interactive Video Preview (7 Cols) */}
           <div className="lg:col-span-7 p-4 sm:p-6 flex flex-col items-center justify-center bg-black/40 border-b lg:border-b-0 lg:border-l border-slate-800 relative overflow-hidden">
             {/* Live Video / Canvas Player */}
-            <div className="w-full max-w-2xl relative aspect-video bg-black rounded-3xl overflow-hidden shadow-2xl border border-slate-800 flex items-center justify-center">
+            <div className={`relative bg-black rounded-3xl overflow-hidden shadow-2xl border border-slate-800 flex items-center justify-center transition-all ${
+              isShortsAspect 
+                ? 'w-[280px] sm:w-[320px] aspect-[9/16] ring-2 ring-amber-500/40 shadow-amber-950/40' 
+                : 'w-full max-w-2xl aspect-video'
+            }`}>
               {videoUrl ? (
                 <video
                   ref={videoRef}
                   src={videoUrl}
                   onTimeUpdate={() => {
-                    if (videoRef.current) setCurrentTime(videoRef.current.currentTime);
+                    if (videoRef.current) {
+                      const cur = videoRef.current.currentTime;
+                      setCurrentTime(cur);
+                      if (activeClip && cur >= activeClip.endTime) {
+                        videoRef.current.pause();
+                        videoRef.current.currentTime = activeClip.startTime;
+                        setCurrentTime(activeClip.startTime);
+                        setIsPlaying(false);
+                      }
+                    }
                   }}
-                  className="w-full h-full object-contain"
+                  className={`h-full ${isShortsAspect ? 'aspect-[9/16] object-cover' : 'w-full object-contain'}`}
                 />
               ) : (
                 <div className="text-center p-8 text-slate-500 space-y-2">
@@ -1576,41 +1647,78 @@ export default function SubtitleStudio({
               })()}
             </div>
 
+            {/* Aspect Ratio Switcher (Shorts 9:16 / Wide 16:9) */}
+            <div className="flex items-center gap-2 mt-3">
+              <button
+                type="button"
+                onClick={() => setIsShortsAspect(false)}
+                className={`px-3 py-1 rounded-xl text-xs font-bold transition-all ${
+                  !isShortsAspect ? 'bg-purple-600 text-white shadow' : 'bg-slate-800/80 text-slate-400 hover:text-white'
+                }`}
+              >
+                📺 16:9 מסך רחב
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsShortsAspect(true)}
+                className={`px-3 py-1 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+                  isShortsAspect ? 'bg-amber-500 text-slate-950 font-black shadow-md' : 'bg-slate-800/80 text-slate-400 hover:text-white'
+                }`}
+              >
+                📱 9:16 אנכי (Shorts / Reels)
+              </button>
+            </div>
+
             {/* Video Playback Scrubber & Micro Controls */}
-            <div className="w-full max-w-2xl mt-4 flex items-center justify-between gap-3 p-3 rounded-2xl bg-slate-900/80 border border-slate-800">
+            <div className="w-full max-w-2xl mt-3 flex items-center justify-between gap-3 p-3 rounded-2xl bg-slate-900/80 border border-slate-800">
               <button
                 onClick={togglePlay}
-                className="p-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white shadow transition-all"
+                className={`p-2.5 rounded-xl text-white shadow transition-all ${
+                  activeClip ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold' : 'bg-purple-600 hover:bg-purple-500'
+                }`}
               >
                 {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 fill-white" />}
               </button>
 
               <div className="flex-1 flex items-center gap-2">
-                <span className="text-xs font-mono text-indigo-300 font-bold min-w-[45px]">
-                  {formatSrtTimestamp(currentTime).split(',')[0]}
+                <span className="text-xs font-mono font-bold min-w-[55px] text-indigo-300">
+                  {activeClip 
+                    ? `${formatTime(Math.max(0, currentTime - activeClip.startTime))} / ${formatTime(activeClip.duration)}`
+                    : formatSrtTimestamp(currentTime).split(',')[0]}
                 </span>
                 <input
                   type="range"
-                  min={0}
-                  max={videoRef.current?.duration || 100}
+                  min={activeClip ? activeClip.startTime : 0}
+                  max={activeClip ? activeClip.endTime : (videoRef.current?.duration || 100)}
                   step={0.1}
-                  value={currentTime}
+                  value={activeClip ? Math.max(activeClip.startTime, Math.min(activeClip.endTime, currentTime)) : currentTime}
                   onChange={(e) => jumpToTime(parseFloat(e.target.value))}
-                  className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-purple-500"
+                  className={`w-full h-2 rounded-lg appearance-none cursor-pointer ${
+                    activeClip 
+                      ? 'bg-amber-950/80 accent-amber-400' 
+                      : 'bg-slate-700 accent-purple-500'
+                  }`}
                 />
+                {activeClip && (
+                  <span className="text-[11px] text-amber-400 font-mono shrink-0 bg-slate-950 px-2 py-0.5 rounded border border-slate-800">
+                    {formatTime(activeClip.startTime)} - {formatTime(activeClip.endTime)}
+                  </span>
+                )}
               </div>
 
               {/* Jump Back / Forward 2s */}
               <div className="flex items-center gap-1">
                 <button
-                  onClick={() => jumpToTime(Math.max(0, currentTime - 2))}
+                  onClick={() => jumpToTime(currentTime - 2)}
                   className="p-1.5 text-slate-400 hover:text-white rounded-lg bg-slate-800 text-[11px] font-mono"
+                  title="2 שניות אחורה"
                 >
                   -2s
                 </button>
                 <button
                   onClick={() => jumpToTime(currentTime + 2)}
                   className="p-1.5 text-slate-400 hover:text-white rounded-lg bg-slate-800 text-[11px] font-mono"
+                  title="2 שניות קדימה"
                 >
                   +2s
                 </button>
