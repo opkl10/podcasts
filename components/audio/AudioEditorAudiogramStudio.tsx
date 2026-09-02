@@ -41,6 +41,7 @@ import {
   ChevronRight,
   Share2,
   Subtitles,
+  FileText,
   FolderOpen,
   Move,
   Lock,
@@ -2126,6 +2127,64 @@ export default function AudioEditorAudiogramStudio({
     }
   };
 
+  // Save trimmed clip as independent asset and open directly in Subtitle Studio
+  const handleSaveClipAndGoToSubtitles = async () => {
+    if (!audioBlob && !audioUrl) {
+      alert('אין קובץ שמע זמין לשמירה');
+      return;
+    }
+
+    try {
+      const start = trimStart || 0;
+      const end = trimEnd || duration || 60;
+      const dur = Math.max(5, end - start);
+      const clipId = initialClip?.id || `clip_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
+      const clipBlobKey = `clip_audio_${clipId}`;
+      const clipTitle = activeClipTitle || bannerSubtitle || `קליפ מתוך ${episode.title} (${formatTime(start)} - ${formatTime(end)})`;
+
+      if (audioBlob) {
+        const trimmedBlob = await trimAudioBlob(audioBlob, start, end);
+        if (trimmedBlob) {
+          await saveMediaBlob(clipBlobKey, trimmedBlob);
+        }
+      }
+
+      const newClip: HighlightClip = {
+        id: clipId,
+        title: clipTitle,
+        headline: `סרטון קצר | ${episode.title}`,
+        startTime: start,
+        endTime: end,
+        duration: dur,
+        viralScore: initialClip?.viralScore || 95,
+        category: initialClip?.category || 'highlight',
+        reason: 'סרטון קצר שנערך ונחתך בסטודיו',
+        summary: clipTitle,
+        suggestedAspectRatio: aspectRatio,
+        audioBlobKey: clipBlobKey
+      };
+
+      const existingClips = episode.highlightClips || [];
+      const updatedClips = existingClips.some(c => c.id === clipId)
+        ? existingClips.map(c => c.id === clipId ? { ...c, ...newClip } : c)
+        : [...existingClips, newClip];
+
+      const updatedEp: Episode = {
+        ...episode,
+        highlightClips: updatedClips
+      };
+
+      saveEpisode(updatedEp);
+      if (onUpdateEpisode) onUpdateEpisode(updatedEp);
+
+      // Navigate directly to Subtitle Studio for this clip
+      window.location.href = `/episodes/${episode.id}/subtitles?clipId=${clipId}`;
+    } catch (err: any) {
+      console.error('Error saving clip for subtitles:', err);
+      alert('שגיאה בשמירת הקליפ: ' + (err.message || err));
+    }
+  };
+
   // Export Audiogram as MP4 / WebM Video (Bulletproof Web Audio + Canvas Stream)
   const handleExportAudiogramVideo = async () => {
     if (!canvasRef.current || !audioUrl) {
@@ -2233,13 +2292,41 @@ export default function AudioEditorAudiogramStudio({
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
-        URL.revokeObjectURL(downloadUrl);
+        // Save rendered clip video to IndexedDB so it can be used for subtitles!
+        if (isClipLockMode || initialClip || (trimEnd > trimStart)) {
+          const clipId = initialClip?.id || `clip_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
+          const videoBlobKey = `clip_video_${clipId}`;
+          saveMediaBlob(videoBlobKey, finalBlob).then(() => {
+            const existingClips = episode.highlightClips || [];
+            const clipTitle = activeClipTitle || bannerSubtitle || `קליפ מרונדר (${formatTime(trimStart || 0)} - ${formatTime(trimEnd || duration)})`;
+            const clipObj: HighlightClip = {
+              id: clipId,
+              title: clipTitle,
+              headline: `מתוך ${episode.title}`,
+              startTime: trimStart || 0,
+              endTime: trimEnd || duration,
+              duration: Math.max(5, (trimEnd || duration) - (trimStart || 0)),
+              viralScore: initialClip?.viralScore || 96,
+              category: initialClip?.category || 'highlight',
+              reason: 'סרטון קצר מרונדר מהסטודיו',
+              summary: clipTitle,
+              suggestedAspectRatio: aspectRatio,
+              videoBlobKey
+            };
+            const updatedClips = existingClips.some(c => c.id === clipId)
+              ? existingClips.map(c => c.id === clipId ? { ...c, videoBlobKey } : c)
+              : [...existingClips, clipObj];
+            const updatedEp = { ...episode, highlightClips: updatedClips };
+            saveEpisode(updatedEp);
+            if (onUpdateEpisode) onUpdateEpisode(updatedEp);
+          }).catch(console.error);
+        }
 
         setIsExportingVideo(false);
         setIsPlaying(false);
         setExportProgress(100);
         exportAudioCtx.close().catch(() => {});
-        alert(`ייצוא הווידאו (${ext.toUpperCase()}) הושלם בהצלחה והקובץ ירד למחשב שלכם!`);
+        alert(`ייצוא הווידאו (${ext.toUpperCase()}) הושלם בהצלחה והקובץ ירד למחשב שלכם!\nהקובץ נשמר גם במערכת, כך שתוכלו לעבור ישירות לאולפן הכתוביות ולהוסיף לו כתוביות.`);
       };
 
       // Start recording
@@ -2891,6 +2978,16 @@ export default function AudioEditorAudiogramStudio({
                 </div>
 
                 <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={handleSaveClipAndGoToSubtitles}
+                    className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-black shadow-lg shadow-purple-600/30 flex items-center gap-1.5 transition-all"
+                    title="שמור קובץ שמע/וידאו עצמאי לקליפ זה ועבור להוספת כתוביות"
+                  >
+                    <FileText className="w-3.5 h-3.5" />
+                    <span>💾 שמור קטע ועבור לכתוביות</span>
+                  </button>
+
                   <button
                     type="button"
                     onClick={() => {

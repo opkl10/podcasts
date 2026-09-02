@@ -3,6 +3,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Episode, HighlightClip, SubtitleItem } from '@/lib/types';
 import { getAISettings } from '@/lib/apiConfig';
+import { getMediaBlob, saveMediaBlob } from '@/lib/storage';
+import { trimAudioBlob } from '@/lib/audioUtils';
 import { 
   Sparkles, 
   Flame, 
@@ -26,6 +28,7 @@ import {
   Volume2,
   Edit3,
   Sliders,
+  Download,
   X
 } from 'lucide-react';
 
@@ -156,6 +159,53 @@ export default function HighlightClipsManager({
       ...episode,
       highlightClips: newClips
     });
+  };
+
+  // Download standalone audio slice for this clip
+  const handleDownloadClipAudio = async (clip: HighlightClip) => {
+    try {
+      let blob: Blob | null = null;
+      if (clip.videoBlobKey) {
+        blob = await getMediaBlob(clip.videoBlobKey);
+      }
+      if (!blob && clip.audioBlobKey) {
+        blob = await getMediaBlob(clip.audioBlobKey);
+      }
+      if (!blob && episode.recording?.audioBlobKey) {
+        const masterBlob = await getMediaBlob(episode.recording.audioBlobKey);
+        if (masterBlob) {
+          blob = await trimAudioBlob(masterBlob, clip.startTime, clip.endTime);
+          if (blob) {
+            const blobKey = `clip_audio_${clip.id}`;
+            await saveMediaBlob(blobKey, blob);
+            clip.audioBlobKey = blobKey;
+            handleSaveClips(clips.map(c => c.id === clip.id ? { ...c, audioBlobKey: blobKey } : c));
+          }
+        }
+      }
+      if (!blob && episode.recording?.videoBlobKey) {
+        const masterVideo = await getMediaBlob(episode.recording.videoBlobKey);
+        if (masterVideo) {
+          blob = await trimAudioBlob(masterVideo, clip.startTime, clip.endTime);
+        }
+      }
+      if (!blob) {
+        alert('לא נמצא קובץ שמע מקור עבור פרק זה לחיתוך.');
+        return;
+      }
+      const isVideo = clip.videoBlobKey && blob.type.includes('video');
+      const ext = isVideo ? 'webm' : 'wav';
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${clip.title.replace(/[^\w\d\u0590-\u05FF]/g, '_')}_${Math.round(clip.startTime)}s-${Math.round(clip.endTime)}s.${ext}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      alert('שגיאה בחיתוך והורדת השמע: ' + e.message);
+    }
   };
 
   // Delete Clip
@@ -444,6 +494,15 @@ export default function HighlightClipsManager({
                       title="ערוך טווח זמנים וכותרת הקליפ"
                     >
                       <Edit3 className="w-3.5 h-3.5" />
+                    </button>
+
+                    {/* Download Standalone Media File Button */}
+                    <button
+                      onClick={() => handleDownloadClipAudio(clip)}
+                      className="p-1.5 rounded-xl bg-slate-800/80 hover:bg-emerald-500/20 text-slate-400 hover:text-emerald-400 transition-colors"
+                      title="שמור והורד קובץ שמע/וידאו גזור של קליפ זה למחשב"
+                    >
+                      <Download className="w-3.5 h-3.5" />
                     </button>
 
                     {/* Delete Clip Button */}

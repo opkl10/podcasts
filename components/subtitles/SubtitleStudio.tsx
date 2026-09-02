@@ -374,7 +374,15 @@ export default function SubtitleStudio({
       // Load Video or Audio Blob for in-studio preview and syncing
       const loadMedia = async () => {
         let blob: Blob | null = null;
-        if (episode.recording?.videoBlobKey) {
+        if (activeClip) {
+          if (activeClip.videoBlobKey) {
+            blob = await getMediaBlob(activeClip.videoBlobKey);
+          }
+          if (!blob && activeClip.audioBlobKey) {
+            blob = await getMediaBlob(activeClip.audioBlobKey);
+          }
+        }
+        if (!blob && episode.recording?.videoBlobKey) {
           blob = await getMediaBlob(episode.recording.videoBlobKey);
         }
         if (!blob && episode.recording?.audioBlobKey) {
@@ -392,7 +400,7 @@ export default function SubtitleStudio({
 
       loadMedia();
     }
-  }, [isOpen, episode]);
+  }, [isOpen, episode, activeClip?.id]);
 
   if (!isOpen) return null;
 
@@ -1228,6 +1236,56 @@ export default function SubtitleStudio({
     document.body.removeChild(link);
   };
 
+  // Download or Save standalone media file for the active clip
+  const handleDownloadActiveClipMedia = async () => {
+    if (!activeClip) return;
+    try {
+      let blob: Blob | null = null;
+      if (activeClip.videoBlobKey) {
+        blob = await getMediaBlob(activeClip.videoBlobKey);
+      }
+      if (!blob && activeClip.audioBlobKey) {
+        blob = await getMediaBlob(activeClip.audioBlobKey);
+      }
+      if (!blob) {
+        let masterBlob: Blob | null = null;
+        if (episode.recording?.audioBlobKey) {
+          masterBlob = await getMediaBlob(episode.recording.audioBlobKey);
+        } else if (episode.recording?.videoBlobKey) {
+          masterBlob = await getMediaBlob(episode.recording.videoBlobKey);
+        }
+        if (masterBlob) {
+          blob = await trimAudioBlob(masterBlob, activeClip.startTime, activeClip.endTime);
+          if (blob) {
+            const blobKey = `clip_audio_${activeClip.id}`;
+            await saveMediaBlob(blobKey, blob);
+            activeClip.audioBlobKey = blobKey;
+            const updatedClips = (episode.highlightClips || []).map(c => c.id === activeClip.id ? { ...c, audioBlobKey: blobKey } : c);
+            const updatedEp = { ...episode, highlightClips: updatedClips };
+            saveEpisode(updatedEp);
+            if (onUpdateEpisode) onUpdateEpisode(updatedEp);
+          }
+        }
+      }
+      if (!blob) {
+        alert('לא נמצא קובץ מדיה מקור עבור קטע זה לחיתוך.');
+        return;
+      }
+      const isVideo = activeClip.videoBlobKey && blob.type.includes('video');
+      const ext = isVideo ? 'webm' : 'wav';
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${activeClip.title.replace(/[^\w\d\u0590-\u05FF]/g, '_')}_clip.${ext}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      alert('שגיאה בהורדת הקובץ: ' + e.message);
+    }
+  };
+
   const allFontsList = [...customFonts, ...BUILT_IN_FONTS];
 
   return (
@@ -1460,6 +1518,16 @@ export default function SubtitleStudio({
               >
                 <Play className="w-3 h-3 text-emerald-400 fill-emerald-400" />
                 <span>קפוץ לנגן קטע זה</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleDownloadActiveClipMedia}
+                className="px-2.5 py-1 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 hover:text-white font-bold text-[11px] border border-emerald-500/40 flex items-center gap-1 transition-all"
+                title="שמור והורד את קובץ המדיה (שמע/וידאו) של קטע זה למחשב"
+              >
+                <Download className="w-3 h-3 text-emerald-400" />
+                <span>הורד קובץ קטע</span>
               </button>
 
               <button

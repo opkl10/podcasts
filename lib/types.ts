@@ -117,6 +117,9 @@ export interface HighlightClip {
   suggestedAspectRatio?: '9:16' | '16:9' | '1:1';
   hookText?: string;       // טקסט ה-Hook להצגה מיידית
   tags?: string[];
+  audioBlobKey?: string;   // מפתח קובץ שמע גזור ועצמאי ב-IndexedDB
+  videoBlobKey?: string;   // מפתח קובץ וידאו מרונדר עצמאי ב-IndexedDB
+  mediaUrl?: string;       // קישור ישיר או Data URL לקליפ העצמאי
 }
 
 export interface Episode {
