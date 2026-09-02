@@ -23,7 +23,10 @@ import {
   MessageSquare,
   Video,
   FileText,
-  Volume2
+  Volume2,
+  Edit3,
+  Sliders,
+  X
 } from 'lucide-react';
 
 interface HighlightClipsManagerProps {
@@ -112,8 +115,10 @@ export default function HighlightClipsManager({
         body: JSON.stringify({
           subtitles: episode.subtitles || [],
           topics: episode.topics || [],
+          movieFacts: episode.movieFacts || [],
           episodeTitle: episode.title,
           description: episode.description || '',
+          duration: episode.recording?.duration || (episode.targetDurationMinutes * 60) || 1620,
           apiKey: aiSettings.geminiApiKey || aiSettings.openaiApiKey || undefined
         })
       });
@@ -422,6 +427,15 @@ export default function HighlightClipsManager({
                       <span>🎬 צור סרטון קצר (9:16)</span>
                     </button>
 
+                    {/* Edit Clip Timestamps / Title Button */}
+                    <button
+                      onClick={() => setEditingClip(clip)}
+                      className="p-1.5 rounded-xl bg-slate-800/80 hover:bg-amber-500/20 text-slate-400 hover:text-amber-400 transition-colors"
+                      title="ערוך טווח זמנים וכותרת הקליפ"
+                    >
+                      <Edit3 className="w-3.5 h-3.5" />
+                    </button>
+
                     {/* Delete Clip Button */}
                     <button
                       onClick={() => handleDeleteClip(clip.id)}
@@ -525,6 +539,129 @@ export default function HighlightClipsManager({
               >
                 הוסף קליפ
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Clip Modal */}
+      {editingClip && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-[#121620] border border-slate-800 rounded-3xl p-6 w-full max-w-lg space-y-4 shadow-2xl animate-in zoom-in-95">
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold text-white flex items-center gap-2">
+                <Sliders className="w-5 h-5 text-amber-400" />
+                <span>עריכת טווח זמנים וכותרת לקליפ</span>
+              </h3>
+              <button
+                onClick={() => setEditingClip(null)}
+                className="text-slate-400 hover:text-white"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="block text-slate-400 mb-1">כותרת הוק ל-Shorts:</label>
+                <input
+                  type="text"
+                  value={editingClip.title}
+                  onChange={(e) => setEditingClip({ ...editingClip, title: e.target.value })}
+                  className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs font-bold"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-400 mb-1">נקודת התחלה (שניות / In-Point):</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={editingClip.startTime}
+                    onChange={(e) => {
+                      const s = parseFloat(e.target.value) || 0;
+                      setEditingClip({
+                        ...editingClip,
+                        startTime: s,
+                        duration: Math.max(5, editingClip.endTime - s)
+                      });
+                    }}
+                    className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white font-mono text-xs"
+                  />
+                  <span className="text-[10px] text-amber-400 font-mono mt-0.5 block">
+                    טיימקוד: {formatTime(editingClip.startTime)}
+                  </span>
+                </div>
+
+                <div>
+                  <label className="block text-slate-400 mb-1">נקודת סיום (שניות / Out-Point):</label>
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={editingClip.endTime}
+                    onChange={(e) => {
+                      const end = parseFloat(e.target.value) || 0;
+                      setEditingClip({
+                        ...editingClip,
+                        endTime: end,
+                        duration: Math.max(5, end - editingClip.startTime)
+                      });
+                    }}
+                    className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white font-mono text-xs"
+                  />
+                  <span className="text-[10px] text-amber-400 font-mono mt-0.5 block">
+                    טיימקוד: {formatTime(editingClip.endTime)}
+                  </span>
+                </div>
+              </div>
+
+              <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800 flex items-center justify-between text-xs">
+                <span className="text-slate-400">משך הקליפ הנבחר:</span>
+                <span className="font-mono font-bold text-amber-400">
+                  {Math.round(editingClip.endTime - editingClip.startTime)} שניות
+                </span>
+              </div>
+
+              <div>
+                <label className="block text-slate-400 mb-1">קטגוריה:</label>
+                <select
+                  value={editingClip.category}
+                  onChange={(e) => setEditingClip({ ...editingClip, category: e.target.value as any })}
+                  className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs"
+                >
+                  <option value="behind_the_scenes">🤫 מאחורי הקלעים / סוד הפקה</option>
+                  <option value="debate">🎭 דיבייט סוער / ויכוח</option>
+                  <option value="punchline">💥 פאנץ׳ / פסק דין וציון</option>
+                  <option value="insight">💡 תובנה עמוקה / דילמה</option>
+                  <option value="emotional">❤️ רגע מרגש / דרמטי</option>
+                  <option value="quote">💬 ציטוט בלתי נשכח</option>
+                  <option value="highlight">⭐ רגע שיא כללי</option>
+                </select>
+              </div>
+
+              <div className="pt-2 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => togglePlayClip(editingClip)}
+                  className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold"
+                >
+                  {playingClipId === editingClip.id ? 'עצור האזנה' : '▶️ האזן לקטע זה'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const updated = clips.map(c => c.id === editingClip.id ? editingClip : c);
+                    handleSaveClips(updated);
+                    setEditingClip(null);
+                  }}
+                  className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs shadow-lg"
+                >
+                  שמור שינויים
+                </button>
+              </div>
             </div>
           </div>
         </div>
