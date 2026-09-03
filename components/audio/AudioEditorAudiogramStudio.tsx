@@ -228,6 +228,8 @@ export default function AudioEditorAudiogramStudio({
   const [isTrimming, setIsTrimming] = useState<boolean>(false);
   const [isExportingVideo, setIsExportingVideo] = useState<boolean>(false);
   const [exportProgress, setExportProgress] = useState<number>(0);
+  const exportStartTimeRef = useRef<number>(0);
+  const startTimeSecRef = useRef<number>(0);
 
   // Background & Graphics State
   const [bgType, setBgType] = useState<'preset' | 'image' | 'solid'>('preset');
@@ -1934,52 +1936,69 @@ export default function AudioEditorAudiogramStudio({
           } catch (e) {}
         }
 
-        // 9. Subtitles Overlay
-        if (showSubtitles && activeSubtitle) {
-          try {
-            ctx.save();
-            const sx = (subtitleTransform.x / 100) * W;
-            const sy = (subtitleTransform.y / 100) * H;
-            const sScale = (subtitleTransform.scale || 1.0) * resScale;
-            ctx.translate(sx, sy);
-            ctx.scale(sScale, sScale);
+        // 9. Subtitles Overlay (Dynamic 60fps Synchronization for Preview & Export)
+        if (showSubtitles) {
+          const currentPos = isExportingVideo && exportStartTimeRef.current
+            ? (startTimeSecRef.current + (performance.now() - exportStartTimeRef.current) / 1000)
+            : (audioElementRef.current ? audioElementRef.current.currentTime : currentTime);
 
-            const subFontSize = subtitleCustomStyle.fontSize || 22;
-            const fontFamily = subtitleCustomStyle.fontFamily || 'Rubik, sans-serif';
-            ctx.font = `${subtitleCustomStyle.fontWeight || '900'} ${subFontSize}px ${fontFamily}`;
-            ctx.direction = 'rtl';
-
-            const subText = activeSubtitle.text;
-            const metrics = ctx.measureText(subText);
-            const padX = 18;
-            const padY = subtitleCustomStyle.padding || 8;
-            const subW = metrics.width + padX * 2;
-            const subH = subFontSize + padY * 2 + 4;
-
-            const sBg = hexToRgba(subtitleCustomStyle.backgroundColor || '#000000', subtitleCustomStyle.backgroundOpacity ?? 80);
-            ctx.fillStyle = sBg;
-            ctx.strokeStyle = subtitleCustomStyle.borderColor || 'transparent';
-            ctx.lineWidth = subtitleCustomStyle.borderWidth ?? 0;
-
-            if ((subtitleCustomStyle.glowBlur ?? 0) > 0) {
-              ctx.shadowColor = subtitleCustomStyle.glowColor || '#facc15';
-              ctx.shadowBlur = subtitleCustomStyle.glowBlur || 0;
+          const currentSub = (episode.subtitles || []).find(s => {
+            if (currentPos >= s.startTime && currentPos <= s.endTime) return true;
+            if (isClipLockMode && trimStart > 0) {
+              const relStart = s.startTime >= trimStart ? s.startTime - trimStart : s.startTime;
+              const relEnd = s.endTime >= trimStart ? s.endTime - trimStart : s.endTime;
+              const relPos = Math.max(0, currentPos - trimStart);
+              if (relPos >= relStart && relPos <= relEnd) return true;
             }
+            return false;
+          });
 
-            const sRadius = subtitleCustomStyle.borderRadius ?? 12;
-            ctx.beginPath();
-            if (ctx.roundRect) ctx.roundRect(0, 0, subW, subH, Math.min(subH / 2, sRadius));
-            else ctx.rect(0, 0, subW, subH);
-            ctx.fill();
-            if (subtitleCustomStyle.borderWidth && subtitleCustomStyle.borderWidth > 0) ctx.stroke();
+          if (currentSub) {
+            try {
+              ctx.save();
+              const sx = (subtitleTransform.x / 100) * W;
+              const sy = (subtitleTransform.y / 100) * H;
+              const sScale = (subtitleTransform.scale || 1.0) * resScale;
+              ctx.translate(sx, sy);
+              ctx.scale(sScale, sScale);
 
-            ctx.shadowBlur = 0;
-            ctx.fillStyle = subtitleCustomStyle.textColor || '#ffffff';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'alphabetic';
-            ctx.fillText(subText, subW / 2, padY + subFontSize);
-            ctx.restore();
-          } catch (e) {}
+              const subFontSize = subtitleCustomStyle.fontSize || 22;
+              const fontFamily = subtitleCustomStyle.fontFamily || 'Rubik, sans-serif';
+              ctx.font = `${subtitleCustomStyle.fontWeight || '900'} ${subFontSize}px ${fontFamily}`;
+              ctx.direction = 'rtl';
+
+              const subText = currentSub.text;
+              const metrics = ctx.measureText(subText);
+              const padX = 18;
+              const padY = subtitleCustomStyle.padding || 8;
+              const subW = metrics.width + padX * 2;
+              const subH = subFontSize + padY * 2 + 4;
+
+              const sBg = hexToRgba(subtitleCustomStyle.backgroundColor || '#000000', subtitleCustomStyle.backgroundOpacity ?? 80);
+              ctx.fillStyle = sBg;
+              ctx.strokeStyle = subtitleCustomStyle.borderColor || 'transparent';
+              ctx.lineWidth = subtitleCustomStyle.borderWidth ?? 0;
+
+              if ((subtitleCustomStyle.glowBlur ?? 0) > 0) {
+                ctx.shadowColor = subtitleCustomStyle.glowColor || '#facc15';
+                ctx.shadowBlur = subtitleCustomStyle.glowBlur || 0;
+              }
+
+              const sRadius = subtitleCustomStyle.borderRadius ?? 12;
+              ctx.beginPath();
+              if (ctx.roundRect) ctx.roundRect(0, 0, subW, subH, Math.min(subH / 2, sRadius));
+              else ctx.rect(0, 0, subW, subH);
+              ctx.fill();
+              if (subtitleCustomStyle.borderWidth && subtitleCustomStyle.borderWidth > 0) ctx.stroke();
+
+              ctx.shadowBlur = 0;
+              ctx.fillStyle = subtitleCustomStyle.textColor || '#ffffff';
+              ctx.textAlign = 'center';
+              ctx.textBaseline = 'alphabetic';
+              ctx.fillText(subText, subW / 2, padY + subFontSize);
+              ctx.restore();
+            } catch (e) {}
+          }
         }
       }
 
@@ -2330,13 +2349,15 @@ export default function AudioEditorAudiogramStudio({
       };
 
       // Start recording
+      startTimeSecRef.current = trimStart || 0;
+      exportStartTimeRef.current = performance.now();
       recorder.start(100);
       setIsPlaying(true);
       const startTimeSec = trimStart || 0;
       bufferSource.start(0, startTimeSec, durationSec);
 
       // Track progress
-      const exportStartTime = performance.now();
+      const exportStartTime = exportStartTimeRef.current;
       const progressTimer = setInterval(() => {
         const elapsed = (performance.now() - exportStartTime) / 1000;
         const pct = Math.min(95, Math.round(25 + (elapsed / durationSec) * 70));

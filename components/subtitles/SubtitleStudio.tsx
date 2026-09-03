@@ -246,6 +246,7 @@ export default function SubtitleStudio({
   const [selectedTranscriptionScope, setSelectedTranscriptionScope] = useState<string>(initialClipId || 'full');
   const [filterSubtitlesByClip, setFilterSubtitlesByClip] = useState<boolean>(!!initialClipId);
   const [isShortsAspect, setIsShortsAspect] = useState<boolean>(!!initialClipId);
+  const [isStandaloneMedia, setIsStandaloneMedia] = useState<boolean>(false);
 
   // Active Highlight Clip if one is chosen
   const activeClip: HighlightClip | undefined = selectedTranscriptionScope !== 'full'
@@ -270,9 +271,10 @@ export default function SubtitleStudio({
   // Sync player position when activeClip changes
   useEffect(() => {
     if (activeClip) {
-      setCurrentTime(activeClip.startTime);
+      const targetTime = isStandaloneMedia ? 0 : activeClip.startTime;
+      setCurrentTime(targetTime);
       if (videoRef.current) {
-        videoRef.current.currentTime = activeClip.startTime;
+        videoRef.current.currentTime = targetTime;
       }
       setIsShortsAspect(true);
       setFilterSubtitlesByClip(true);
@@ -280,7 +282,7 @@ export default function SubtitleStudio({
       setIsShortsAspect(false);
       setFilterSubtitlesByClip(false);
     }
-  }, [activeClip?.id]);
+  }, [activeClip?.id, isStandaloneMedia]);
 
   const [subtitles, setSubtitles] = useState<SubtitleItem[]>([]);
   const [globalStyle, setGlobalStyle] = useState<SubtitleStyle>(DEFAULT_STYLE);
@@ -374,12 +376,15 @@ export default function SubtitleStudio({
       // Load Video or Audio Blob for in-studio preview and syncing
       const loadMedia = async () => {
         let blob: Blob | null = null;
+        let isStandalone = false;
         if (activeClip) {
           if (activeClip.videoBlobKey) {
             blob = await getMediaBlob(activeClip.videoBlobKey);
+            if (blob) isStandalone = true;
           }
           if (!blob && activeClip.audioBlobKey) {
             blob = await getMediaBlob(activeClip.audioBlobKey);
+            if (blob) isStandalone = true;
           }
         }
         if (!blob && episode.recording?.videoBlobKey) {
@@ -391,6 +396,7 @@ export default function SubtitleStudio({
         if (!blob) {
           blob = await getMediaBlob(`emergency_rec_${episode.id}`);
         }
+        setIsStandaloneMedia(isStandalone);
         if (blob) {
           setVideoUrl(URL.createObjectURL(blob));
         } else {
@@ -955,9 +961,17 @@ export default function SubtitleStudio({
       setIsPlaying(false);
     } else {
       if (activeClip) {
-        if (currentTime < activeClip.startTime || currentTime >= activeClip.endTime) {
-          videoRef.current.currentTime = activeClip.startTime;
-          setCurrentTime(activeClip.startTime);
+        if (isStandaloneMedia) {
+          const maxDur = activeClip.duration || videoRef.current.duration || 45;
+          if (currentTime >= maxDur) {
+            videoRef.current.currentTime = 0;
+            setCurrentTime(0);
+          }
+        } else {
+          if (currentTime < activeClip.startTime || currentTime >= activeClip.endTime) {
+            videoRef.current.currentTime = activeClip.startTime;
+            setCurrentTime(activeClip.startTime);
+          }
         }
       }
       videoRef.current.play();
@@ -969,7 +983,12 @@ export default function SubtitleStudio({
     if (videoRef.current) {
       let target = seconds;
       if (activeClip) {
-        target = Math.max(activeClip.startTime, Math.min(activeClip.endTime, target));
+        if (isStandaloneMedia) {
+          const maxDur = activeClip.duration || videoRef.current.duration || 45;
+          target = Math.max(0, Math.min(maxDur, target));
+        } else {
+          target = Math.max(activeClip.startTime, Math.min(activeClip.endTime, target));
+        }
       } else {
         target = Math.max(0, target);
       }
@@ -978,7 +997,15 @@ export default function SubtitleStudio({
     }
   };
 
-  const activeSubtitle = subtitles.find(s => currentTime >= s.startTime && currentTime <= s.endTime);
+  const activeSubtitle = subtitles.find(s => {
+    if (currentTime >= s.startTime && currentTime <= s.endTime) return true;
+    if (activeClip && isStandaloneMedia) {
+      const relStart = s.startTime >= activeClip.startTime ? s.startTime - activeClip.startTime : s.startTime;
+      const relEnd = s.endTime >= activeClip.startTime ? s.endTime - activeClip.startTime : s.endTime;
+      return currentTime >= relStart && currentTime <= relEnd;
+    }
+    return false;
+  });
 
   // Selection
   const toggleSelect = (id: string) => {
@@ -1473,6 +1500,18 @@ export default function SubtitleStudio({
               <span>ייצוא SRT</span>
             </button>
 
+            {/* Direct Open in Audiogram Video Studio */}
+            {activeClip && (
+              <a
+                href={`/episodes/${episode.id}?openStudio=true&clipId=${activeClip.id}`}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 text-white text-xs font-bold shadow-lg shadow-pink-600/30 transition-all active:scale-98"
+                title="עבור לסטודיו הווידאו לייצוא סרטון קצר מלא עם כתוביות מוטמעות ומעוצבות"
+              >
+                <Film className="w-3.5 h-3.5" />
+                <span>🎬 צור סרטון מעוצב</span>
+              </a>
+            )}
+
             {/* Save Button */}
             <button
               onClick={handleSaveSubtitles}
@@ -1599,11 +1638,23 @@ export default function SubtitleStudio({
                     if (videoRef.current) {
                       const cur = videoRef.current.currentTime;
                       setCurrentTime(cur);
-                      if (activeClip && cur >= activeClip.endTime) {
-                        videoRef.current.pause();
-                        videoRef.current.currentTime = activeClip.startTime;
-                        setCurrentTime(activeClip.startTime);
-                        setIsPlaying(false);
+                      if (activeClip) {
+                        if (isStandaloneMedia) {
+                          const maxDur = activeClip.duration || videoRef.current.duration || 45;
+                          if (cur >= maxDur) {
+                            videoRef.current.pause();
+                            videoRef.current.currentTime = 0;
+                            setCurrentTime(0);
+                            setIsPlaying(false);
+                          }
+                        } else {
+                          if (cur >= activeClip.endTime) {
+                            videoRef.current.pause();
+                            videoRef.current.currentTime = activeClip.startTime;
+                            setCurrentTime(activeClip.startTime);
+                            setIsPlaying(false);
+                          }
+                        }
                       }
                     }
                   }}
@@ -1615,6 +1666,22 @@ export default function SubtitleStudio({
                   <p className="text-xs">תצוגה מקדימה של הכתוביות והווידאו</p>
                 </div>
               )}
+
+              {/* Animated Soundwave Studio Backdrop when audio is playing */}
+              <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center opacity-25">
+                <div className="flex items-center gap-1.5 h-16">
+                  {[40, 70, 50, 90, 65, 80, 45, 95, 60, 75, 85, 55, 65, 90, 45, 70].map((h, i) => (
+                    <div
+                      key={i}
+                      style={{
+                        height: isPlaying ? `${h}%` : '15%',
+                        transition: 'height 0.15s ease-in-out'
+                      }}
+                      className="w-1.5 rounded-full bg-gradient-to-t from-purple-500 via-amber-400 to-pink-500"
+                    />
+                  ))}
+                </div>
+              </div>
 
               {/* Dynamic Styled Subtitle Overlay on Top of Video */}
               {activeSubtitle && (() => {
@@ -1651,7 +1718,10 @@ export default function SubtitleStudio({
                 };
 
                 const words = activeSubtitle.text.split(' ');
-                const elapsed = currentTime - activeSubtitle.startTime;
+                const subStartTime = (isStandaloneMedia && activeClip && activeSubtitle.startTime >= activeClip.startTime)
+                  ? (activeSubtitle.startTime - activeClip.startTime)
+                  : activeSubtitle.startTime;
+                const elapsed = Math.max(0, currentTime - subStartTime);
                 const duration = Math.max(0.1, activeSubtitle.endTime - activeSubtitle.startTime);
                 const activeWordIndex = Math.min(words.length - 1, Math.floor((elapsed / duration) * words.length));
 
@@ -1751,15 +1821,21 @@ export default function SubtitleStudio({
               <div className="flex-1 flex items-center gap-2">
                 <span className="text-xs font-mono font-bold min-w-[55px] text-indigo-300">
                   {activeClip 
-                    ? `${formatTime(Math.max(0, currentTime - activeClip.startTime))} / ${formatTime(activeClip.duration)}`
+                    ? (isStandaloneMedia 
+                        ? `${formatTime(currentTime)} / ${formatTime(activeClip.duration)}`
+                        : `${formatTime(Math.max(0, currentTime - activeClip.startTime))} / ${formatTime(activeClip.duration)}`)
                     : formatSrtTimestamp(currentTime).split(',')[0]}
                 </span>
                 <input
                   type="range"
-                  min={activeClip ? activeClip.startTime : 0}
-                  max={activeClip ? activeClip.endTime : (videoRef.current?.duration || 100)}
+                  min={activeClip ? (isStandaloneMedia ? 0 : activeClip.startTime) : 0}
+                  max={activeClip ? (isStandaloneMedia ? (activeClip.duration || videoRef.current?.duration || 45) : activeClip.endTime) : (videoRef.current?.duration || 100)}
                   step={0.1}
-                  value={activeClip ? Math.max(activeClip.startTime, Math.min(activeClip.endTime, currentTime)) : currentTime}
+                  value={activeClip 
+                    ? (isStandaloneMedia 
+                        ? Math.max(0, Math.min(activeClip.duration || videoRef.current?.duration || 45, currentTime))
+                        : Math.max(activeClip.startTime, Math.min(activeClip.endTime, currentTime)))
+                    : currentTime}
                   onChange={(e) => jumpToTime(parseFloat(e.target.value))}
                   className={`w-full h-2 rounded-lg appearance-none cursor-pointer ${
                     activeClip 
@@ -1769,7 +1845,7 @@ export default function SubtitleStudio({
                 />
                 {activeClip && (
                   <span className="text-[11px] text-amber-400 font-mono shrink-0 bg-slate-950 px-2 py-0.5 rounded border border-slate-800">
-                    {formatTime(activeClip.startTime)} - {formatTime(activeClip.endTime)}
+                    {isStandaloneMedia ? 'קובץ עצמאי' : `${formatTime(activeClip.startTime)} - ${formatTime(activeClip.endTime)}`}
                   </span>
                 )}
               </div>
