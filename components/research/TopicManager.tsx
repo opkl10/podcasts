@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import { TopicItem, ResourceLink } from '@/lib/types';
 import { runAIResearch } from '@/lib/aiClient';
+import { getStoredGeminiApiKey } from '@/lib/apiConfig';
 import { 
   Plus, 
   Trash2, 
@@ -45,6 +46,7 @@ export default function TopicManager({
   
   // AI Suggestions State
   const [aiLoadingForTopic, setAiLoadingForTopic] = useState<string | null>(null);
+  const [aiSuccessTopicId, setAiSuccessTopicId] = useState<string | null>(null);
 
   const totalEstimatedMinutes = topics.reduce((acc, t) => acc + (t.estimatedMinutes || 0), 0);
 
@@ -174,31 +176,36 @@ export default function TopicManager({
     setAiLoadingForTopic(topicId);
 
     try {
-      const apiKey = typeof window !== 'undefined' ? localStorage.getItem('castflow_gemini_api_key') || '' : '';
+      const apiKey = getStoredGeminiApiKey();
       
       const result = await runAIResearch({
         topic: topic.title,
         singleTopicTitle: topic.title,
         episodeTitle,
         mode: 'single_topic',
-        apiKey: apiKey.trim() || undefined,
+        apiKey: apiKey || undefined,
         specificFocus: topic.notes?.trim() || undefined
       });
 
       if (result && result.data) {
+        const newPoints = result.data.talkingPoints || (result.data.topics?.[0]?.talkingPoints) || [];
+        const newQuestions = result.data.questions || (result.data.topics?.[0]?.questions) || [];
+        const newNotes = result.data.notes || (result.data.topics?.[0]?.notes) || '';
+        const newResources = (result.data.resources || (result.data.topics?.[0]?.resources) || []).map((r: any, idx: number) => ({
+          id: `res-${Date.now()}-${idx}`,
+          title: r.title,
+          url: r.url || 'https://google.com'
+        }));
+
         handleTopicChange(topicId, {
-          notes: topic.notes ? `${topic.notes}\n\n${result.data.notes}` : result.data.notes,
-          talkingPoints: [...new Set([...topic.talkingPoints, ...(result.data.talkingPoints || [])])],
-          questions: [...new Set([...topic.questions, ...(result.data.questions || [])])],
-          resources: [
-            ...topic.resources,
-            ...(result.data.resources || []).map((r: any, idx: number) => ({
-              id: `res-${Date.now()}-${idx}`,
-              title: r.title,
-              url: r.url || 'https://google.com'
-            }))
-          ]
+          notes: topic.notes ? `${topic.notes}\n\n${newNotes}` : newNotes,
+          talkingPoints: [...new Set([...topic.talkingPoints, ...newPoints])],
+          questions: [...new Set([...topic.questions, ...newQuestions])],
+          resources: [...topic.resources, ...newResources]
         });
+
+        setAiSuccessTopicId(topicId);
+        setTimeout(() => setAiSuccessTopicId(null), 3500);
       }
     } catch (err) {
       console.error('AI Suggestion error:', err);
@@ -295,15 +302,23 @@ export default function TopicManager({
                   </div>
 
                   {/* AI Assistant Generator */}
-                  <button
-                    onClick={() => handleGenerateAiSuggestions(topic.id)}
-                    disabled={aiLoadingForTopic === topic.id}
-                    className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-purple-950/60 hover:bg-purple-900/60 text-purple-300 border border-purple-800/40 text-xs font-medium transition-all"
-                    title="הצעות AI לשאלות ונקודות דיון"
-                  >
-                    <Sparkles className={`w-3.5 h-3.5 text-purple-400 ${aiLoadingForTopic === topic.id ? 'animate-spin' : ''}`} />
-                    <span>{aiLoadingForTopic === topic.id ? 'מייצר...' : 'הרחב עם AI'}</span>
-                  </button>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => handleGenerateAiSuggestions(topic.id)}
+                      disabled={aiLoadingForTopic === topic.id}
+                      className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-purple-950/60 hover:bg-purple-900/60 text-purple-300 border border-purple-800/40 text-xs font-medium transition-all"
+                      title="הצעות AI לשאלות ונקודות דיון"
+                    >
+                      <Sparkles className={`w-3.5 h-3.5 text-purple-400 ${aiLoadingForTopic === topic.id ? 'animate-spin' : ''}`} />
+                      <span>{aiLoadingForTopic === topic.id ? 'מייצר...' : 'הרחב עם AI'}</span>
+                    </button>
+                    {aiSuccessTopicId === topic.id && (
+                      <span className="text-[11px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-lg border border-emerald-500/20 flex items-center gap-1 animate-in fade-in">
+                        <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                        <span>עודכן!</span>
+                      </span>
+                    )}
+                  </div>
 
                   {/* Move Up/Down */}
                   <button

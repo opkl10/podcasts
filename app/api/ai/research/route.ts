@@ -86,11 +86,11 @@ ${effectiveFocus ? `
 }
 `;
 
-      if (effectiveKey && effectiveKey.trim().startsWith('AIza')) {
+      if (effectiveKey && effectiveKey.length >= 10) {
         const models = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'];
         for (const model of models) {
           try {
-            const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${effectiveKey.trim()}`, {
+            const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${effectiveKey}`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
@@ -121,11 +121,123 @@ ${effectiveFocus ? `
       }
     }
 
-    // 2. Live Multi-Source Research with Targeted Focus
+    // 2. Single Topic Expansion Mode
+    if (mode === 'single_topic') {
+      const webInfo = await fetchMultiSourceWebResearch(querySubject, effectiveFocus);
+      
+      if (effectiveKey && effectiveKey.length >= 10) {
+        const models = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'];
+        const singlePrompt = `
+אתה עורך תוכן ראשי לפודקאסט מקצועי. עליך להעמיק, להרחיב ולחדד את נושא הדיון הבא: "${querySubject}".
+${episodeTitle ? `כחלק מפרק פודקאסט בנושא: "${episodeTitle}".` : ''}
+${effectiveFocus ? `הנחיות, דגשים והערות מיקוד מהמגיש:\n"${effectiveFocus}"\nחובה לשלב את הדגש המבוקש בנקודות ובשאלות!` : ''}
+${webInfo.found ? `מידע עובדתי מהרשת:\n${webInfo.completeTalkingPoints.join('\n')}` : ''}
+${webInfo.focusFindings && webInfo.focusFindings.length > 0 ? `ממצאי מחקר ספציפיים סביב המיקוד:\n${webInfo.focusFindings.join('\n')}` : ''}
+
+חוקי ניסוח מחייבים:
+1. **משפטים מלאים ושלמים בלבד!** אל תקטע משפטים באמצע, אל תשתמש בשלוש נקודות (...).
+2. שדה "notes": משפט הסבר מעמיק שמחדד את מטרת הנושא וחיבורו לפרק.
+3. שדה "talkingPoints": 3-5 נקודות דיון חדות, עמוקות ומפורטות (12-20 מילים כל אחת).
+4. שדה "questions": 2-3 שאלות עומק ודיבייט חדות עבור האורח או הדיון.
+5. איסור מוחלט על ניסוחים כלליים או שאלות גנריות.
+
+החזר אך ורק JSON תקין במבנה הבא:
+{
+  "notes": "משפט שלם המסביר את מהות הנושא.",
+  "talkingPoints": [
+    "משפט שלם ומדויק על נקודה ראשונה.",
+    "משפט שלם ומדויק על נקודה שנייה.",
+    "משפט שלם ומדויק על נקודה שלישית."
+  ],
+  "questions": [
+    "שאלה שלמה וחדה לאורח?",
+    "שאלה שלמה וחדה נוספת?"
+  ],
+  "resources": [
+    { "title": "ערך רקע", "url": "https://..." }
+  ]
+}
+`;
+
+        for (const model of models) {
+          try {
+            const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${effectiveKey}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                contents: [{ parts: [{ text: singlePrompt }] }],
+                generationConfig: {
+                  responseMimeType: 'application/json',
+                  temperature: 0.6
+                }
+              })
+            });
+
+            if (res.ok) {
+              const data = await res.json();
+              const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+              if (text) {
+                const parsed = JSON.parse(text.replace(/```json/g, '').replace(/```/g, '').trim());
+                if (parsed.talkingPoints && parsed.talkingPoints.length > 0) {
+                  return NextResponse.json({
+                    success: true,
+                    source: `Gemini AI (${model})`,
+                    webGrounding: webInfo.found,
+                    data: parsed
+                  });
+                }
+              }
+            }
+          } catch (e) {}
+        }
+      }
+
+      // Fallback for single topic
+      const cleanSubject = querySubject;
+      const talkingPoints: string[] = [];
+      if (webInfo.focusFindings && webInfo.focusFindings.length > 0) {
+        talkingPoints.push(...webInfo.focusFindings.slice(0, 2));
+      }
+      if (webInfo.completeTalkingPoints.length > 0) {
+        talkingPoints.push(...webInfo.completeTalkingPoints.slice(0, 2));
+      }
+      if (effectiveFocus && !talkingPoints.some(p => p.includes(effectiveFocus))) {
+        talkingPoints.unshift(`מוקד דיון מיוחד לבקשת המגיש: ${effectiveFocus}.`);
+      }
+      if (talkingPoints.length === 0) {
+        talkingPoints.push(
+          `ניתוח ההיבטים המרכזיים והמשמעות של "${cleanSubject}" במהלך הפרק.`,
+          `ההשפעה של נושא זה על המבנה הכללי והתפתחות הדיון עם המאזינים.`
+        );
+      }
+
+      const questions = [
+        effectiveFocus 
+          ? `כיצד הדגש על "${effectiveFocus}" מעשיר את הדיון סביב "${cleanSubject}"?`
+          : `איזו נקודת מבט ייחודית ניתן לחשוף כאשר מעמיקים בנושא "${cleanSubject}"?`,
+        `מהי השאלה המרכזית שצריכה להנחות את השיחה בחלק זה של הפרק?`
+      ];
+
+      return NextResponse.json({
+        success: true,
+        source: webInfo.source,
+        webGrounding: webInfo.found,
+        data: {
+          notes: effectiveFocus 
+            ? `העמקה וחידוד של ${cleanSubject} תוך התמקדות מיוחדת ב-${effectiveFocus}.`
+            : `העמקה וחידוד של ${cleanSubject} כחלק ממהלך הפרק.`,
+          talkingPoints,
+          questions,
+          resources: webInfo.sourceUrl ? [{ title: `ערך: ${cleanSubject}`, url: webInfo.sourceUrl }] : []
+        }
+      });
+    }
+
+    // 3. Live Multi-Source Research with Targeted Focus
     const webInfo = await fetchMultiSourceWebResearch(querySubject, effectiveFocus);
 
-    // 3. Direct Gemini Call if API Key provided
-    if (effectiveKey && effectiveKey.trim().startsWith('AIza')) {
+    // 4. Direct Gemini Call if API Key provided
+    if (effectiveKey && effectiveKey.length >= 10) {
       const models = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'];
 
       const prompt = `
@@ -290,8 +402,30 @@ ${effectiveFocus ? `
     ];
 
     if (effectiveFocus) {
-      topics[1].talkingPoints.push(`דגש מיוחד לבקשת המגיש: ${effectiveFocus}.`);
-      topics[1].questions.push(`כיצד הדגש הממוקד סביב "${effectiveFocus}" משפיע על ניתוח היצירה?`);
+      const focusFindings = webInfo.focusFindings || [];
+      const focusTopic = {
+        title: `🎯 מוקד מחקר מיוחד: ${effectiveFocus}`,
+        estimatedMinutes: Math.max(10, Math.round(targetDurationMinutes * 0.3)),
+        notes: `צלילת עומק ייעודית שנחקרה לבקשת המגיש סביב "${effectiveFocus}".`,
+        talkingPoints: focusFindings.length > 0 ? [
+          ...focusFindings.slice(0, 3),
+          `ההשלכות והמשמעות של ${effectiveFocus} על החוויה הכוללת וההצלחה של היצירה.`
+        ] : [
+          `ניתוח ההיבטים המרכזיים והחידוש שמביא איתו תחום זה: ${effectiveFocus}.`,
+          `האתגרים המרכזיים והבחירות המקצועיות שנעשו בהפקה סביב ${effectiveFocus}.`,
+          `השוואה בין הביצוע של ${effectiveFocus} ביצירה זו לבין פרויקטים מקבילים.`,
+          `התגובות והעניין שהנושא עורר בקרב מעריצים ומבקרים מקצועיים.`
+        ],
+        questions: [
+          `כיצד הדגש הממוקד סביב "${effectiveFocus}" משנה את התפיסה והרושם מהיצירה?`,
+          `האם לדעתכם היוצרים מיצו את הפוטנציאל של "${effectiveFocus}" בצורה האופטימלית?`,
+          `איזו תובנה חדשה מתגלה כאשר מתמקדים במיוחד ב-${effectiveFocus}?`
+        ],
+        resources: webInfo.sourceUrl ? [{ title: `מקור רקע: ${effectiveFocus}`, url: webInfo.sourceUrl }] : []
+      };
+
+      // Place as Topic 2 so it is prominent and cannot be missed
+      topics.splice(1, 0, focusTopic);
     }
 
     return NextResponse.json({
@@ -299,8 +433,10 @@ ${effectiveFocus ? `
       source: webInfo.source,
       webGrounding: webInfo.found,
       data: {
-        executiveSummary: `מחקר מקיף על "${realTitle}": מערך ראשי פרקים מובנה ומלא הכולל נתונים עובדתיים מהאינטרנט, ניתוח דמויות ושאלות עומק.`,
-        suggestedTitle: `ניתוח מעמיק: "${realTitle}"`,
+        executiveSummary: effectiveFocus
+          ? `מחקר מקיף וממוקד עבור "${realTitle}". בהתאם לבקשת המגיש, מנוע המחקר העמיק במיוחד בנושא: "${effectiveFocus}", שילב ממצאים עובדתיים ייעודיים והקדיש פרק מרכזי לדיון סביבו.`
+          : `מחקר מקיף על "${realTitle}": מערך ראשי פרקים מובנה ומלא הכולל נתונים עובדתיים מהאינטרנט, ניתוח דמויות ושאלות עומק.`,
+        suggestedTitle: effectiveFocus ? `ניתוח מעמיק: "${realTitle}" (דגש על ${effectiveFocus})` : `ניתוח מעמיק: "${realTitle}"`,
         topics
       }
     });

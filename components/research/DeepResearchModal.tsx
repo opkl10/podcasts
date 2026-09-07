@@ -1,8 +1,9 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { TopicItem } from '@/lib/types';
 import { runAIResearch } from '@/lib/aiClient';
+import { getStoredGeminiApiKey, saveStoredGeminiApiKey } from '@/lib/apiConfig';
 import { 
   X, 
   Sparkles, 
@@ -52,6 +53,7 @@ export default function DeepResearchModal({
   const [apiKey, setApiKey] = useState('');
   const [showKeyInput, setShowKeyInput] = useState(false);
   const [keySaved, setKeySaved] = useState(false);
+  const resultsRef = useRef<HTMLDivElement | null>(null);
 
   // Status & Results
   const [isLoading, setIsLoading] = useState(false);
@@ -78,7 +80,7 @@ export default function DeepResearchModal({
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      const savedKey = localStorage.getItem('castflow_gemini_api_key') || '';
+      const savedKey = getStoredGeminiApiKey();
       setApiKey(savedKey);
       if (!savedKey) {
         setShowKeyInput(true);
@@ -125,7 +127,7 @@ export default function DeepResearchModal({
 
   const handleSaveKey = (e: React.FormEvent) => {
     e.preventDefault();
-    localStorage.setItem('castflow_gemini_api_key', apiKey.trim());
+    saveStoredGeminiApiKey(apiKey.trim());
     setKeySaved(true);
     setTimeout(() => setKeySaved(false), 2000);
   };
@@ -185,6 +187,10 @@ export default function DeepResearchModal({
         source: result.source,
         webGrounding: result.webGrounding
       });
+
+      setTimeout(() => {
+        resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 150);
     } catch (err: any) {
       console.error('Research error:', err);
       setErrorMsg(err.message || 'שגיאה בביצוע המחקר');
@@ -427,7 +433,30 @@ export default function DeepResearchModal({
 
         {/* Results Viewer */}
         {researchResult && !isLoading && (
-          <div className="space-y-5 relative z-10 animate-in fade-in duration-300">
+          <div ref={resultsRef} className="space-y-5 relative z-10 animate-in fade-in duration-300 scroll-mt-6">
+            {/* Quick Apply & Completion Banner */}
+            <div className="p-4 rounded-2xl bg-gradient-to-r from-emerald-950/60 via-slate-900 to-emerald-950/40 border border-emerald-500/50 flex flex-wrap items-center justify-between gap-3 shadow-xl">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center shrink-0">
+                  <Check className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="text-xs sm:text-sm font-bold text-white">המחקר הושלם בהצלחה!</h4>
+                  <p className="text-[11px] text-emerald-300">
+                    הופקו {researchResult.topics.length} ראשי פרקים מפורטים וממוקדים (כולל שאלות עומק ודיבייט)
+                  </p>
+                </div>
+              </div>
+
+              <button
+                onClick={handleApplyAll}
+                className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold shadow-lg shadow-emerald-600/30 active:scale-95 transition-all"
+              >
+                <Check className="w-4 h-4" />
+                <span>ייבא ישירות לפרק עכשיו</span>
+              </button>
+            </div>
+
             {/* Custom Focus Banner if specified */}
             {specificFocus && (
               <div className="p-3.5 rounded-2xl bg-gradient-to-r from-amber-950/40 to-slate-900 border border-amber-500/40 flex items-start gap-3 text-xs">
@@ -464,20 +493,38 @@ export default function DeepResearchModal({
               </div>
 
               <div className="space-y-3">
-                {researchResult.topics.map((t, idx) => (
-                  <div key={idx} className="p-4 rounded-2xl bg-slate-900/80 border border-slate-800 space-y-2.5">
-                    <div className="flex items-center justify-between">
-                      <h4 className="text-xs sm:text-sm font-bold text-white flex items-center gap-2">
-                        <span className="w-5 h-5 rounded bg-purple-600/30 text-purple-300 flex items-center justify-center text-xs font-bold">
-                          {idx + 1}
+                {researchResult.topics.map((t, idx) => {
+                  const isFocusTopic = t.title.includes('מוקד מחקר מיוחד') || 
+                    (specificFocus && t.title.toLowerCase().includes(specificFocus.slice(0, 8).toLowerCase()));
+                  return (
+                    <div 
+                      key={idx} 
+                      className={`p-4 rounded-2xl border space-y-2.5 transition-all ${
+                        isFocusTopic 
+                          ? 'bg-amber-950/20 border-amber-500/60 ring-1 ring-amber-500/40 shadow-lg shadow-amber-950/30' 
+                          : 'bg-slate-900/80 border-slate-800'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h4 className="text-xs sm:text-sm font-bold text-white flex items-center gap-2">
+                            <span className="w-5 h-5 rounded bg-purple-600/30 text-purple-300 flex items-center justify-center text-xs font-bold">
+                              {idx + 1}
+                            </span>
+                            <span>{t.title}</span>
+                          </h4>
+                          {isFocusTopic && (
+                            <span className="text-[10px] bg-amber-500 text-slate-950 font-black px-2 py-0.5 rounded-md flex items-center gap-1 shadow">
+                              <Target className="w-3 h-3" />
+                              נושא ייעודי שהופק לפי בקשת המיקוד שלך!
+                            </span>
+                          )}
+                        </div>
+                        <span className="text-xs font-semibold text-amber-400 flex items-center gap-1 shrink-0">
+                          <Clock className="w-3 h-3" />
+                          {t.estimatedMinutes} דק'
                         </span>
-                        <span>{t.title}</span>
-                      </h4>
-                      <span className="text-xs font-semibold text-amber-400 flex items-center gap-1">
-                        <Clock className="w-3 h-3" />
-                        {t.estimatedMinutes} דק'
-                      </span>
-                    </div>
+                      </div>
 
                     {t.notes && (
                       <p className="text-xs text-slate-400 leading-relaxed bg-slate-950/50 p-2.5 rounded-xl border border-slate-800/60">
@@ -513,7 +560,8 @@ export default function DeepResearchModal({
                       </div>
                     </div>
                   </div>
-                ))}
+                );
+              })}
               </div>
             </div>
 

@@ -50,6 +50,7 @@ export function getAISettings(): AISettingsConfig {
     // Auto-detect and cross-sync across all storage keys
     const fallbackGemini = 
       parsed.geminiApiKey || 
+      localStorage.getItem('castflow_gemini_api_key') ||
       localStorage.getItem('gemini_api_key') || 
       localStorage.getItem('castflow_gemini_key') || 
       localStorage.getItem('GOOGLE_API_KEY') || 
@@ -78,6 +79,27 @@ export function getAISettings(): AISettingsConfig {
   }
 }
 
+export function getStoredGeminiApiKey(): string {
+  if (typeof window === 'undefined') return '';
+  return (
+    localStorage.getItem('castflow_gemini_api_key') ||
+    localStorage.getItem('gemini_api_key') ||
+    localStorage.getItem('castflow_gemini_key') ||
+    localStorage.getItem('GOOGLE_API_KEY') ||
+    getAISettings().geminiApiKey ||
+    ''
+  ).trim();
+}
+
+export function saveStoredGeminiApiKey(key: string): void {
+  if (typeof window === 'undefined') return;
+  const trimmed = key.trim();
+  localStorage.setItem('castflow_gemini_api_key', trimmed);
+  localStorage.setItem('gemini_api_key', trimmed);
+  localStorage.setItem('castflow_gemini_key', trimmed);
+  saveAISettings({ geminiApiKey: trimmed });
+}
+
 export function saveAISettings(settings: Partial<AISettingsConfig>): void {
   if (typeof window === 'undefined') return;
   try {
@@ -86,6 +108,8 @@ export function saveAISettings(settings: Partial<AISettingsConfig>): void {
     localStorage.setItem(STORAGE_KEY_AI_SETTINGS, JSON.stringify(updated));
     if (settings.geminiApiKey !== undefined) {
       localStorage.setItem('gemini_api_key', settings.geminiApiKey);
+      localStorage.setItem('castflow_gemini_api_key', settings.geminiApiKey);
+      localStorage.setItem('castflow_gemini_key', settings.geminiApiKey);
     }
     if (settings.openaiApiKey !== undefined) {
       localStorage.setItem('openai_api_key', settings.openaiApiKey);

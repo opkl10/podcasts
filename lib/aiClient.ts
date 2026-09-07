@@ -2,6 +2,7 @@
 // Guarantees 100% complete, unbroken sentences (No cutoffs, no partial phrases, no trailing ellipses!)
 
 import { fetchMultiSourceWebResearch, extractCompleteSentences, WebResearchBundle } from './webResearch';
+import { getStoredGeminiApiKey } from './apiConfig';
 
 export interface AIResearchOptions {
   topic: string;
@@ -26,12 +27,14 @@ export async function runAIResearch(options: AIResearchOptions) {
     targetDurationMinutes = 45, 
     tone = 'deep', 
     apiKey, 
+    mode = 'full_episode',
     userReview,
     specificFocus,
     singleTopicTitle
   } = options;
 
   const querySubject = (singleTopicTitle || topic || episodeTitle || '').trim();
+  const effectiveKey = (apiKey || getStoredGeminiApiKey() || '').trim();
 
   // 1. Live Multi-Source Web Search in Browser
   let webData: WebResearchBundle = {
@@ -53,7 +56,7 @@ export async function runAIResearch(options: AIResearchOptions) {
   }
 
   // 2. Direct Gemini Generation with Strict Full-Sentence Output Constraints
-  if (apiKey && apiKey.trim()) {
+  if (effectiveKey && effectiveKey.length >= 10) {
     const models = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'];
 
     const webContext = webData.found ? `
@@ -75,7 +78,36 @@ ${webData.focusFindings.map(f => `• ${f}`).join('\n')}
 חובה לשלב את עמדת המגיש בתוך הנושא הרביעי בצורה של דיבייט מעמיק מול האורח.
 ` : '';
 
-    const prompt = `
+    const prompt = mode === 'single_topic' ? `
+אתה עורך תוכן ראשי לפודקאסט מקצועי. עליך להעמיק, להרחיב ולחדד את נושא הדיון הבא: "${querySubject}".
+${episodeTitle ? `כחלק מפרק פודקאסט בנושא: "${episodeTitle}".` : ''}
+${specificFocus ? `הנחיות, דגשים והערות מיקוד מהמגיש:\n"${specificFocus}"\nחובה לשלב את הדגש המבוקש בנקודות ובשאלות!` : ''}
+${webData.found ? `מידע עובדתי מהרשת:\n${webData.completeTalkingPoints.join('\n')}` : ''}
+${webData.focusFindings && webData.focusFindings.length > 0 ? `ממצאי מחקר ספציפיים סביב המיקוד:\n${webData.focusFindings.join('\n')}` : ''}
+
+חוקי ניסוח מחייבים:
+1. **משפטים מלאים ושלמים בלבד!** אל תקטע משפטים באמצע, אל תשתמש בשלוש נקודות (...).
+2. שדה "notes": משפט הסבר מעמיק שמחדד את מטרת הנושא וחיבורו לפרק.
+3. שדה "talkingPoints": 3-5 נקודות דיון חדות, עמוקות ומפורטות (12-20 מילים כל אחת).
+4. שדה "questions": 2-3 שאלות עומק ודיבייט חדות עבור האורח או הדיון.
+
+החזר אך ורק JSON תקין במבנה הבא:
+{
+  "notes": "משפט שלם המסביר את מהות הנושא.",
+  "talkingPoints": [
+    "משפט שלם ומדויק על נקודה ראשונה.",
+    "משפט שלם ומדויק על נקודה שנייה.",
+    "משפט שלם ומדויק על נקודה שלישית."
+  ],
+  "questions": [
+    "שאלה שלמה וחדה לאורח?",
+    "שאלה שלמה וחדה נוספת?"
+  ],
+  "resources": [
+    { "title": "ערך רקע", "url": "https://..." }
+  ]
+}
+` : `
 אתה עורך תוכן ראשי של פודקאסט קולנוע וטלוויזיה מקצועי. עליך לייצר מערך ראשי פרקים מובנה, מדויק, עשיר וממוקד עבור: "${querySubject}".
 
 ${webContext}
@@ -135,7 +167,7 @@ ${specificFocus?.trim() ? `
 }
 `;
 
-    const key = apiKey.trim();
+    const key = effectiveKey;
     for (const model of models) {
       try {
         let url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
@@ -197,7 +229,8 @@ ${specificFocus?.trim() ? `
         guestRole,
         targetDurationMinutes,
         tone,
-        apiKey: apiKey?.trim() || undefined,
+        mode,
+        apiKey: effectiveKey || undefined,
         userReview: userReview?.trim() || undefined,
         specificFocus: specificFocus?.trim() || undefined
       })
@@ -213,6 +246,49 @@ ${specificFocus?.trim() ? `
 
   // 3. Deterministic High-Quality Research Generator with 100% Complete Sentences
   const realTitle = webData.title || querySubject;
+
+  // Single Topic Fallback
+  if (mode === 'single_topic') {
+    const cleanSubject = querySubject;
+    const talkingPoints: string[] = [];
+    if (webData.focusFindings && webData.focusFindings.length > 0) {
+      talkingPoints.push(...webData.focusFindings.slice(0, 2));
+    }
+    if (webData.completeTalkingPoints.length > 0) {
+      talkingPoints.push(...webData.completeTalkingPoints.slice(0, 2));
+    }
+    if (specificFocus && !talkingPoints.some(p => p.includes(specificFocus))) {
+      talkingPoints.unshift(`מוקד דיון מיוחד לבקשת המגיש: ${specificFocus}.`);
+    }
+    if (talkingPoints.length === 0) {
+      talkingPoints.push(
+        `ניתוח ההיבטים המרכזיים והמשמעות של "${cleanSubject}" במהלך הפרק.`,
+        `ההשפעה של נושא זה על המבנה הכללי והתפתחות הדיון עם המאזינים.`
+      );
+    }
+
+    const questions = [
+      specificFocus 
+        ? `כיצד הדגש על "${specificFocus}" מעשיר את הדיון סביב "${cleanSubject}"?`
+        : `איזו נקודת מבט ייחודית ניתן לחשוף כאשר מעמיקים בנושא "${cleanSubject}"?`,
+      `מהי השאלה המרכזית שצריכה להנחות את השיחה בחלק זה של הפרק?`
+    ];
+
+    return {
+      success: true,
+      source: webData.source,
+      webGrounding: webData.found,
+      data: {
+        notes: specificFocus 
+          ? `העמקה וחידוד של ${cleanSubject} תוך התמקדות מיוחדת ב-${specificFocus}.`
+          : `העמקה וחידוד של ${cleanSubject} כחלק ממהלך הפרק.`,
+        talkingPoints,
+        questions,
+        resources: webData.sourceUrl ? [{ title: `ערך: ${cleanSubject}`, url: webData.sourceUrl }] : []
+      }
+    };
+  }
+
   const cleanReviewSentences = userReview?.trim() ? extractCompleteSentences(userReview, 3) : [];
 
   const topics: any[] = [
@@ -294,8 +370,29 @@ ${specificFocus?.trim() ? `
   ];
 
   if (specificFocus?.trim()) {
-    topics[1].talkingPoints.push(`דגש מיוחד לבקשת המגיש: ${specificFocus.trim()}.`);
-    topics[1].questions.push(`כיצד הדגש הממוקד סביב "${specificFocus.trim()}" מעמיק את הדיון?`);
+    const focusFindings = webData.focusFindings || [];
+    const focusTopic = {
+      title: `🎯 מוקד מחקר מיוחד: ${specificFocus.trim()}`,
+      estimatedMinutes: Math.max(10, Math.round(targetDurationMinutes * 0.3)),
+      notes: `צלילת עומק ייעודית שנחקרה לבקשת המגיש סביב "${specificFocus.trim()}".`,
+      talkingPoints: focusFindings.length > 0 ? [
+        ...focusFindings.slice(0, 3),
+        `ההשלכות והמשמעות של ${specificFocus.trim()} על החוויה הכוללת וההצלחה של היצירה.`
+      ] : [
+        `ניתוח ההיבטים המרכזיים והחידוש שמביא איתו תחום זה: ${specificFocus.trim()}.`,
+        `האתגרים המרכזיים והבחירות המקצועיות שנעשו בהפקה סביב ${specificFocus.trim()}.`,
+        `השוואה בין הביצוע של ${specificFocus.trim()} ביצירה זו לבין פרויקטים מקבילים.`,
+        `התגובות והעניין שהנושא עורר בקרב מעריצים ומבקרים מקצועיים.`
+      ],
+      questions: [
+        `כיצד הדגש הממוקד סביב "${specificFocus.trim()}" משנה את התפיסה והרושם מהיצירה?`,
+        `האם לדעתכם היוצרים מיצו את הפוטנציאל של "${specificFocus.trim()}" בצורה האופטימלית?`,
+        `איזו תובנה חדשה מתגלה כאשר מתמקדים במיוחד ב-${specificFocus.trim()}?`
+      ],
+      resources: webData.sourceUrl ? [{ title: `מקור רקע: ${specificFocus.trim()}`, url: webData.sourceUrl }] : []
+    };
+
+    topics.splice(1, 0, focusTopic);
   }
 
   return {
@@ -303,8 +400,10 @@ ${specificFocus?.trim() ? `
     source: webData.source,
     webGrounding: webData.found,
     data: {
-      executiveSummary: `מחקר מקיף על "${realTitle}": מערך ראשי פרקים מובנה ומלא הכולל נתונים עובדתיים מהאינטרנט, ניתוח דמויות, שאלות עומק ודיבייט סביב ביקורת המגיש.`,
-      suggestedTitle: `ניתוח מעמיק: "${realTitle}"`,
+      executiveSummary: specificFocus?.trim()
+        ? `מחקר מקיף וממוקד עבור "${realTitle}". בהתאם לבקשת המגיש, מנוע המחקר העמיק במיוחד בנושא: "${specificFocus.trim()}", שילב ממצאים עובדתיים ייעודיים והקדיש פרק מרכזי לדיון סביבו.`
+        : `מחקר מקיף על "${realTitle}": מערך ראשי פרקים מובנה ומלא הכולל נתונים עובדתיים מהאינטרנט, ניתוח דמויות, שאלות עומק ודיבייט סביב ביקורת המגיש.`,
+      suggestedTitle: specificFocus?.trim() ? `ניתוח מעמיק: "${realTitle}" (דגש על ${specificFocus.trim()})` : `ניתוח מעמיק: "${realTitle}"`,
       topics
     }
   };

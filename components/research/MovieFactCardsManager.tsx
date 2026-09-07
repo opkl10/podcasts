@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import { MovieFactCard, FactCategory } from '@/lib/types';
 import { fetchMovieFactCards } from '@/lib/webResearch';
+import { getStoredGeminiApiKey } from '@/lib/apiConfig';
 import { 
   Film, 
   Sparkles, 
@@ -18,16 +19,16 @@ import {
   HelpCircle, 
   Clapperboard, 
   Popcorn, 
-  Flame,
-  Info,
-  Copy,
-  AlertTriangle,
-  Layers,
-  Filter,
-  CheckCircle2,
-  BookOpen,
-  Users,
-  Target
+  Flame, 
+  Info, 
+  Copy, 
+  AlertTriangle, 
+  Layers, 
+  Filter, 
+  CheckCircle2, 
+  BookOpen, 
+  Users, 
+  Target 
 } from 'lucide-react';
 
 interface MovieFactCardsManagerProps {
@@ -50,6 +51,8 @@ export default function MovieFactCardsManager({
   const [focusNotes, setFocusNotes] = useState('');
   const [isAddingCustom, setIsAddingCustom] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [feedbackMsg, setFeedbackMsg] = useState<string | null>(null);
+  const [feedbackType, setFeedbackType] = useState<'success' | 'info' | 'error' | null>(null);
 
   // New Custom Fact Form State
   const [customFactText, setCustomFactText] = useState('');
@@ -62,19 +65,34 @@ export default function MovieFactCardsManager({
   const handleFetchFacts = async () => {
     if (!searchQuery.trim()) return;
     setIsSearching(true);
+    setFeedbackMsg(null);
 
     try {
-      const apiKey = typeof window !== 'undefined' ? localStorage.getItem('castflow_gemini_api_key') || '' : '';
+      const apiKey = getStoredGeminiApiKey();
       const facts = await fetchMovieFactCards(searchQuery, apiKey, focusNotes);
       
       // Merge with existing avoiding exact duplicate facts
       const existingFactsText = new Set(movieFacts.map(f => f.fact.trim()));
       const newUnique = facts.filter(f => !existingFactsText.has(f.fact.trim()));
 
-      const updated = [...movieFacts, ...newUnique];
-      onUpdateMovieFacts(updated);
+      if (newUnique.length > 0) {
+        const updated = [...newUnique, ...movieFacts];
+        onUpdateMovieFacts(updated);
+        setFeedbackMsg(`נוספו בהצלחה ${newUnique.length} כרטיסיות עובדות חדשות (הוצמדו לראש הרשימה)!`);
+        setFeedbackType('success');
+      } else {
+        setFeedbackMsg('העובדות שנמצאו כבר מוצגות ברשימה שלך.');
+        setFeedbackType('info');
+      }
+      setTimeout(() => {
+        setFeedbackMsg(null);
+        setFeedbackType(null);
+      }, 4000);
     } catch (err) {
       console.error('Failed to fetch movie facts:', err);
+      setFeedbackMsg('שגיאה באיתור כרטיסיות עובדות');
+      setFeedbackType('error');
+      setTimeout(() => setFeedbackMsg(null), 4000);
     } finally {
       setIsSearching(false);
     }
@@ -254,6 +272,20 @@ export default function MovieFactCardsManager({
             )}
           </div>
         </div>
+
+        {/* Feedback Message */}
+        {feedbackMsg && (
+          <div className={`p-3 rounded-xl text-xs font-semibold flex items-center gap-2 animate-in fade-in ${
+            feedbackType === 'success' 
+              ? 'bg-emerald-950/40 border border-emerald-500/40 text-emerald-300'
+              : feedbackType === 'error'
+              ? 'bg-rose-950/40 border border-rose-500/40 text-rose-300'
+              : 'bg-indigo-950/40 border border-indigo-500/40 text-indigo-300'
+          }`}>
+            <CheckCircle2 className="w-4 h-4 shrink-0" />
+            <span>{feedbackMsg}</span>
+          </div>
+        )}
 
         {/* Custom Fact Creation Modal / Drawer */}
         {isAddingCustom && (

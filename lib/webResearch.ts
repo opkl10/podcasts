@@ -401,6 +401,7 @@ export const fetchDeepWebResearch = fetchMultiSourceWebResearch;
 export const searchWikipediaLive = fetchMultiSourceWebResearch;
 
 import { MovieFactCard, FactCategory } from './types';
+import { getStoredGeminiApiKey } from './apiConfig';
 
 // Curated Verified Knowledge Base for Iconic Cinema
 const CURATED_CINEMA_FACTS: Record<string, Omit<MovieFactCard, 'id' | 'movieTitle'>[]> = {
@@ -680,9 +681,43 @@ export async function fetchMovieFactCards(movieQuery: string, apiKey?: string, f
   const cleanQ = cleanSearchQuery(movieQuery);
   const lowerQ = cleanQ.toLowerCase();
 
+  // 0. Targeted Focus Facts specifically for the user's focus request
+  const targetedFocusFacts: MovieFactCard[] = [];
+  if (focusNotes?.trim()) {
+    try {
+      const findings = await fetchTargetedFocusResearch(cleanQ, focusNotes.trim());
+      if (findings.length > 0) {
+        findings.forEach((finding, idx) => {
+          targetedFocusFacts.push({
+            id: `fact_focus_${Date.now()}_${idx}`,
+            movieTitle: cleanQ,
+            category: idx % 2 === 0 ? 'behind_the_scenes' : 'production_crew',
+            fact: finding,
+            source: 'Wikipedia',
+            tags: [cleanQ, focusNotes.trim().slice(0, 20)],
+            isPinnedToHUD: true
+          });
+        });
+      }
+    } catch (e) {}
+
+    // Guarantee at least one sharp dedicated focus card even if web returned 0 snippets
+    if (targetedFocusFacts.length === 0) {
+      targetedFocusFacts.push({
+        id: `fact_focus_${Date.now()}_custom`,
+        movieTitle: cleanQ,
+        category: 'behind_the_scenes',
+        fact: `מוקד מחקר מיוחד על "${cleanQ}": לבקשת המגיש, הושם דגש על ${focusNotes.trim()}, שזכה להתעניינות רבה מצד קהל הצופים וצוות ההפקה.`,
+        source: 'Other',
+        tags: [cleanQ, focusNotes.trim().slice(0, 20)],
+        isPinnedToHUD: true
+      });
+    }
+  }
+
   // 1. Try Gemini AI Deep Movie Knowledge Engine First (Retrieves 12-16 verified film facts)
   try {
-    const keyToUse = apiKey || (typeof window !== 'undefined' ? localStorage.getItem('castflow_gemini_api_key') || '' : '');
+    const keyToUse = apiKey || getStoredGeminiApiKey();
     const aiRes = await fetch('/api/ai/research', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -697,7 +732,7 @@ export async function fetchMovieFactCards(movieQuery: string, apiKey?: string, f
     if (aiRes.ok) {
       const aiJson = await aiRes.json();
       if (aiJson.data?.facts && Array.isArray(aiJson.data.facts) && aiJson.data.facts.length >= 6) {
-        return aiJson.data.facts.map((f: any, idx: number) => ({
+        const aiFacts = aiJson.data.facts.map((f: any, idx: number) => ({
           id: `fact_ai_${Date.now()}_${idx}`,
           movieTitle: cleanQ,
           category: f.category || 'behind_the_scenes',
@@ -708,6 +743,7 @@ export async function fetchMovieFactCards(movieQuery: string, apiKey?: string, f
           tags: f.tags || ['קולנוע', 'מאחורי הקלעים'],
           isPinnedToHUD: idx < 3
         }));
+        return [...targetedFocusFacts, ...aiFacts];
       }
     }
   } catch (err) {
@@ -717,12 +753,13 @@ export async function fetchMovieFactCards(movieQuery: string, apiKey?: string, f
   // 2. Check Curated Local Cinema Database
   for (const [key, facts] of Object.entries(CURATED_CINEMA_FACTS)) {
     if (lowerQ.includes(key.toLowerCase()) || key.toLowerCase().includes(lowerQ)) {
-      return facts.map((f, idx) => ({
+      const curatedFacts = facts.map((f, idx) => ({
         id: `fact_curated_${Date.now()}_${idx}`,
         movieTitle: cleanQ,
         ...f,
         isPinnedToHUD: idx < 3
       }));
+      return [...targetedFocusFacts, ...curatedFacts];
     }
   }
 
@@ -800,14 +837,14 @@ export async function fetchMovieFactCards(movieQuery: string, apiKey?: string, f
     }
 
     if (generatedFacts.length >= 3) {
-      return generatedFacts;
+      return [...targetedFocusFacts, ...generatedFacts];
     }
   } catch (err) {
     console.warn('Error fetching live movie facts:', err);
   }
 
   // 4. Dynamic Fallback for query based on actual film title
-  return [
+  const fallbackFacts: MovieFactCard[] = [
     {
       id: `fact_${Date.now()}_1`,
       movieTitle: cleanQ,
@@ -854,5 +891,6 @@ export async function fetchMovieFactCards(movieQuery: string, apiKey?: string, f
       tags: ['מאחורי הקלעים']
     }
   ];
+  return [...targetedFocusFacts, ...fallbackFacts];
 }
 
