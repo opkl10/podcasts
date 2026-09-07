@@ -23,6 +23,7 @@ export async function POST(req: NextRequest) {
 
     const querySubject = (singleTopicTitle || topic || episodeTitle || '').trim();
     const effectiveFocus = (specificFocus || focusNotes || userNotes || '').trim();
+    const effectiveKey = (apiKey || process.env.GEMINI_API_KEY || '').trim();
 
     if (!querySubject) {
       return NextResponse.json({ error: 'נושא המחקר חסר' }, { status: 400 });
@@ -30,7 +31,7 @@ export async function POST(req: NextRequest) {
 
     // 1. Movie Facts Generation Mode
     if (mode === 'movie_facts') {
-      const webInfo = await fetchMultiSourceWebResearch(querySubject);
+      const webInfo = await fetchMultiSourceWebResearch(querySubject, effectiveFocus);
 
       const factPrompt = `
 אתה היסטוריון ומבקר קולנוע בכיר עם ידע אנציקלופדי מדויק ומעמיק ביותר על הסרט: "${querySubject}".
@@ -85,7 +86,6 @@ ${effectiveFocus ? `
 }
 `;
 
-      const effectiveKey = apiKey || process.env.GEMINI_API_KEY || '';
       if (effectiveKey && effectiveKey.trim().startsWith('AIza')) {
         const models = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'];
         for (const model of models) {
@@ -121,36 +121,53 @@ ${effectiveFocus ? `
       }
     }
 
-    // 2. Live Multi-Source Research
-    const webInfo = await fetchMultiSourceWebResearch(querySubject);
+    // 2. Live Multi-Source Research with Targeted Focus
+    const webInfo = await fetchMultiSourceWebResearch(querySubject, effectiveFocus);
 
     // 3. Direct Gemini Call if API Key provided
-    if (apiKey && apiKey.trim().startsWith('AIza')) {
+    if (effectiveKey && effectiveKey.trim().startsWith('AIza')) {
       const models = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'];
 
       const prompt = `
-אתה עורך תוכן ראשי לפודקאסט קולנוע ותרבות. עליך לייצר ראשי פרקים מובנים, מרתקים ומדויקים עבור: "${querySubject}".
-${webInfo.found ? `מידע עובדתי מהרשת: ${webInfo.fullPlot} ${webInfo.productionFacts.join(' ')}` : ''}
+אתה עורך תוכן ראשי לפודקאסט קולנוע ותרבות. עליך לייצר ראשי פרקים מובנים, מדויקים, עשירים וממוקדים עבור: "${querySubject}".
+${webInfo.found ? `
+מידע עובדתי מהרשת:
+- עלילה: ${webInfo.fullPlot}
+- הפקה וצוות: ${webInfo.productionFacts.join(' ')}
+- שחקנים: ${webInfo.cast.join(', ')}
+${webInfo.focusFindings && webInfo.focusFindings.length > 0 ? `
+🔎 ממצאי מחקר רשת עובדתיים שנאספו בזמן אמת סביב בקשת המיקוד של המגיש ("${effectiveFocus}"):
+${webInfo.focusFindings.map(f => `• ${f}`).join('\n')}
+` : ''}` : ''}
 ${userReview?.trim() ? `ביקורת המגיש: "${userReview.trim()}"` : ''}
 ${effectiveFocus ? `
 🎯 הנחיות מיקוד, הערות ובקשות מיוחדות מהמגיש:
 "${effectiveFocus}"
-חובה עליך למקד את ראשי הפרקים, השאלות המנחות ונקודות השיחה באופן מובהק בהנחיות אלו! שלב את הדגשים והשאלות שהמשתמש ביקש כחלק מרכזי מהפרק.
+חובה עליך ליישם את בקשת המיקוד הזו בעוצמה וברמת פירוט מקסימלית!
 ` : ''}
 ${guestName ? `אורח: ${guestName} (${guestRole || ''})` : ''}
 
+${effectiveFocus ? `
+🎯 חוק ברזל מחייב - הקדשת נושא מרכזי ייעודי לבקשת המיקוד ("${effectiveFocus}"):
+1. חובה שאחד מראשי הפרקים (נושא 2 או נושא 3) יוקדש כולו, באופן בלעדי ומפורט, ישירות לבקשת המיקוד של המגיש!
+   - כותרת הנושא חייבת לציין במפורש את התחום הממוקד (לדוגמה: "צלילת עומק: ${effectiveFocus} - [זווית הניתוח/הדיבייט]").
+   - נקודות השיחה ("talkingPoints") בנושא זה חייבות להכיל עובדות מדויקות, שמות, טכניקות, נתונים קונקרטיים וציטוטים מתוך ממצאי המחקר.
+   - השאלות ("questions") חייבות להיות שאלות עומק מאתגרות, מקצועיות וספציפיות על הנושא הממוקד.
+2. ביתר הנושאים שלב קישור ודיון סביב הדגש הזה.
+` : `
 מבנה פרק הפודקאסט המבוקש (חלק את ראשי הפרקים לפי 5 הצירים הבאים):
 1. 🎬 עלילה ותמות (ניתוח הנרטיב, קונפליקט מרכזי, סצנות מפתח, רבדים פילוסופיים)
 2. 🎭 שחקנים ודמויות (ליהוקים, הופעות בולטות, דינמיקה, אלתורים ואתגרי משחק)
 3. 🎥 צוותי הפקה + בימוי ויתר התפקידים (חזון הבמאי, צילום, פסקול ומוזיקה, עיצוב ועריכה)
 4. ⭐ ביקורות כלליות וציונים (תגובת הקהל והמבקרים, דירוגים, הישגים בקופות ובפסטיבלים)
 5. 🤫 סיפורי מאחורי הקלעים (אנקדוטות מהסט, סודות הפקה, תקלות שהפכו לקאלט)
+`}
 
 חוקי ניסוח קריטיים:
-1. משפטים מלאים ושלמים בלבד! אל תקטע משפטים באמצע ואל תשתמש בשלוש נקודות (...).
+1. **משפטים מלאים ושלמים בלבד!** אל תקטע משפטים באמצע ואל תשתמש בשלוש נקודות (...).
 2. שדה "notes": משפט אחד מלא ומדויק.
-3. שדה "talkingPoints": 3-4 נקודות מפתח שלמות, עמוקות וחדות.
-4. שדה "questions": 2-3 שאלות עומק חדות ומעוררות דיון.
+3. שדה "talkingPoints": 3-4 נקודות מפתח שלמות, עמוקות, חדות ועשירות בפרטים.
+4. שדה "questions": 2-3 שאלות עומק חדות ומעוררות דיון (איסור מוחלט על שאלות גנריות כמו "מה דעתכם?").
 
 החזר JSON תקין בלבד:
 {
@@ -171,7 +188,7 @@ ${guestName ? `אורח: ${guestName} (${guestRole || ''})` : ''}
 
       for (const model of models) {
         try {
-          const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey.trim()}`, {
+          const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${effectiveKey.trim()}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({

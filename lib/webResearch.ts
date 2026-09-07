@@ -16,6 +16,7 @@ export interface WebResearchBundle {
   productionFacts: string[];
   criticalReception: string;
   category: 'movie_tv' | 'tech' | 'business' | 'history_culture' | 'general';
+  focusFindings?: string[];
 }
 
 // Clean query string
@@ -92,8 +93,109 @@ export function detectCategory(query: string): 'movie_tv' | 'tech' | 'business' 
   return 'general';
 }
 
+// Targeted Deep Web Search specifically for the user's focus notes and requests
+export async function fetchTargetedFocusResearch(subject: string, focusNote?: string): Promise<string[]> {
+  if (!focusNote || !focusNote.trim()) return [];
+
+  const cleanSubject = cleanSearchQuery(subject);
+  // Remove Hebrew instructional filler words to extract the core search concepts
+  const cleanNote = focusNote
+    .replace(/^(התמקד ב|התמקדי ב|שים דגש על|שימי דגש על|דבר על|דברי על|תחקור על|תבדוק על|התמקדות ב|למקד ב|לבדוק על|דגש על)\s*/i, '')
+    .trim();
+
+  if (!cleanNote) return [];
+
+  const findings: string[] = [];
+  const searchQueries = [
+    `${cleanSubject} ${cleanNote}`,
+    `${cleanNote} ${cleanSubject}`
+  ];
+
+  // 1. Query Hebrew Wikipedia Search for the specific note
+  try {
+    const heUrl = `https://he.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(searchQueries[0])}&srlimit=4&format=json&origin=*`;
+    const res = await fetch(heUrl);
+    if (res.ok) {
+      const data = await res.json();
+      const hits = data.query?.search || [];
+      for (const hit of hits) {
+        if (hit.snippet) {
+          const cleanSnippet = hit.snippet
+            .replace(/<[^>]+>/g, '')
+            .replace(/&quot;/g, '"')
+            .replace(/&#039;/g, "'")
+            .trim();
+          if (cleanSnippet.length > 25) {
+            findings.push(cleanSnippet.endsWith('.') ? cleanSnippet : `${cleanSnippet}.`);
+          }
+        }
+        if (hit.title && (hit.title.includes(cleanSubject) || searchQueries[0].split(' ').some((w: string) => w.length > 3 && hit.title.includes(w)))) {
+          try {
+            const pageUrl = `https://he.wikipedia.org/w/api.php?action=query&prop=extracts&explaintext=1&titles=${encodeURIComponent(hit.title)}&format=json&origin=*`;
+            const pageRes = await fetch(pageUrl);
+            if (pageRes.ok) {
+              const pageData = await pageRes.json();
+              const p = Object.values(pageData.query?.pages || {})[0] as any;
+              if (p?.extract) {
+                const sentences = extractCompleteSentences(p.extract, 3);
+                findings.push(...sentences);
+              }
+            }
+          } catch {}
+        }
+        if (findings.length >= 4) break;
+      }
+    }
+  } catch (err) {
+    console.warn('Hebrew targeted focus search failed:', err);
+  }
+
+  // 2. Query English Wikipedia Search for the specific note (covers deep technical / behind-the-scenes data)
+  try {
+    const enUrl = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(searchQueries[0])}&srlimit=4&format=json&origin=*`;
+    const res = await fetch(enUrl);
+    if (res.ok) {
+      const data = await res.json();
+      const hits = data.query?.search || [];
+      for (const hit of hits) {
+        if (hit.snippet) {
+          const cleanSnippet = hit.snippet
+            .replace(/<[^>]+>/g, '')
+            .replace(/&quot;/g, '"')
+            .replace(/&#039;/g, "'")
+            .trim();
+          if (cleanSnippet.length > 30) {
+            findings.push(cleanSnippet.endsWith('.') ? cleanSnippet : `${cleanSnippet}.`);
+          }
+        }
+        if (hit.title && hit.title !== cleanSubject) {
+          try {
+            const pageUrl = `https://en.wikipedia.org/w/api.php?action=query&prop=extracts&explaintext=1&titles=${encodeURIComponent(hit.title)}&format=json&origin=*`;
+            const pageRes = await fetch(pageUrl);
+            if (pageRes.ok) {
+              const pageData = await pageRes.json();
+              const p = Object.values(pageData.query?.pages || {})[0] as any;
+              if (p?.extract) {
+                const sentences = extractCompleteSentences(p.extract, 3);
+                findings.push(...sentences);
+              }
+            }
+          } catch {}
+        }
+        if (findings.length >= 6) break;
+      }
+    }
+  } catch (err) {
+    console.warn('English targeted focus search failed:', err);
+  }
+
+  // Deduplicate and filter
+  const unique = Array.from(new Set(findings.map(f => f.trim()))).filter(f => f.length > 20);
+  return unique.slice(0, 6);
+}
+
 // Multi-Source Live Web Fetcher (Client-Side & Server-Side compatible)
-export async function fetchMultiSourceWebResearch(query: string): Promise<WebResearchBundle> {
+export async function fetchMultiSourceWebResearch(query: string, specificFocus?: string): Promise<WebResearchBundle> {
   const cleanQ = cleanSearchQuery(query);
   const category = detectCategory(query);
 
@@ -213,8 +315,21 @@ export async function fetchMultiSourceWebResearch(query: string): Promise<WebRes
     completeTalkingPoints.push(...prodSentences);
   }
 
+  // Source 4: Targeted Web Research specifically on the user's focus notes
+  let focusFindings: string[] = [];
+  if (specificFocus && specificFocus.trim()) {
+    try {
+      focusFindings = await fetchTargetedFocusResearch(cleanQ, specificFocus);
+      if (focusFindings.length > 0) {
+        completeTalkingPoints.unshift(...focusFindings.slice(0, 2));
+      }
+    } catch (focusErr) {
+      console.warn('Targeted focus research fetch failed:', focusErr);
+    }
+  }
+
   return {
-    found: fullArticleText.length > 100,
+    found: fullArticleText.length > 100 || focusFindings.length > 0,
     title: extractedTitle,
     source: sourceUrl ? 'Wikipedia & Open Web Knowledge Base' : 'Built-in Engine',
     sourceUrl,
@@ -226,7 +341,8 @@ export async function fetchMultiSourceWebResearch(query: string): Promise<WebRes
     ],
     productionFacts,
     criticalReception: criticalReception || 'היצירה זכתה לתשומת לב רבה ודיונים ערים בקרב הקהל והמבקרים.',
-    category
+    category,
+    focusFindings
   };
 }
 

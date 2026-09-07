@@ -403,9 +403,9 @@ export default function DeepResearchModal({
             <div className="w-10 h-10 border-4 border-purple-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
             <div className="space-y-1">
               <p className="text-xs font-bold text-purple-200">
-                {loadingStep === 1 && '🌐 סורק נתונים מהרשת על הבמאי, הדמויות והעלילה...'}
-                {loadingStep === 2 && '💡 משלב את הדגשים, הבקשות והביקורת שלך ומחלץ שאלות דיבייט ספציפיות...'}
-                {loadingStep === 3 && '📊 בונה מערך ראשי פרקים מתוזמנים וממוקדים לפי בקשותיך...'}
+                {loadingStep === 1 && (specificFocus ? `🌐 מבצע סריקת רשת ממוקדת על "${specificFocus}" ופרטי הסרט...` : '🌐 סורק נתונים מהרשת על הבמאי, הדמויות והעלילה...')}
+                {loadingStep === 2 && (specificFocus ? `💡 מחלץ עובדות ספציפיות על "${specificFocus}" ומגבש שאלות עומק...` : '💡 משלב את הדגשים, הבקשות והביקורת שלך ומחלץ שאלות דיבייט ספציפיות...')}
+                {loadingStep === 3 && (specificFocus ? `📊 מקדיש נושא מרכזי ייעודי עבור "${specificFocus}" ומדייק את הדיון...` : '📊 בונה מערך ראשי פרקים מתוזמנים וממוקדים לפי בקשותיך...')}
               </p>
               {specificFocus && (
                 <p className="text-[11px] text-amber-300 font-semibold bg-amber-500/10 px-3 py-1 rounded-lg border border-amber-500/20 inline-block">
