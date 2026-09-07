@@ -8,6 +8,7 @@ import EpisodeDetailsHeader from '@/components/research/EpisodeDetailsHeader';
 import TopicManager from '@/components/research/TopicManager';
 import ShowNotesExportModal from '@/components/research/ShowNotesExportModal';
 import DeepResearchModal from '@/components/research/DeepResearchModal';
+import ImportResearchModal from '@/components/research/ImportResearchModal';
 import AudioEditorAudiogramStudio from '@/components/audio/AudioEditorAudiogramStudio';
 import MovieFactCardsManager from '@/components/research/MovieFactCardsManager';
 import HighlightClipsManager from '@/components/research/HighlightClipsManager';
@@ -23,6 +24,7 @@ export default function EpisodePage({ params }: EpisodePageProps) {
   const [episode, setEpisode] = useState<Episode | null>(null);
   const [activeResearchTab, setActiveResearchTab] = useState<'topics' | 'facts' | 'clips'>('topics');
   const [isExportOpen, setIsExportOpen] = useState(false);
+  const [isImportOpen, setIsImportOpen] = useState(false);
   const [isDeepResearchOpen, setIsDeepResearchOpen] = useState(false);
   const [isAudiogramOpen, setIsAudiogramOpen] = useState(false);
   const [selectedClipForStudio, setSelectedClipForStudio] = useState<HighlightClip | null>(null);
@@ -86,6 +88,42 @@ export default function EpisodePage({ params }: EpisodePageProps) {
     handleUpdateEpisode(updated);
   };
 
+  const handleApplyImport = (
+    newTopics: TopicItem[],
+    newMovieFacts: MovieFactCard[],
+    mode: 'append' | 'replace'
+  ) => {
+    if (!episode) return;
+    let finalTopics = newTopics;
+    let finalFacts = newMovieFacts;
+
+    if (mode === 'append') {
+      if (newTopics.length > 0) {
+        const startOrder = episode.topics.length;
+        const mappedNew = newTopics.map((t, idx) => ({ ...t, order: startOrder + idx + 1 }));
+        finalTopics = [...episode.topics, ...mappedNew];
+      } else {
+        finalTopics = episode.topics;
+      }
+
+      if (newMovieFacts.length > 0) {
+        const existingFacts = new Set((episode.movieFacts || []).map(f => f.fact.trim()));
+        const uniqueNewFacts = newMovieFacts.filter(f => !existingFacts.has(f.fact.trim()));
+        finalFacts = [...(episode.movieFacts || []), ...uniqueNewFacts];
+      } else {
+        finalFacts = episode.movieFacts || [];
+      }
+    }
+
+    const updated: Episode = {
+      ...episode,
+      topics: finalTopics,
+      movieFacts: finalFacts,
+      status: (episode.status === 'draft' && finalTopics.length > 0) ? 'research' : episode.status
+    };
+    handleUpdateEpisode(updated);
+  };
+
   const handleOpenAudiogramForClip = (clip: HighlightClip) => {
     setSelectedClipForStudio(clip);
     setIsAudiogramOpen(true);
@@ -121,6 +159,7 @@ export default function EpisodePage({ params }: EpisodePageProps) {
         episode={episode}
         onUpdateEpisode={handleUpdateEpisode}
         onOpenExport={() => setIsExportOpen(true)}
+        onOpenImport={() => setIsImportOpen(true)}
         onOpenAudiogram={() => {
           setSelectedClipForStudio(null);
           setIsAudiogramOpen(true);
@@ -174,6 +213,7 @@ export default function EpisodePage({ params }: EpisodePageProps) {
           targetDurationMinutes={episode.targetDurationMinutes}
           onUpdateTopics={handleUpdateTopics}
           onOpenDeepResearch={() => setIsDeepResearchOpen(true)}
+          onOpenImport={() => setIsImportOpen(true)}
         />
       ) : activeResearchTab === 'facts' ? (
         <MovieFactCardsManager
@@ -181,6 +221,7 @@ export default function EpisodePage({ params }: EpisodePageProps) {
           episodeTitle={episode.title}
           onUpdateMovieFacts={handleUpdateMovieFacts}
           onAddFactAsTopicPoint={handleAddFactAsTopicPoint}
+          onOpenImport={() => setIsImportOpen(true)}
         />
       ) : (
         <HighlightClipsManager
@@ -190,11 +231,20 @@ export default function EpisodePage({ params }: EpisodePageProps) {
         />
       )}
 
-      {/* Export Show Notes Modal */}
+      {/* Export Show Notes & JSON Modal */}
       <ShowNotesExportModal
         episode={episode}
         isOpen={isExportOpen}
         onClose={() => setIsExportOpen(false)}
+      />
+
+      {/* Import Research Modal */}
+      <ImportResearchModal
+        isOpen={isImportOpen}
+        onClose={() => setIsImportOpen(false)}
+        onApply={handleApplyImport}
+        currentTopicCount={episode.topics.length}
+        currentFactCount={episode.movieFacts?.length || 0}
       />
 
       {/* Deep AI Research Modal */}

@@ -20,7 +20,8 @@ import {
   FileText,
   Lightbulb,
   PlusCircle,
-  Zap
+  Zap,
+  Upload
 } from 'lucide-react';
 
 interface TopicManagerProps {
@@ -29,6 +30,7 @@ interface TopicManagerProps {
   targetDurationMinutes: number;
   onUpdateTopics: (topics: TopicItem[]) => void;
   onOpenDeepResearch?: () => void;
+  onOpenImport?: () => void;
 }
 
 export default function TopicManager({
@@ -36,7 +38,8 @@ export default function TopicManager({
   episodeTitle,
   targetDurationMinutes,
   onUpdateTopics,
-  onOpenDeepResearch
+  onOpenDeepResearch,
+  onOpenImport
 }: TopicManagerProps) {
   const [editingTopicId, setEditingTopicId] = useState<string | null>(null);
   const [newPointInput, setNewPointInput] = useState<{ [key: string]: string }>({});
@@ -248,6 +251,17 @@ export default function TopicManager({
             >
               <Sparkles className="w-4 h-4" />
               <span>מחקר מעמיק עם AI</span>
+            </button>
+          )}
+
+          {/* Import Topics & Facts Button */}
+          {onOpenImport && (
+            <button
+              onClick={onOpenImport}
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-indigo-950/60 hover:bg-indigo-900/60 text-xs font-semibold text-indigo-200 hover:text-white border border-indigo-700/50 active:scale-95 transition-all"
+            >
+              <Upload className="w-4 h-4 text-indigo-400" />
+              <span>ייבוא ראשי פרקים</span>
             </button>
           )}
 

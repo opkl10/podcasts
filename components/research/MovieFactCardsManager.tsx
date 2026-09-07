@@ -28,7 +28,8 @@ import {
   CheckCircle2, 
   BookOpen, 
   Users, 
-  Target 
+  Target,
+  Upload
 } from 'lucide-react';
 
 interface MovieFactCardsManagerProps {
@@ -36,13 +37,15 @@ interface MovieFactCardsManagerProps {
   episodeTitle: string;
   onUpdateMovieFacts: (facts: MovieFactCard[]) => void;
   onAddFactAsTopicPoint?: (fact: MovieFactCard) => void;
+  onOpenImport?: () => void;
 }
 
 export default function MovieFactCardsManager({
   movieFacts = [],
   episodeTitle,
   onUpdateMovieFacts,
-  onAddFactAsTopicPoint
+  onAddFactAsTopicPoint,
+  onOpenImport
 }: MovieFactCardsManagerProps) {
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [selectedSource, setSelectedSource] = useState<string>('all');
@@ -219,6 +222,16 @@ export default function MovieFactCardsManager({
 
           {/* Action Buttons */}
           <div className="flex flex-wrap items-center gap-2">
+            {onOpenImport && (
+              <button
+                onClick={onOpenImport}
+                className="px-3 py-2 rounded-xl bg-indigo-950/60 hover:bg-indigo-900/60 text-indigo-200 hover:text-white text-xs font-bold border border-indigo-700/50 flex items-center gap-1.5 transition-all active:scale-95"
+              >
+                <Upload className="w-3.5 h-3.5 text-indigo-400" />
+                <span>ייבוא עובדות וראשי פרקים</span>
+              </button>
+            )}
+
             <button
               onClick={() => setIsAddingCustom(!isAddingCustom)}
               className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-700 flex items-center gap-1.5 transition-all"

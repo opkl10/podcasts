@@ -24,13 +24,15 @@ import {
   Trash2,
   Play,
   Subtitles,
-  Languages
+  Languages,
+  Upload
 } from 'lucide-react';
 
 interface EpisodeDetailsHeaderProps {
   episode: Episode;
   onUpdateEpisode: (updated: Episode) => void;
   onOpenExport: () => void;
+  onOpenImport?: () => void;
   onOpenAudiogram?: () => void;
 }
 
@@ -47,6 +49,7 @@ export default function EpisodeDetailsHeader({
   episode,
   onUpdateEpisode,
   onOpenExport,
+  onOpenImport,
   onOpenAudiogram
 }: EpisodeDetailsHeaderProps) {
   const [isEditing, setIsEditing] = useState(false);
@@ -247,6 +250,17 @@ export default function EpisodeDetailsHeader({
             >
               <Activity className="w-3.5 h-3.5 text-cyan-400" />
               <span>עורך סאונד וגלי קול</span>
+            </button>
+          )}
+
+          {/* Import Topics & Facts */}
+          {onOpenImport && (
+            <button
+              onClick={onOpenImport}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-indigo-950/60 hover:bg-indigo-900/60 text-xs font-semibold text-indigo-200 hover:text-white border border-indigo-700/50 transition-all active:scale-95"
+            >
+              <Upload className="w-3.5 h-3.5 text-indigo-400" />
+              <span>ייבוא מחקר ועובדות</span>
             </button>
           )}
 
