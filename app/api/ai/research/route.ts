@@ -15,10 +15,14 @@ export async function POST(req: NextRequest) {
       mode = 'full_episode', 
       singleTopicTitle,
       userReview,
-      category = 'movie_tv'
+      category = 'movie_tv',
+      specificFocus,
+      focusNotes,
+      userNotes
     } = body;
 
     const querySubject = (singleTopicTitle || topic || episodeTitle || '').trim();
+    const effectiveFocus = (specificFocus || focusNotes || userNotes || '').trim();
 
     if (!querySubject) {
       return NextResponse.json({ error: 'נושא המחקר חסר' }, { status: 400 });
@@ -30,6 +34,11 @@ export async function POST(req: NextRequest) {
 
       const factPrompt = `
 אתה היסטוריון ומבקר קולנוע בכיר עם ידע אנציקלופדי מדויק ומעמיק ביותר על הסרט: "${querySubject}".
+${effectiveFocus ? `
+הנחיות, דגשים ובקשות מיוחדות מהמשתמש למחקר:
+"${effectiveFocus}"
+חובה עליך להתמקד ולייצר כרטיסיות עובדות מעמיקות סביב דגשים אלו (לדוגמה: פסקול, שחקנים, הפקה, בימוי, תקציב או מאחורי הקלעים)!
+` : ''}
 להלן מידע עובדתי אמיתי שנאסף מהרשת על הסרט:
 - תקציר ועלילה: ${webInfo.fullPlot}
 - שחקנים ודמויות: ${webInfo.cast.join(', ')}
@@ -123,6 +132,11 @@ export async function POST(req: NextRequest) {
 אתה עורך תוכן ראשי לפודקאסט קולנוע ותרבות. עליך לייצר ראשי פרקים מובנים, מרתקים ומדויקים עבור: "${querySubject}".
 ${webInfo.found ? `מידע עובדתי מהרשת: ${webInfo.fullPlot} ${webInfo.productionFacts.join(' ')}` : ''}
 ${userReview?.trim() ? `ביקורת המגיש: "${userReview.trim()}"` : ''}
+${effectiveFocus ? `
+🎯 הנחיות מיקוד, הערות ובקשות מיוחדות מהמגיש:
+"${effectiveFocus}"
+חובה עליך למקד את ראשי הפרקים, השאלות המנחות ונקודות השיחה באופן מובהק בהנחיות אלו! שלב את הדגשים והשאלות שהמשתמש ביקש כחלק מרכזי מהפרק.
+` : ''}
 ${guestName ? `אורח: ${guestName} (${guestRole || ''})` : ''}
 
 מבנה פרק הפודקאסט המבוקש (חלק את ראשי הפרקים לפי 5 הצירים הבאים):
@@ -257,6 +271,11 @@ ${guestName ? `אורח: ${guestName} (${guestRole || ''})` : ''}
         resources: []
       }
     ];
+
+    if (effectiveFocus) {
+      topics[1].talkingPoints.push(`דגש מיוחד לבקשת המגיש: ${effectiveFocus}.`);
+      topics[1].questions.push(`כיצד הדגש הממוקד סביב "${effectiveFocus}" משפיע על ניתוח היצירה?`);
+    }
 
     return NextResponse.json({
       success: true,

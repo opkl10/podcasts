@@ -26,7 +26,8 @@ import {
   Filter,
   CheckCircle2,
   BookOpen,
-  Users
+  Users,
+  Target
 } from 'lucide-react';
 
 interface MovieFactCardsManagerProps {
@@ -46,6 +47,7 @@ export default function MovieFactCardsManager({
   const [selectedSource, setSelectedSource] = useState<string>('all');
   const [isSearching, setIsSearching] = useState(false);
   const [searchQuery, setSearchQuery] = useState(episodeTitle);
+  const [focusNotes, setFocusNotes] = useState('');
   const [isAddingCustom, setIsAddingCustom] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
@@ -63,7 +65,7 @@ export default function MovieFactCardsManager({
 
     try {
       const apiKey = typeof window !== 'undefined' ? localStorage.getItem('castflow_gemini_api_key') || '' : '';
-      const facts = await fetchMovieFactCards(searchQuery, apiKey);
+      const facts = await fetchMovieFactCards(searchQuery, apiKey, focusNotes);
       
       // Merge with existing avoiding exact duplicate facts
       const existingFactsText = new Set(movieFacts.map(f => f.fact.trim()));
@@ -219,7 +221,7 @@ export default function MovieFactCardsManager({
         </div>
 
         {/* Live Search Query Input */}
-        <div className="flex items-center gap-2 pt-2 border-t border-slate-800/80">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 pt-2 border-t border-slate-800/80">
           <div className="relative flex-1">
             <Search className="w-4 h-4 text-slate-500 absolute right-3.5 top-1/2 -translate-y-1/2" />
             <input
@@ -229,6 +231,27 @@ export default function MovieFactCardsManager({
               placeholder="שם הסרט לחילוץ עובדות מ-IMDb וויקיפדיה (למשל: אינספשן, אופנהיימר, הסנדק, ספרות זולה, מועדון קרב)..."
               className="w-full pl-3 pr-10 py-2.5 rounded-2xl bg-slate-950 border border-slate-800 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors"
             />
+          </div>
+
+          <div className="relative flex-1 sm:max-w-xs">
+            <Target className="w-4 h-4 text-amber-500 absolute right-3.5 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              value={focusNotes}
+              onChange={(e) => setFocusNotes(e.target.value)}
+              placeholder="מיקוד עובדות: פסקול, תקציב, אוסקר..."
+              className="w-full pl-8 pr-10 py-2.5 rounded-2xl bg-slate-950 border border-amber-500/30 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-400 transition-colors"
+            />
+            {focusNotes && (
+              <button
+                type="button"
+                onClick={() => setFocusNotes('')}
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white text-xs font-bold"
+                title="נקה מיקוד"
+              >
+                ✕
+              </button>
+            )}
           </div>
         </div>
 

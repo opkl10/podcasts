@@ -560,7 +560,7 @@ const CURATED_CINEMA_FACTS: Record<string, Omit<MovieFactCard, 'id' | 'movieTitl
 };
 
 // Multi-Source Movie Fact Fetcher & Generator (Retrieves 12-16 in-depth facts per film)
-export async function fetchMovieFactCards(movieQuery: string, apiKey?: string): Promise<MovieFactCard[]> {
+export async function fetchMovieFactCards(movieQuery: string, apiKey?: string, focusNotes?: string): Promise<MovieFactCard[]> {
   const cleanQ = cleanSearchQuery(movieQuery);
   const lowerQ = cleanQ.toLowerCase();
 
@@ -573,7 +573,8 @@ export async function fetchMovieFactCards(movieQuery: string, apiKey?: string): 
       body: JSON.stringify({
         mode: 'movie_facts',
         episodeTitle: cleanQ,
-        apiKey: keyToUse
+        apiKey: keyToUse,
+        specificFocus: focusNotes?.trim() || undefined
       })
     });
 

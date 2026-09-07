@@ -76,7 +76,11 @@ export async function runAIResearch(options: AIResearchOptions) {
 
 ${webContext}
 ${hostReviewContext}
-${specificFocus ? `דגש מיוחד: "${specificFocus}"` : ''}
+${specificFocus?.trim() ? `
+🎯 הנחיות מיקוד, הערות ובקשות מיוחדות מהמגיש:
+"${specificFocus.trim()}"
+חובה עליך להתאים את ראשי הפרקים, השאלות המנחות ונקודות השיחה בדיוק מרבי לבקשות ודגשים אלו! שלב את הנושאים, הזוויות והשאלות שהמשתמש ביקש כחלק אינטגרלי ומובהק מהפרק.
+` : ''}
 ${guestName ? `אורח/ת: ${guestName} (${guestRole || ''})` : ''}
 משך היעד: ${targetDurationMinutes} דקות
 סגנון: ${tone === 'provocative' ? 'דיבייט סוער ומאתגר' : 'ניתוח עומק קולנועי'}
@@ -167,6 +171,32 @@ ${guestName ? `אורח/ת: ${guestName} (${guestRole || ''})` : ''}
     }
   }
 
+  // 2b. Try Server-Side API Research (Includes server Gemini key and web grounding)
+  try {
+    const serverRes = await fetch('/api/ai/research', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        topic: querySubject,
+        episodeTitle,
+        guestName,
+        guestRole,
+        targetDurationMinutes,
+        tone,
+        apiKey: apiKey?.trim() || undefined,
+        userReview: userReview?.trim() || undefined,
+        specificFocus: specificFocus?.trim() || undefined
+      })
+    });
+
+    if (serverRes.ok) {
+      const serverJson = await serverRes.json();
+      if (serverJson.success && serverJson.data) {
+        return serverJson;
+      }
+    }
+  } catch (serverErr) {}
+
   // 3. Deterministic High-Quality Research Generator with 100% Complete Sentences
   const realTitle = webData.title || querySubject;
   const cleanReviewSentences = userReview?.trim() ? extractCompleteSentences(userReview, 3) : [];
@@ -248,6 +278,11 @@ ${guestName ? `אורח/ת: ${guestName} (${guestRole || ''})` : ''}
       resources: []
     }
   ];
+
+  if (specificFocus?.trim()) {
+    topics[1].talkingPoints.push(`דגש מיוחד לבקשת המגיש: ${specificFocus.trim()}.`);
+    topics[1].questions.push(`כיצד הדגש הממוקד סביב "${specificFocus.trim()}" מעמיק את הדיון?`);
+  }
 
   return {
     success: true,

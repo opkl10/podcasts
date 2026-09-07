@@ -181,7 +181,8 @@ export default function TopicManager({
         singleTopicTitle: topic.title,
         episodeTitle,
         mode: 'single_topic',
-        apiKey: apiKey.trim() || undefined
+        apiKey: apiKey.trim() || undefined,
+        specificFocus: topic.notes?.trim() || undefined
       });
 
       if (result && result.data) {

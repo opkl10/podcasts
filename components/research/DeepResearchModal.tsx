@@ -65,6 +65,17 @@ export default function DeepResearchModal({
     webGrounding?: boolean;
   } | null>(null);
 
+  const FOCUS_PRESETS = [
+    { label: '🎵 פסקול ומוזיקה', text: 'התמקד בפסקול, במוזיקה המקורית של המלחין ובעיצוב הסאונד' },
+    { label: '🎬 שפת בימוי וצילום', text: 'שים דגש על החלטות הבימוי, שפת הצילום, עדשות והזוויות הויזואליות' },
+    { label: '🎭 ליהוק ומשחק', text: 'התמקד בליהוק השחקנים, בהכנות הפיזיות לתפקידים ובאתגרי המשחק' },
+    { label: '📖 תסריט והשוואה למקור', text: 'נתח את מבנה התסריט, הדיאלוגים וההשוואה למקור הספרותי או ההיסטורי' },
+    { label: '⚡ דיבייט חריף וקונפליקטים', text: 'הכן שאלות עוקצניות ומעוררות מחלוקת על נקודות התורפה והסיום' },
+    { label: '🤫 סודות מאחורי הקלעים', text: 'הבא אנקדוטות אמיתיות, תקלות צילום וסודות מסט ההפקה' },
+    { label: '💰 תקציב וקופות', text: 'התמקד בנתוני התקציב, ההכנסות בקופות וההצלחה המסחרית' },
+    { label: '🏆 ביקורות ופרסים', text: 'נתח את קבלת הסרט אצל המבקרים, הציונים ברשת והמועמדויות לפרסים' }
+  ];
+
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const savedKey = localStorage.getItem('castflow_gemini_api_key') || '';
@@ -72,12 +83,45 @@ export default function DeepResearchModal({
       if (!savedKey) {
         setShowKeyInput(true);
       }
+      const savedFocus = localStorage.getItem('castflow_research_focus') || '';
+      if (savedFocus && !specificFocus) {
+        setSpecificFocus(savedFocus);
+      }
     }
     setTopicQuery(episodeTitle);
     setDuration(targetDurationMinutes);
   }, [episodeTitle, targetDurationMinutes, isOpen]);
 
   if (!isOpen) return null;
+
+  const handleFocusChange = (val: string) => {
+    setSpecificFocus(val);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('castflow_research_focus', val);
+    }
+  };
+
+  const handleToggleFocusPreset = (presetText: string) => {
+    setSpecificFocus(prev => {
+      const trimmed = prev.trim();
+      let updated = '';
+      if (!trimmed) {
+        updated = presetText;
+      } else if (trimmed.includes(presetText)) {
+        updated = trimmed
+          .replace(presetText, '')
+          .replace(/,\s*,/g, ',')
+          .replace(/^,\s*|,\s*$/g, '')
+          .trim();
+      } else {
+        updated = `${trimmed}, ${presetText}`;
+      }
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('castflow_research_focus', updated);
+      }
+      return updated;
+    });
+  };
 
   const handleSaveKey = (e: React.FormEvent) => {
     e.preventDefault();
@@ -262,6 +306,56 @@ export default function DeepResearchModal({
             />
           </div>
 
+          {/* Specific Focus / Custom Notes & Requests for AI */}
+          <div className="space-y-2 p-3.5 rounded-2xl bg-amber-950/20 border border-amber-500/30">
+            <div className="flex items-center justify-between">
+              <label className="block text-xs font-bold text-amber-300 flex items-center gap-1.5">
+                <Target className="w-4 h-4 text-amber-400" />
+                הערות ובקשות מיוחדות למנוע המחקר (מיקוד AI):
+              </label>
+              <span className="text-[10px] bg-amber-500/20 text-amber-300 font-bold px-2.5 py-0.5 rounded-full border border-amber-500/40">
+                הנחיות אישיות ל-AI
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-400 leading-relaxed">
+              כוון את מנוע המחקר בדיוק להיבטים שמעניינים אותך: נושאים ספציפיים, פסקול, שפת בימוי, שחקנים, סצנות מפתח, תקציב או שאלות עוקצניות.
+            </p>
+            <textarea
+              rows={2}
+              value={specificFocus}
+              onChange={(e) => handleFocusChange(e.target.value)}
+              placeholder='למשל: "התמקד בפסקול של הנס זימר ובאפקטים המעשיים", "דבר על אתגרי ההפקה בלונדון והתקציב", "התמקד בהשוואה בין הסרט לספר המקורי", "שים דגש על הקונפליקט בין הגיבורים", "הכן שאלות עוקצניות ומאתגרות על סצנת הסיום המסתורית"...'
+              className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900/90 border border-amber-500/30 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-400 leading-relaxed transition-colors"
+            />
+            {/* Quick Focus Preset Chips */}
+            <div className="space-y-1.5 pt-1">
+              <span className="text-[11px] text-amber-400/90 font-medium flex items-center gap-1">
+                <Sparkles className="w-3 h-3 text-amber-400" />
+                לחיצה מהירה להוספת / הסרת דגש מבוקש:
+              </span>
+              <div className="flex flex-wrap gap-1.5">
+                {FOCUS_PRESETS.map((preset, pIdx) => {
+                  const isSelected = specificFocus.includes(preset.text);
+                  return (
+                    <button
+                      key={pIdx}
+                      type="button"
+                      onClick={() => handleToggleFocusPreset(preset.text)}
+                      className={`text-[11px] px-2.5 py-1 rounded-lg border transition-all flex items-center gap-1 active:scale-95 ${
+                        isSelected 
+                          ? 'bg-amber-500 text-slate-950 border-amber-400 font-bold shadow-md shadow-amber-500/20' 
+                          : 'bg-slate-800/80 hover:bg-slate-800 text-slate-300 hover:text-white border-slate-700'
+                      }`}
+                    >
+                      <span>{preset.label}</span>
+                      {isSelected ? <Check className="w-3 h-3 text-slate-950 font-bold" /> : <Plus className="w-3 h-3 opacity-60" />}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-semibold text-slate-400 mb-1.5">סגנון השיחה והדיבייט</label>
@@ -310,10 +404,15 @@ export default function DeepResearchModal({
             <div className="space-y-1">
               <p className="text-xs font-bold text-purple-200">
                 {loadingStep === 1 && '🌐 סורק נתונים מהרשת על הבמאי, הדמויות והעלילה...'}
-                {loadingStep === 2 && '💡 משלב את הביקורת שלך ומחלץ שאלות דיבייט ספציפיות...'}
-                {loadingStep === 3 && '📊 בונה מערך ראשי פרקים מתוזמנים ללא שאלות גנריות...'}
+                {loadingStep === 2 && '💡 משלב את הדגשים, הבקשות והביקורת שלך ומחלץ שאלות דיבייט ספציפיות...'}
+                {loadingStep === 3 && '📊 בונה מערך ראשי פרקים מתוזמנים וממוקדים לפי בקשותיך...'}
               </p>
-              <p className="text-[11px] text-slate-400">מודל ה-AI מעבד נתונים קונקרטיים</p>
+              {specificFocus && (
+                <p className="text-[11px] text-amber-300 font-semibold bg-amber-500/10 px-3 py-1 rounded-lg border border-amber-500/20 inline-block">
+                  🎯 ממוקד לפי הבקשה: "{specificFocus.slice(0, 65)}{specificFocus.length > 65 ? '...' : ''}"
+                </p>
+              )}
+              <p className="text-[11px] text-slate-400">מודל ה-AI מעבד נתונים קונקרטיים לפי ההנחיות שהגדרת</p>
             </div>
           </div>
         )}
@@ -329,6 +428,17 @@ export default function DeepResearchModal({
         {/* Results Viewer */}
         {researchResult && !isLoading && (
           <div className="space-y-5 relative z-10 animate-in fade-in duration-300">
+            {/* Custom Focus Banner if specified */}
+            {specificFocus && (
+              <div className="p-3.5 rounded-2xl bg-gradient-to-r from-amber-950/40 to-slate-900 border border-amber-500/40 flex items-start gap-3 text-xs">
+                <Target className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                <div className="space-y-0.5">
+                  <span className="font-bold text-amber-300">מחקר מותאם אישית וממוקד:</span>
+                  <p className="text-slate-300 leading-relaxed">{specificFocus}</p>
+                </div>
+              </div>
+            )}
+
             {/* Executive Summary Card */}
             <div className="p-4 rounded-2xl bg-gradient-to-r from-purple-950/40 to-slate-900 border border-purple-800/40 space-y-2">
               <div className="flex items-center justify-between">
