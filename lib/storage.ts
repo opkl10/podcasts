@@ -177,18 +177,83 @@ export async function findMediaBlobForEpisode(episodeId: string): Promise<{ key:
       if (b && b.size > 2000) return { key: k, blob: b };
     }
 
-    // Preference 5: If no match by episodeId, check the most recent rec_ key if there is only 1 or recently modified
-    const anyRecKeys = keys.filter(k => k.startsWith('rec_')).reverse();
-    if (anyRecKeys.length > 0) {
-      const b = await getMediaBlob(anyRecKeys[0]);
-      if (b && b.size > 10000) {
-        return { key: anyRecKeys[0], blob: b };
-      }
-    }
+    // STRICT: Do NOT fallback to arbitrary recordings from other episodes.
+    // Each episode's recording must strictly belong to that episode.
   } catch (err) {
     console.error('Error finding media blob for episode:', err);
   }
   return null;
+}
+
+// Reassign a recording from one episode to another
+export function reassignEpisodeRecording(fromEpisodeId: string, toEpisodeId: string): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    const episodes = getEpisodes();
+    const sourceEp = episodes.find(e => e.id === fromEpisodeId);
+    const targetEp = episodes.find(e => e.id === toEpisodeId);
+    if (!sourceEp || !targetEp || !sourceEp.recording) return false;
+
+    // Transfer recording to target
+    targetEp.recording = { ...sourceEp.recording };
+    targetEp.status = targetEp.status === 'published' ? 'published' : 'recorded';
+    targetEp.updatedAt = new Date().toISOString();
+
+    // Remove recording from source
+    sourceEp.recording = undefined;
+    sourceEp.status = sourceEp.status === 'recorded' ? 'ready' : sourceEp.status;
+    sourceEp.updatedAt = new Date().toISOString();
+
+    saveEpisodes(episodes);
+    return true;
+  } catch (e) {
+    console.error('Failed to reassign recording:', e);
+    return false;
+  }
+}
+
+// Fix any mismatched recordings caused by previous cross-healing bugs
+export function fixMismatchedEpisodeRecordings(): Episode[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const episodes = getEpisodes();
+    let changed = false;
+
+    for (const ep of episodes) {
+      if (!ep.recording) continue;
+      const audioKey = ep.recording.audioBlobKey || '';
+      const videoKey = ep.recording.videoBlobKey || '';
+
+      // Check if this recording was originally generated for another episode
+      for (const otherEp of episodes) {
+        if (otherEp.id === ep.id) continue;
+        const keyBelongsToOther = 
+          (audioKey && audioKey.includes(otherEp.id) && !audioKey.includes(ep.id)) ||
+          (videoKey && videoKey.includes(otherEp.id) && !videoKey.includes(ep.id));
+
+        if (keyBelongsToOther) {
+          console.warn(`[FixMismatches] Moving recording from "${ep.title}" (${ep.id}) to correct owner "${otherEp.title}" (${otherEp.id})`);
+          otherEp.recording = { ...ep.recording };
+          otherEp.status = otherEp.status === 'published' ? 'published' : 'recorded';
+          otherEp.updatedAt = new Date().toISOString();
+
+          ep.recording = undefined;
+          ep.status = ep.status === 'recorded' ? 'ready' : ep.status;
+          ep.updatedAt = new Date().toISOString();
+          changed = true;
+          break;
+        }
+      }
+    }
+
+    if (changed) {
+      saveEpisodes(episodes);
+    }
+    return getEpisodes();
+  } catch (err) {
+    console.error('Error fixing mismatched recordings:', err);
+    return getEpisodes();
+  }
 }
 
 // Auto-heal an episode's recording metadata if the media blob exists in IndexedDB
@@ -238,7 +303,7 @@ export async function healEpisodeRecording(episodeId: string): Promise<Episode |
       return episode;
     }
 
-    // Media blob is not linked or recording is undefined -> search IndexedDB!
+    // Media blob is not linked or recording is undefined -> search IndexedDB ONLY for this episodeId!
     const found = await findMediaBlobForEpisode(episodeId);
     if (found && found.blob && found.blob.size > 2000) {
       const detectedDuration = await detectBlobDuration(found.blob) || Math.round(found.blob.size / 150000) || (episode.targetDurationMinutes * 60) || 60;
@@ -269,14 +334,18 @@ export async function healEpisodeRecording(episodeId: string): Promise<Episode |
   return null;
 }
 
-// Auto-heal all episodes in storage if any recording blobs are unlinked
+// Auto-heal all episodes in storage safely without cross-contaminating
 export async function autoHealAllEpisodes(): Promise<Episode[]> {
   if (typeof window === 'undefined') return [];
+  // 1. Fix any mismatched recordings caused previously
+  fixMismatchedEpisodeRecordings();
+
   const episodes = getEpisodes();
   let anyHealed = false;
 
   for (const ep of episodes) {
-    if (!ep.recording || !ep.recording.duration || ep.recording.duration === 0 || ep.status !== 'recorded') {
+    // Only heal if this episode already has a recording key or specific media blob
+    if (ep.recording?.audioBlobKey || ep.recording?.videoBlobKey) {
       const healed = await healEpisodeRecording(ep.id);
       if (healed) anyHealed = true;
     }

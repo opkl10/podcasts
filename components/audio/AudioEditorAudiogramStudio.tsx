@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { Episode, SubtitleItem, MovieFactCard, ElementTransform, CustomOverlayStyle, AudiogramStudioConfig, AudiogramStudioTemplate, HighlightClip } from '@/lib/types';
-import { getMediaBlob, saveMediaBlob, formatTime, getPermanentLogo, savePermanentLogo, saveEpisode, findMediaBlobForEpisode, healEpisodeRecording } from '@/lib/storage';
+import { getMediaBlob, saveMediaBlob, formatTime, getPermanentLogo, savePermanentLogo, saveEpisode, findMediaBlobForEpisode, healEpisodeRecording, reassignEpisodeRecording, getEpisodes } from '@/lib/storage';
 import { trimAudioBlob } from '@/lib/audioUtils';
 import { 
   Play, 
@@ -56,9 +56,11 @@ import DraggableOverlay from '../studio/DraggableOverlay';
 
 interface AudioEditorAudiogramStudioProps {
   episode: Episode;
+  allEpisodes?: Episode[];
   isOpen: boolean;
   onClose: () => void;
   onUpdateEpisode?: (updated: Episode) => void;
+  onSwitchEpisode?: (newEpisode: Episode) => void;
   initialClip?: HighlightClip | null;
   initialAudioBlob?: Blob | null;
   initialVideoBlob?: Blob | null;
@@ -201,9 +203,11 @@ const AUDIOGRAM_PRESETS = [
 
 export default function AudioEditorAudiogramStudio({
   episode,
+  allEpisodes,
   isOpen,
   onClose,
   onUpdateEpisode,
+  onSwitchEpisode,
   initialClip,
   initialAudioBlob,
   initialVideoBlob
@@ -217,6 +221,8 @@ export default function AudioEditorAudiogramStudio({
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
   const [isAutoHealing, setIsAutoHealing] = useState<boolean>(false);
+  const [isReassignModalOpen, setIsReassignModalOpen] = useState<boolean>(false);
+  const [reassignTargetId, setReassignTargetId] = useState<string>('');
   const [duration, setDuration] = useState<number>(0);
   const [currentTime, setCurrentTime] = useState<number>(0);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
@@ -971,6 +977,8 @@ export default function AudioEditorAudiogramStudio({
 
     // Load Media Blob with multi-layer fallback and auto-healing
     const loadMedia = async () => {
+      setAudioBlob(null);
+      setAudioUrl(null);
       let blob: Blob | null = null;
 
       // 1. Direct props fallback (highest fidelity & immediate)
@@ -2431,14 +2439,56 @@ export default function AudioEditorAudiogramStudio({
               <Activity className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-base sm:text-lg font-black text-white flex items-center gap-2">
-                <span>סטודיו עריכת סאונד ויוצר וידאו-קאסט (Audiogram & Sound Studio)</span>
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 font-mono font-bold">
-                  עונה {episode.season} • פרק {episode.episodeNumber}
-                </span>
-              </h3>
-              <p className="text-xs text-slate-400">
-                עריכה וחיתוך קטעי שמע, הוספת רקעים גרפיים, גלי קול מונפשים שתואמים לדיבור, לוגו קבוע וחלוניות עובדות
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="text-base sm:text-lg font-black text-white flex items-center gap-2">
+                  <span>סטודיו עריכת סאונד (Audiogram)</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 font-mono font-bold">
+                    עונה {episode.season} • פרק {episode.episodeNumber}
+                  </span>
+                </h3>
+
+                {/* Episode Switcher Dropdown */}
+                {allEpisodes && allEpisodes.length > 1 && (
+                  <div className="flex items-center gap-1.5 bg-slate-900 px-2.5 py-1 rounded-xl border border-slate-800 text-xs">
+                    <span className="text-slate-400 text-[11px]">בחר פרק לעריכה:</span>
+                    <select
+                      value={episode.id}
+                      onChange={(e) => {
+                        const chosen = allEpisodes.find(ep => ep.id === e.target.value);
+                        if (chosen && onSwitchEpisode) {
+                          onSwitchEpisode(chosen);
+                        }
+                      }}
+                      className="bg-transparent text-cyan-400 font-bold focus:outline-none cursor-pointer text-xs max-w-[180px] truncate"
+                    >
+                      {allEpisodes.map(ep => (
+                        <option key={ep.id} value={ep.id} className="bg-slate-900 text-white">
+                          פרק {ep.episodeNumber}: {ep.title}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                {/* Reassign / Move audio to another episode button */}
+                {allEpisodes && allEpisodes.length > 1 && audioBlob && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const other = allEpisodes.find(ep => ep.id !== episode.id);
+                      setReassignTargetId(other?.id || '');
+                      setIsReassignModalOpen(true);
+                    }}
+                    className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-300 hover:text-white text-xs font-semibold transition-all shadow-sm"
+                    title="אם ההקלטה הועלתה או שויכה לפרק הלא נכון, לחץ כאן להעביר אותה מיידית לפרק הרצוי"
+                  >
+                    <RotateCcw className="w-3 h-3 text-amber-400" />
+                    <span>שייך הקלטה זו לפרק אחר</span>
+                  </button>
+                )}
+              </div>
+              <p className="text-xs text-slate-400 mt-1 truncate max-w-xl">
+                עורך סאונד עבור: <strong className="text-slate-200">{episode.title}</strong>
               </p>
             </div>
           </div>
@@ -2508,6 +2558,76 @@ export default function AudioEditorAudiogramStudio({
               <span>{saveMessage}</span>
             </div>
             <span className="text-[10px] text-emerald-400/80 font-mono">הסנכרון נשמר במאגר הנתונים</span>
+          </div>
+        )}
+
+        {/* Reassign Recording Modal */}
+        {isReassignModalOpen && (
+          <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in">
+            <div className="w-full max-w-md bg-[#121620] border border-slate-700 rounded-3xl p-6 shadow-2xl space-y-4">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+                <div className="flex items-center gap-2 text-amber-400 font-bold text-sm">
+                  <RotateCcw className="w-4 h-4" />
+                  <span>העברת הקלטה לפרק הנכון</span>
+                </div>
+                <button onClick={() => setIsReassignModalOpen(false)} className="text-slate-400 hover:text-white">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="space-y-2 text-xs">
+                <p className="text-slate-300">
+                  קובץ ההקלטה הנוכחי משויך כרגע ל: <strong className="text-white font-bold">&quot;{episode.title}&quot;</strong>
+                </p>
+                <p className="text-slate-400">
+                  בחר לאיזה פרק תרצה להעביר את קובץ ההקלטה (השמע, הווידאו וההגדרות יעברו מיידית):
+                </p>
+
+                <select
+                  value={reassignTargetId}
+                  onChange={(e) => setReassignTargetId(e.target.value)}
+                  className="w-full mt-2 p-3 bg-slate-900 border border-slate-700 rounded-xl text-white text-xs font-semibold focus:outline-none focus:border-amber-500"
+                >
+                  {allEpisodes?.filter(e => e.id !== episode.id).map(e => (
+                    <option key={e.id} value={e.id}>
+                      עונה {e.season} • פרק {e.episodeNumber}: {e.title}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-800">
+                <button
+                  onClick={() => setIsReassignModalOpen(false)}
+                  className="px-4 py-2 text-xs font-semibold text-slate-400 hover:text-white"
+                >
+                  ביטול
+                </button>
+                <button
+                  onClick={() => {
+                    if (!reassignTargetId) return;
+                    const success = reassignEpisodeRecording(episode.id, reassignTargetId);
+                    if (success) {
+                      const updatedList = getEpisodes();
+                      const targetEp = updatedList.find(e => e.id === reassignTargetId);
+                      if (targetEp && onSwitchEpisode) {
+                        onSwitchEpisode(targetEp);
+                      }
+                      if (onUpdateEpisode && targetEp) {
+                        onUpdateEpisode(targetEp);
+                      }
+                      alert(`ההקלטה הועברה בהצלחה לפרק "${targetEp?.title || reassignTargetId}"!`);
+                      setIsReassignModalOpen(false);
+                    } else {
+                      alert('שגיאה בהעברת ההקלטה.');
+                    }
+                  }}
+                  className="px-5 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold shadow-lg shadow-amber-600/30 transition-all"
+                >
+                  אישור והעברת ההקלטה
+                </button>
+              </div>
+            </div>
           </div>
         )}
 

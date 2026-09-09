@@ -379,6 +379,7 @@ export default function DashboardPage() {
           onOpenSubtitles={(ep) => setSubtitleEpisode(ep)}
           onOpenAudiogram={(ep) => setAudiogramEpisode(ep)}
           onDeleteEpisode={(id) => setEpisodes(prev => prev.filter(e => e.id !== id))}
+          onUpdateEpisodes={(updated) => setEpisodes(updated)}
         />
       ) : (
         <>
@@ -523,6 +524,7 @@ export default function DashboardPage() {
               key={episode.id}
               episode={episode}
               onDelete={handleDeleteEpisode}
+              onOpenAudiogram={(ep) => setAudiogramEpisode(ep)}
             />
           ))}
         </div>
@@ -676,8 +678,10 @@ export default function DashboardPage() {
       {audiogramEpisode && (
         <AudioEditorAudiogramStudio
           episode={audiogramEpisode}
+          allEpisodes={episodes}
           isOpen={!!audiogramEpisode}
           onClose={() => setAudiogramEpisode(null)}
+          onSwitchEpisode={(newEp) => setAudiogramEpisode(newEp)}
           onUpdateEpisode={(updated) => {
             setEpisodes(prev => prev.map(e => e.id === updated.id ? updated : e));
             setAudiogramEpisode(updated);

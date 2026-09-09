@@ -16,13 +16,15 @@ import {
   CheckCircle,
   AlertCircle,
   Radio,
-  Subtitles
+  Subtitles,
+  Activity
 } from 'lucide-react';
 import { formatTime, getPodcastById } from '@/lib/storage';
 
 interface EpisodeCardProps {
   episode: Episode;
   onDelete: (id: string) => void;
+  onOpenAudiogram?: (episode: Episode) => void;
 }
 
 const statusConfig: Record<EpisodeStatus, { label: string; bg: string; text: string; border: string; icon: any }> = {
@@ -70,7 +72,7 @@ const statusConfig: Record<EpisodeStatus, { label: string; bg: string; text: str
   }
 };
 
-export default function EpisodeCard({ episode, onDelete }: EpisodeCardProps) {
+export default function EpisodeCard({ episode, onDelete, onOpenAudiogram }: EpisodeCardProps) {
   const status = statusConfig[episode.status] || statusConfig.draft;
   const StatusIcon = status.icon;
   const podcast = getPodcastById(episode.podcastId);
@@ -181,13 +183,27 @@ export default function EpisodeCard({ episode, onDelete }: EpisodeCardProps) {
         </div>
 
         {Boolean(episode.recording || episode.subtitles?.length) && (
-          <Link
-            href={`/episodes/${episode.id}/subtitles`}
-            className="w-full flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl bg-purple-950/40 hover:bg-purple-900/50 border border-purple-800/40 text-purple-300 hover:text-white text-xs font-bold transition-all text-center"
-          >
-            <Subtitles className="w-3.5 h-3.5 text-purple-400" />
-            <span>אולפן כתוביות ותרגום AI</span>
-          </Link>
+          <div className="grid grid-cols-2 gap-2">
+            <Link
+              href={`/episodes/${episode.id}/subtitles`}
+              className="flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl bg-purple-950/40 hover:bg-purple-900/50 border border-purple-800/40 text-purple-300 hover:text-white text-xs font-bold transition-all text-center truncate"
+            >
+              <Subtitles className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+              <span className="truncate">כתוביות AI</span>
+            </Link>
+
+            {onOpenAudiogram && (
+              <button
+                type="button"
+                onClick={() => onOpenAudiogram(episode)}
+                className="flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl bg-cyan-950/40 hover:bg-cyan-900/50 border border-cyan-800/40 text-cyan-300 hover:text-white text-xs font-bold transition-all text-center truncate"
+                title="פתיחת הפרק בסטודיו עריכת סאונד וגלי קול (Audiogram)"
+              >
+                <Activity className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                <span className="truncate">עורך סאונד</span>
+              </button>
+            )}
+          </div>
         )}
       </div>
     </div>
