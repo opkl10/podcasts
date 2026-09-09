@@ -4,6 +4,7 @@ import React, { useState, useRef } from 'react';
 import { Database, Download, Upload, CheckCircle2, AlertCircle, RefreshCw, X, ShieldCheck, HardDrive, Sparkles, Music, Film, CheckSquare, Square } from 'lucide-react';
 import { getEpisodes, getPodcasts, saveEpisodes, savePodcasts, getPermanentLogo, savePermanentLogo, syncWithServerDatabase, getAllMediaBlobs, restoreAllMediaBlobs } from '@/lib/storage';
 import { getAISettings, saveAISettings } from '@/lib/apiConfig';
+import { Episode } from '@/lib/types';
 
 interface DatabaseBackupModalProps {
   isOpen: boolean;
@@ -117,16 +118,69 @@ export default function DatabaseBackupModal({
       const text = await file.text();
       const parsedData = JSON.parse(text);
 
-      if (!parsedData || (!Array.isArray(parsedData.episodes) && !Array.isArray(parsedData.podcasts))) {
-        throw new Error('קובץ הגיבוי אינו במבנה תקין.');
+      let episodesToRestore: any[] = [];
+      let podcastsToRestore: any[] = [];
+
+      if (Array.isArray(parsedData)) {
+        episodesToRestore = parsedData;
+      } else if (typeof parsedData === 'object' && parsedData !== null) {
+        if (Array.isArray(parsedData.episodes)) episodesToRestore = parsedData.episodes;
+        else if (Array.isArray(parsedData['פרקים'])) episodesToRestore = parsedData['פרקים'];
+        else if (Array.isArray(parsedData.data)) episodesToRestore = parsedData.data;
+        else if (Array.isArray(parsedData.items)) episodesToRestore = parsedData.items;
+
+        if (Array.isArray(parsedData.podcasts)) podcastsToRestore = parsedData.podcasts;
+        else if (Array.isArray(parsedData['תוכניות'])) podcastsToRestore = parsedData['תוכניות'];
       }
 
-      // Restore Episodes & Podcasts
-      if (Array.isArray(parsedData.episodes)) {
-        saveEpisodes(parsedData.episodes);
+      if (episodesToRestore.length === 0 && podcastsToRestore.length === 0) {
+        throw new Error('לא אותרו נתוני פרקים או פודקאסטים תקינים בקובץ שהועלה.');
       }
-      if (Array.isArray(parsedData.podcasts)) {
-        savePodcasts(parsedData.podcasts);
+
+      // Restore Podcasts if present
+      if (podcastsToRestore.length > 0) {
+        const currentPods = getPodcasts();
+        const podMap = new Map(currentPods.map(p => [p.id, p]));
+        for (const pod of podcastsToRestore) {
+          if (pod.id && pod.title) podMap.set(pod.id, pod);
+        }
+        savePodcasts(Array.from(podMap.values()));
+      }
+
+      // Restore Episodes safely (merge / prepend without deleting existing)
+      if (episodesToRestore.length > 0) {
+        const currentEpisodes = getEpisodes();
+        const merged = [...currentEpisodes];
+
+        for (const ep of episodesToRestore) {
+          const normEp: Episode = {
+            id: ep.id || `ep_restored_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+            podcastId: ep.podcastId || (podcastsToRestore[0]?.id || currentEpisodes[0]?.podcastId || 'pod-tech'),
+            title: ep.title || ep['כותרת'] || ep.name || 'פרק משוחזר',
+            description: ep.description || ep['תיאור'] || '',
+            season: Number(ep.season || ep['עונה'] || 1),
+            episodeNumber: Number(ep.episodeNumber || ep['מספר פרק'] || (merged.length + 1)),
+            status: ep.status || 'research',
+            mediaType: ep.mediaType || 'video',
+            targetDurationMinutes: Number(ep.targetDurationMinutes || ep.duration || 30),
+            hostName: ep.hostName || ep['מנחה'],
+            guest: ep.guest,
+            topics: Array.isArray(ep.topics) ? ep.topics : (Array.isArray(ep['נושאים']) ? ep['נושאים'] : []),
+            movieFacts: Array.isArray(ep.movieFacts) ? ep.movieFacts : (Array.isArray(ep['עובדות']) ? ep['עובדות'] : []),
+            subtitles: Array.isArray(ep.subtitles) ? ep.subtitles : [],
+            recording: ep.recording,
+            createdAt: ep.createdAt || new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          };
+
+          const existingIdx = merged.findIndex(e => e.id === normEp.id);
+          if (existingIdx >= 0) {
+            merged[existingIdx] = normEp;
+          } else {
+            merged.unshift(normEp);
+          }
+        }
+        saveEpisodes(merged);
       }
 
       // Restore Logo, Fonts & Settings

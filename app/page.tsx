@@ -3,12 +3,13 @@
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { Episode, PodcastShow } from '@/lib/types';
-import { getEpisodes, getPodcasts, saveEpisode, deleteEpisode, saveMediaBlob, autoHealAllEpisodes } from '@/lib/storage';
+import { getEpisodes, getPodcasts, saveEpisode, saveEpisodes, deleteEpisode, saveMediaBlob, autoHealAllEpisodes } from '@/lib/storage';
 import StatsOverview from '@/components/dashboard/StatsOverview';
 import EpisodeCard from '@/components/dashboard/EpisodeCard';
 import PodcastManagerModal from '@/components/dashboard/PodcastManagerModal';
 import DatabaseBackupModal from '@/components/dashboard/DatabaseBackupModal';
 import CloudIntegrationsModal from '@/components/dashboard/CloudIntegrationsModal';
+import ImportEpisodesModal from '@/components/dashboard/ImportEpisodesModal';
 import RecordedEpisodesVault from '@/components/recordings/RecordedEpisodesVault';
 import SubtitleStudio from '@/components/subtitles/SubtitleStudio';
 import AudioEditorAudiogramStudio from '@/components/audio/AudioEditorAudiogramStudio';
@@ -30,7 +31,10 @@ import {
   FolderArchive,
   Subtitles,
   Activity,
-  Upload
+  Upload,
+  FileJson,
+  AlertCircle,
+  CheckCircle2
 } from 'lucide-react';
 
 export default function DashboardPage() {
@@ -46,75 +50,139 @@ export default function DashboardPage() {
   const [isPodcastModalOpen, setIsPodcastModalOpen] = useState(false);
   const [isDbModalOpen, setIsDbModalOpen] = useState(false);
   const [isCloudModalOpen, setIsCloudModalOpen] = useState(false);
+  const [isImportEpisodesModalOpen, setIsImportEpisodesModalOpen] = useState(false);
   const [isLoaded, setIsLoaded] = useState(false);
   const importAudioFileInputRef = React.useRef<HTMLInputElement>(null);
 
   const handleImportAudioAsNewEpisode = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const fileList = e.target.files;
+    if (!fileList || fileList.length === 0) return;
+
+    const files = Array.from(fileList);
+    const newEpisodesCreated: Episode[] = [];
 
     try {
-      const cleanTitle = file.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
-      const epId = `ep_${Date.now()}`;
-      const blobKey = `rec_uploaded_${epId}_${Date.now()}`;
-      await saveMediaBlob(blobKey, file);
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const lowerName = file.name.toLowerCase();
 
-      // Detect duration
-      let durationSeconds = 60;
-      try {
-        const url = URL.createObjectURL(file);
-        const tempAudio = new Audio(url);
-        await new Promise((resolve) => {
-          tempAudio.onloadedmetadata = () => {
-            durationSeconds = Math.round(tempAudio.duration) || 60;
-            resolve(true);
-          };
-          tempAudio.onerror = () => resolve(true);
-          setTimeout(() => resolve(true), 2500);
-        });
-      } catch {}
-
-      const nowIso = new Date().toISOString();
-      const newEpisode: Episode = {
-        id: epId,
-        podcastId: selectedPodcastId !== 'all' ? selectedPodcastId : (podcasts[0]?.id || 'pod-tech'),
-        title: cleanTitle || `פרק מוקלט ${new Date().toLocaleDateString('he-IL')}`,
-        description: `פרק שנוצר מייבוא קובץ שמע: ${file.name}`,
-        season: 1,
-        episodeNumber: episodes.length + 1,
-        status: 'recorded',
-        targetDurationMinutes: Math.round(durationSeconds / 60) || 30,
-        createdAt: nowIso,
-        updatedAt: nowIso,
-        topics: [
-          {
-            id: `topic_${Date.now()}_1`,
-            title: 'נושא מרכזי מההקלטה',
-            estimatedMinutes: Math.round(durationSeconds / 60) || 30,
-            notes: 'הוקלט והועלה למערכת',
-            talkingPoints: ['דיון פודקאסט ראשי'],
-            questions: ['מהם עיקרי הדברים שנאמרו בפרק?'],
-            resources: [],
-            completed: true,
-            order: 1
+        // 1. If it's a JSON or Text/Markdown file containing episode definitions
+        if (lowerName.endsWith('.json') || lowerName.endsWith('.txt') || lowerName.endsWith('.md')) {
+          try {
+            const text = await file.text();
+            if (lowerName.endsWith('.json')) {
+              const parsed = JSON.parse(text);
+              const list = Array.isArray(parsed) ? parsed : (parsed.episodes || parsed.פרקים || parsed.data || [parsed]);
+              for (const item of list) {
+                if (typeof item === 'object' && item !== null) {
+                  const epId = item.id || `ep_imp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+                  newEpisodesCreated.push({
+                    id: epId,
+                    podcastId: item.podcastId || (selectedPodcastId !== 'all' ? selectedPodcastId : (podcasts[0]?.id || 'pod-tech')),
+                    title: item.title || item.כותרת || file.name.replace(/\.[^/.]+$/, ''),
+                    description: item.description || item.תיאור || 'פרק שיובא מקובץ נתונים',
+                    season: Number(item.season || item.עונה) || 1,
+                    episodeNumber: Number(item.episodeNumber || item.פרק || item['מספר פרק']) || (episodes.length + newEpisodesCreated.length + 1),
+                    status: item.status || 'research',
+                    mediaType: item.mediaType || 'video',
+                    targetDurationMinutes: Number(item.targetDurationMinutes || item.duration) || 30,
+                    topics: item.topics || [],
+                    movieFacts: item.movieFacts || [],
+                    subtitles: item.subtitles || [],
+                    guest: item.guest,
+                    createdAt: item.createdAt || new Date().toISOString(),
+                    updatedAt: new Date().toISOString()
+                  });
+                }
+              }
+              continue;
+            }
+          } catch (jsonErr) {
+            console.warn('File not parsed as JSON, treating as raw media if applicable', jsonErr);
           }
-        ],
-        subtitles: [],
-        movieFacts: [],
-        recording: {
-          recordedAt: new Date().toISOString(),
-          duration: durationSeconds,
-          audioBlobKey: blobKey,
-          markers: [],
-          topicsCovered: []
         }
-      };
 
-      saveEpisode(newEpisode);
-      setEpisodes(prev => [newEpisode, ...prev]);
-      alert(`הפרק "${newEpisode.title}" נוצר בהצלחה עם קובץ השמע! הפרק מוכן לעריכת סאונד ב-Audiogram Studio, כתוביות AI ושיתוף.`);
+        // 2. Audio or Video media file upload
+        const cleanTitle = file.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
+        const epId = `ep_${Date.now()}_${i}_${Math.random().toString(36).slice(2, 6)}`;
+        const blobKey = `rec_uploaded_${epId}_${Date.now()}`;
+        await saveMediaBlob(blobKey, file);
+
+        // Detect duration
+        let durationSeconds = 60;
+        try {
+          const url = URL.createObjectURL(file);
+          const isVideo = file.type.startsWith('video') || lowerName.endsWith('.mp4') || lowerName.endsWith('.mov') || lowerName.endsWith('.webm');
+          const mediaEl = isVideo ? document.createElement('video') : new Audio(url);
+          await new Promise((resolve) => {
+            mediaEl.onloadedmetadata = () => {
+              durationSeconds = Math.round(mediaEl.duration) || 60;
+              resolve(true);
+            };
+            mediaEl.onerror = () => resolve(true);
+            setTimeout(() => resolve(true), 2500);
+          });
+        } catch {}
+
+        const nowIso = new Date().toISOString();
+        const isVideo = file.type.startsWith('video') || lowerName.endsWith('.mp4') || lowerName.endsWith('.mov');
+
+        const newEpisode: Episode = {
+          id: epId,
+          podcastId: selectedPodcastId !== 'all' ? selectedPodcastId : (podcasts[0]?.id || 'pod-tech'),
+          title: cleanTitle || `פרק מוקלט ${new Date().toLocaleDateString('he-IL')}`,
+          description: `פרק שנוצר מהעלאת קובץ: ${file.name}`,
+          season: 1,
+          episodeNumber: episodes.length + newEpisodesCreated.length + 1,
+          status: 'recorded',
+          mediaType: isVideo ? 'video' : 'audio_only',
+          targetDurationMinutes: Math.max(1, Math.round(durationSeconds / 60)),
+          createdAt: nowIso,
+          updatedAt: nowIso,
+          topics: [
+            {
+              id: `topic_${Date.now()}_${i}_1`,
+              title: 'נושא מרכזי מההקלטה',
+              estimatedMinutes: Math.max(1, Math.round(durationSeconds / 60)),
+              notes: `קובץ מקור: ${file.name}`,
+              talkingPoints: ['דיון פודקאסט ראשי'],
+              questions: ['מהם עיקרי הדברים שנאמרו בפרק?'],
+              resources: [],
+              completed: true,
+              order: 1
+            }
+          ],
+          subtitles: [],
+          movieFacts: [],
+          recording: {
+            recordedAt: nowIso,
+            duration: durationSeconds,
+            audioBlobKey: blobKey,
+            videoBlobKey: isVideo ? blobKey : undefined,
+            markers: [],
+            topicsCovered: []
+          }
+        };
+
+        newEpisodesCreated.push(newEpisode);
+      }
+
+      if (newEpisodesCreated.length > 0) {
+        const existing = getEpisodes();
+        const merged = [...newEpisodesCreated, ...existing];
+        saveEpisodes(merged);
+        setEpisodes(merged);
+
+        // Auto-reset filters so new episodes appear immediately!
+        setSelectedPodcastId('all');
+        setActiveFilter('all');
+        setMainView('episodes');
+        setSearchQuery('');
+
+        alert(`🎉 הועלו/יובאו בהצלחה ${newEpisodesCreated.length} פרקים! כל הסינונים אופסו כדי שתוכלו לראות אותם מיד בראש הרשימה ובסטודיו.`);
+      }
     } catch (err: any) {
-      alert('שגיאה בייבוא קובץ השמע: ' + err.message);
+      alert('שגיאה בייבוא הקבצים: ' + (err?.message || err));
     } finally {
       if (importAudioFileInputRef.current) importAudioFileInputRef.current.value = '';
     }
@@ -209,7 +277,8 @@ export default function DashboardPage() {
             <input
               ref={importAudioFileInputRef}
               type="file"
-              accept="audio/*,video/*,.mp3,.wav,.m4a,.webm,.ogg"
+              accept="audio/*,video/*,.mp3,.wav,.m4a,.webm,.ogg,.mp4,.mov,.aac,.flac,.opus,.json,.txt,.md,.csv"
+              multiple
               onChange={handleImportAudioAsNewEpisode}
               className="hidden"
             />
@@ -226,10 +295,19 @@ export default function DashboardPage() {
               <button
                 onClick={() => importAudioFileInputRef.current?.click()}
                 className="flex items-center justify-center gap-1.5 px-4 py-3.5 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 hover:text-white border border-emerald-500/40 font-bold text-xs shadow-lg transition-all active:scale-95 whitespace-nowrap"
-                title="העלאת קובץ שמע מוקלט (MP3/WAV/M4A) ליצירת פרק מוכן באופן מיידי"
+                title="העלאת קובצי שמע ווידאו מוקלטים (MP3/WAV/M4A/MP4) ליצירת פרקים באופן מיידי"
               >
                 <Upload className="w-4 h-4 text-emerald-400" />
-                <span>העלאת הקלטה</span>
+                <span>העלאת הקלטות</span>
+              </button>
+
+              <button
+                onClick={() => setIsImportEpisodesModalOpen(true)}
+                className="flex items-center justify-center gap-1.5 px-4 py-3.5 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 hover:text-white border border-indigo-500/40 font-bold text-xs shadow-lg transition-all active:scale-95 whitespace-nowrap"
+                title="ייבוא פרקים מקובץ JSON, מסמך טקסט או רשימת נושאים"
+              >
+                <FileJson className="w-4 h-4 text-indigo-400" />
+                <span>ייבוא פרקים מקובץ</span>
               </button>
             </div>
 
@@ -408,6 +486,35 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      {/* Active Filters Notification Bar */}
+      {(selectedPodcastId !== 'all' || activeFilter !== 'all' || searchQuery !== '') && (
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 px-5 rounded-2xl bg-indigo-950/40 border border-indigo-500/30 text-xs shadow-lg">
+          <div className="flex items-center gap-2 text-slate-300">
+            <Filter className="w-4 h-4 text-indigo-400 shrink-0" />
+            <span>
+              מציג <strong className="text-white font-bold">{filteredEpisodes.length}</strong> מתוך <strong className="text-white font-bold">{episodes.length}</strong> פרקים קיימים
+            </span>
+            <span className="text-slate-500">•</span>
+            <span className="text-indigo-300">
+              {selectedPodcastId !== 'all' && `תוכנית: "${podcasts.find(p => p.id === selectedPodcastId)?.title || selectedPodcastId}" `}
+              {activeFilter !== 'all' && `סטטוס: "${filterTabs.find(t => t.id === activeFilter)?.label || activeFilter}" `}
+              {searchQuery && `חיפוש: "${searchQuery}"`}
+            </span>
+          </div>
+          <button
+            onClick={() => {
+              setSelectedPodcastId('all');
+              setActiveFilter('all');
+              setSearchQuery('');
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600/30 hover:bg-indigo-600 text-indigo-200 hover:text-white border border-indigo-500/40 font-semibold text-xs transition-all w-fit"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+            <span>הצג את כל הפרקים (איפוס סינונים)</span>
+          </button>
+        </div>
+      )}
+
       {/* Episodes Grid */}
       {filteredEpisodes.length > 0 ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -419,24 +526,92 @@ export default function DashboardPage() {
             />
           ))}
         </div>
+      ) : episodes.length > 0 ? (
+        <div className="flex flex-col items-center justify-center p-12 text-center rounded-3xl bg-gradient-to-b from-amber-500/10 via-slate-900/50 to-slate-900/80 border border-amber-500/30 shadow-2xl">
+          <div className="p-4 rounded-2xl bg-amber-500/20 text-amber-300 mb-4 border border-amber-500/30 shadow-inner">
+            <AlertCircle className="w-8 h-8" />
+          </div>
+          <h3 className="text-xl font-black text-white mb-2">
+            נמצאו {episodes.length} פרקים במערכת — אך הם מוסתרים עקב סינונים פעילים!
+          </h3>
+          <p className="text-xs sm:text-sm text-slate-300 max-w-lg mb-4 leading-relaxed">
+            הפרקים שהעליתם קיימים ושמורים במערכת, אך אינם תואמים לתוכנית הפודקאסט או לסטטוס המסונן כרגע.
+          </p>
+
+          <div className="flex flex-wrap items-center justify-center gap-2 mb-6 text-xs text-slate-300">
+            {selectedPodcastId !== 'all' && (
+              <span className="px-3 py-1 rounded-lg bg-slate-800/90 text-indigo-300 border border-indigo-500/30">
+                תוכנית: <strong>{podcasts.find(p => p.id === selectedPodcastId)?.title || selectedPodcastId}</strong>
+              </span>
+            )}
+            {activeFilter !== 'all' && (
+              <span className="px-3 py-1 rounded-lg bg-slate-800/90 text-purple-300 border border-purple-500/30">
+                סטטוס: <strong>{filterTabs.find(t => t.id === activeFilter)?.label || activeFilter}</strong>
+              </span>
+            )}
+            {searchQuery && (
+              <span className="px-3 py-1 rounded-lg bg-slate-800/90 text-amber-300 border border-amber-500/30">
+                חיפוש: &quot;{searchQuery}&quot;
+              </span>
+            )}
+          </div>
+
+          <div className="flex flex-wrap items-center justify-center gap-3">
+            <button
+              onClick={() => {
+                setSelectedPodcastId('all');
+                setActiveFilter('all');
+                setSearchQuery('');
+              }}
+              className="flex items-center gap-2 px-6 py-3.5 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white text-xs sm:text-sm font-bold shadow-xl shadow-indigo-600/40 hover:scale-[1.02] active:scale-95 transition-all"
+            >
+              <RotateCcw className="w-4 h-4" />
+              <span>הצג את כל {episodes.length} הפרקים (איפוס כל הסינונים)</span>
+            </button>
+
+            <button
+              onClick={() => setIsImportEpisodesModalOpen(true)}
+              className="flex items-center gap-2 px-4 py-3.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white border border-slate-700 text-xs font-semibold transition-all"
+            >
+              <FileJson className="w-4 h-4 text-indigo-400" />
+              <span>ייבוא פרקים מקובץ</span>
+            </button>
+          </div>
+        </div>
       ) : (
         <div className="flex flex-col items-center justify-center p-12 text-center rounded-2xl bg-slate-900/30 border border-dashed border-slate-800">
           <div className="p-4 rounded-2xl bg-indigo-500/10 text-indigo-400 mb-4">
             <Radio className="w-8 h-8" />
           </div>
-          <h3 className="text-lg font-bold text-white mb-1">לא נמצאו פרקים בפילטר זה</h3>
+          <h3 className="text-lg font-bold text-white mb-1">אין עדיין פרקים במערכת</h3>
           <p className="text-xs text-slate-400 max-w-sm mb-6">
-            לא נמצאו פרקים התואמים את התוכנית או הסינון הנוכחי. תוכלו ליצור פרק חדש לפודקאסט זה.
+            התחילו ביצירת פרק חדש, העלאת הקלטות שמע/וידאו או ייבוא פרקים מקובץ JSON / טקסט.
           </p>
-          <Link
-            href="/episodes/new"
-            className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-lg shadow-indigo-600/20"
-          >
-            <PlusCircle className="w-4 h-4" />
-            <span>יצירת פרק חדש עכשיו</span>
-          </Link>
+          <div className="flex flex-wrap items-center justify-center gap-3">
+            <Link
+              href="/episodes/new"
+              className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-lg shadow-indigo-600/20"
+            >
+              <PlusCircle className="w-4 h-4" />
+              <span>יצירת פרק חדש</span>
+            </Link>
+            <button
+              onClick={() => importAudioFileInputRef.current?.click()}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 text-xs font-bold"
+            >
+              <Upload className="w-4 h-4 text-emerald-400" />
+              <span>העלאת הקלטות</span>
+            </button>
+            <button
+              onClick={() => setIsImportEpisodesModalOpen(true)}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold"
+            >
+              <FileJson className="w-4 h-4 text-indigo-400" />
+              <span>ייבוא פרקים מקובץ</span>
+            </button>
           </div>
-        )}
+        </div>
+      )}
       </>
     )}
 
@@ -463,6 +638,25 @@ export default function DashboardPage() {
       <CloudIntegrationsModal
         isOpen={isCloudModalOpen}
         onClose={() => setIsCloudModalOpen(false)}
+      />
+
+      {/* Import Episodes Modal */}
+      <ImportEpisodesModal
+        isOpen={isImportEpisodesModalOpen}
+        onClose={() => setIsImportEpisodesModalOpen(false)}
+        podcasts={podcasts}
+        currentPodcastId={selectedPodcastId}
+        onEpisodesImported={(importedEpisodes) => {
+          const existing = getEpisodes();
+          const merged = [...importedEpisodes, ...existing];
+          saveEpisodes(merged);
+          setEpisodes(merged);
+          setSelectedPodcastId('all');
+          setActiveFilter('all');
+          setMainView('episodes');
+          setSearchQuery('');
+          alert(`🎉 יובאו בהצלחה ${importedEpisodes.length} פרקים חדשים! כל הסינונים אופסו והפרקים מופיעים כעת בראש הרשימה.`);
+        }}
       />
 
       {/* Professional Subtitle Studio Pro */}
