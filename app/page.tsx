@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { Episode, PodcastShow } from '@/lib/types';
-import { getEpisodes, getPodcasts, saveEpisode, deleteEpisode, saveMediaBlob } from '@/lib/storage';
+import { getEpisodes, getPodcasts, saveEpisode, deleteEpisode, saveMediaBlob, autoHealAllEpisodes } from '@/lib/storage';
 import StatsOverview from '@/components/dashboard/StatsOverview';
 import EpisodeCard from '@/components/dashboard/EpisodeCard';
 import PodcastManagerModal from '@/components/dashboard/PodcastManagerModal';
@@ -126,6 +126,13 @@ export default function DashboardPage() {
     setEpisodes(episodesData);
     setPodcasts(podcastsData);
     setIsLoaded(true);
+
+    // Auto-heal all episodes with unlinked or 0-duration recordings
+    autoHealAllEpisodes().then(healed => {
+      if (healed && healed.length > 0) {
+        setEpisodes(healed);
+      }
+    });
   }, []);
 
   const handleDeleteEpisode = async (id: string) => {

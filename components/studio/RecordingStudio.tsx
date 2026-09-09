@@ -153,6 +153,16 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
   const [isRecording, setIsRecording] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [recordedSeconds, setRecordedSeconds] = useState(0);
+  const recordedSecondsRef = useRef<number>(0);
+  const markersRef = useRef<TimestampMarker[]>([]);
+  const [currentEpisode, setCurrentEpisode] = useState<Episode>(episode);
+  const currentEpisodeRef = useRef<Episode>(episode);
+
+  useEffect(() => {
+    setCurrentEpisode(episode);
+    currentEpisodeRef.current = episode;
+  }, [episode]);
+
   const [activeTopicIndex, setActiveTopicIndex] = useState(0);
   const [activeTopicSeconds, setActiveTopicSeconds] = useState(0);
   const [markers, setMarkers] = useState<TimestampMarker[]>([]);
@@ -686,7 +696,11 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
   useEffect(() => {
     if (isRecording && !isPaused) {
       timerIntervalRef.current = setInterval(() => {
-        setRecordedSeconds(prev => prev + 1);
+        setRecordedSeconds(prev => {
+          const next = prev + 1;
+          recordedSecondsRef.current = next;
+          return next;
+        });
         setActiveTopicSeconds(prev => prev + 1);
       }, 1000);
     } else {
@@ -812,7 +826,33 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
         const url = URL.createObjectURL(recoveredBlob);
         setRecordedVideoBlob(recoveredBlob);
         setRecordedVideoUrl(url);
-        setRecordedSeconds(Math.round(recoveredBlob.size / 250000)); // approximate duration
+        const approxDuration = Math.max(10, Math.round(recoveredBlob.size / 200000));
+        setRecordedSeconds(approxDuration);
+        recordedSecondsRef.current = approxDuration;
+
+        // Save to permanent key in IndexedDB
+        const blobKey = `rec_${episode.id}_restored_${Date.now()}`;
+        await saveMediaBlob(blobKey, recoveredBlob);
+
+        const restoredEp: Episode = {
+          ...currentEpisodeRef.current,
+          status: 'recorded',
+          recording: {
+            duration: approxDuration,
+            recordedAt: new Date().toISOString(),
+            videoBlobKey: blobKey,
+            audioBlobKey: isAudioOnly ? blobKey : undefined,
+            fileSize: recoveredBlob.size,
+            mimeType: isAudioOnly ? 'audio/webm' : 'video/webm',
+            resolution: videoResolution,
+            markers: markersRef.current,
+            topicsCovered: topics.map(t => t.id)
+          }
+        };
+        saveEpisode(restoredEp);
+        currentEpisodeRef.current = restoredEp;
+        setCurrentEpisode(restoredEp);
+
         setFinishedRecording(true);
         setHasCrashRecovery(false);
       }
@@ -985,36 +1025,58 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
         setRecordedAudioBlob(fullAudioBlob);
         setRecordedVideoUrl(videoUrl);
 
+        // Accurate final duration from ref (never 0)
+        const finalDuration = Math.max(1, recordedSecondsRef.current || recordedSeconds || 1);
+
         // Save Main Video & Audio Blobs to IndexedDB
         const blobKey = `rec_${episode.id}_${Date.now()}`;
-        await saveMediaBlob(blobKey, fullVideoBlob);
+        let audioBlobKey: string | undefined = undefined;
 
-        if (fullAudioBlob) {
-          await saveMediaBlob(`${blobKey}_audio`, fullAudioBlob);
+        try {
+          if (fullAudioBlob) {
+            audioBlobKey = `${blobKey}_audio`;
+            await saveMediaBlob(audioBlobKey, fullAudioBlob);
+          }
+        } catch (audioErr) {
+          console.error('Failed to save audio blob:', audioErr);
         }
 
-        // Clean emergency recovery file
-        await deleteMediaBlob(`emergency_rec_${episode.id}`);
+        try {
+          await saveMediaBlob(blobKey, fullVideoBlob);
+        } catch (videoErr) {
+          console.error('Failed to save video blob:', videoErr);
+        }
 
-        // Update Episode in Database with real captured subtitles
-        saveEpisode({
-          ...episode,
+        // Clean emergency recovery file safely
+        try {
+          await deleteMediaBlob(`emergency_rec_${episode.id}`);
+        } catch (e) {}
+
+        const finalMarkers = markersRef.current.length > 0 ? markersRef.current : markers;
+
+        // Update Episode in Database with real captured subtitles and duration
+        const updatedEpisode: Episode = {
+          ...currentEpisodeRef.current,
           status: 'recorded',
           subtitles: liveSpokenSubtitlesRef.current.length > 0 
             ? liveSpokenSubtitlesRef.current 
             : episode.subtitles,
           recording: {
-            duration: recordedSeconds,
+            duration: finalDuration,
             recordedAt: new Date().toISOString(),
             videoBlobKey: blobKey,
-            audioBlobKey: fullAudioBlob ? `${blobKey}_audio` : undefined,
+            audioBlobKey: audioBlobKey || (isAudioOnly ? blobKey : undefined),
             fileSize: fullVideoBlob.size,
             mimeType,
             resolution: videoResolution,
-            markers,
+            markers: finalMarkers,
             topicsCovered: topics.map(t => t.id)
           }
-        });
+        };
+
+        saveEpisode(updatedEpisode);
+        currentEpisodeRef.current = updatedEpisode;
+        setCurrentEpisode(updatedEpisode);
 
         setFinishedRecording(true);
       };
@@ -1024,6 +1086,8 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
       setIsRecording(true);
       setIsPaused(false);
       setRecordedSeconds(0);
+      recordedSecondsRef.current = 0;
+      markersRef.current = [];
       setActiveTopicSeconds(0);
 
       // Periodic Crash Protection: Flush chunk to disk every 10 seconds
@@ -1072,14 +1136,16 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
   };
 
   const addMarker = (label: string, type: TimestampMarker['type']) => {
+    const currentSecs = recordedSecondsRef.current || recordedSeconds;
     const newMarker: TimestampMarker = {
       id: `mark-${Date.now()}`,
-      timestamp: recordedSeconds,
+      timestamp: currentSecs,
       label,
       type,
       topicId: currentTopic?.id,
       createdAt: new Date().toISOString()
     };
+    markersRef.current.push(newMarker);
     setMarkers(prev => [...prev, newMarker]);
   };
 
@@ -1140,17 +1206,19 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
   if (finishedRecording) {
     return (
       <PostRecordingReview
-        episode={episode}
+        episode={currentEpisode}
         videoBlob={recordedVideoBlob}
         audioBlob={recordedAudioBlob}
         videoUrl={recordedVideoUrl}
-        durationSeconds={recordedSeconds}
-        markers={markers}
+        durationSeconds={recordedSecondsRef.current || recordedSeconds}
+        markers={markersRef.current.length > 0 ? markersRef.current : markers}
         onReRecord={() => {
           setFinishedRecording(false);
           setRecordedSeconds(0);
+          recordedSecondsRef.current = 0;
           setActiveTopicSeconds(0);
           setMarkers([]);
+          markersRef.current = [];
         }}
       />
     );

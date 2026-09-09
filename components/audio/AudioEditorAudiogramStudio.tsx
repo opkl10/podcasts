@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { Episode, SubtitleItem, MovieFactCard, ElementTransform, CustomOverlayStyle, AudiogramStudioConfig, AudiogramStudioTemplate, HighlightClip } from '@/lib/types';
-import { getMediaBlob, saveMediaBlob, formatTime, getPermanentLogo, savePermanentLogo, saveEpisode } from '@/lib/storage';
+import { getMediaBlob, saveMediaBlob, formatTime, getPermanentLogo, savePermanentLogo, saveEpisode, findMediaBlobForEpisode, healEpisodeRecording } from '@/lib/storage';
 import { trimAudioBlob } from '@/lib/audioUtils';
 import { 
   Play, 
@@ -60,6 +60,8 @@ interface AudioEditorAudiogramStudioProps {
   onClose: () => void;
   onUpdateEpisode?: (updated: Episode) => void;
   initialClip?: HighlightClip | null;
+  initialAudioBlob?: Blob | null;
+  initialVideoBlob?: Blob | null;
 }
 
 export type WaveformStyle = 
@@ -202,7 +204,9 @@ export default function AudioEditorAudiogramStudio({
   isOpen,
   onClose,
   onUpdateEpisode,
-  initialClip
+  initialClip,
+  initialAudioBlob,
+  initialVideoBlob
 }: AudioEditorAudiogramStudioProps) {
   // Aspect Ratio & Layout
   const [aspectRatio, setAspectRatio] = useState<StudioAspectRatio>(
@@ -212,6 +216,7 @@ export default function AudioEditorAudiogramStudio({
   // Audio state
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
+  const [isAutoHealing, setIsAutoHealing] = useState<boolean>(false);
   const [duration, setDuration] = useState<number>(0);
   const [currentTime, setCurrentTime] = useState<number>(0);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
@@ -964,26 +969,54 @@ export default function AudioEditorAudiogramStudio({
       });
     }
 
-    // Load Media Blob
+    // Load Media Blob with multi-layer fallback and auto-healing
     const loadMedia = async () => {
       let blob: Blob | null = null;
-      if (episode.recording?.audioBlobKey) {
+
+      // 1. Direct props fallback (highest fidelity & immediate)
+      if (initialAudioBlob && initialAudioBlob.size > 1000) {
+        blob = initialAudioBlob;
+      } else if (initialVideoBlob && initialVideoBlob.size > 1000) {
+        blob = initialVideoBlob;
+      }
+
+      // 2. Primary stored keys
+      if (!blob && episode.recording?.audioBlobKey) {
         blob = await getMediaBlob(episode.recording.audioBlobKey);
-      } else if (episode.recording?.videoBlobKey) {
+      }
+      if (!blob && episode.recording?.videoBlobKey) {
         blob = await getMediaBlob(episode.recording.videoBlobKey);
-      } else {
+      }
+      if (!blob) {
         blob = await getMediaBlob(`emergency_rec_${episode.id}`);
       }
 
+      // 3. Deep IndexedDB Scan across all recorded keys
+      if (!blob) {
+        const found = await findMediaBlobForEpisode(episode.id);
+        if (found && found.blob) {
+          blob = found.blob;
+        }
+      }
+
+      // 4. Attach found blob and auto-heal episode if duration or recording was unlinked
       if (blob) {
         setAudioBlob(blob);
         const url = URL.createObjectURL(blob);
         setAudioUrl(url);
+
+        if (!episode.recording || !episode.recording.duration || episode.recording.duration === 0 || episode.status !== 'recorded') {
+          healEpisodeRecording(episode.id).then(healed => {
+            if (healed && onUpdateEpisode) {
+              onUpdateEpisode(healed);
+            }
+          });
+        }
       }
     };
 
     loadMedia();
-  }, [isOpen, episode]);
+  }, [isOpen, episode, initialAudioBlob, initialVideoBlob]);
 
   // 2. Setup Web Audio API Analyser for speech-responsive waveforms
   const setupWebAudio = () => {
@@ -3021,6 +3054,58 @@ export default function AudioEditorAudiogramStudio({
                     }`}
                   >
                     {isClipLockMode ? '🔒 נעול לקליפ' : '🌐 הצג פרק מלא'}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Missing Audio Auto-Heal & Upload Helper Banner */}
+            {!audioBlob && !audioUrl && (
+              <div className="p-4 rounded-2xl bg-amber-950/40 border border-amber-500/40 flex flex-col sm:flex-row items-center justify-between gap-3 text-amber-200 text-xs shadow-xl animate-in fade-in">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-xl bg-amber-500/20 text-amber-400 shrink-0">
+                    <Sparkles className={`w-5 h-5 ${isAutoHealing ? 'animate-spin' : ''}`} />
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-sm text-white">לא זוהה קובץ שמע מקושר לפרק זה</h4>
+                    <p className="text-xs text-amber-300/80">באפשרותך לסרוק את זיכרון הדפדפן לשחזור הקלטות שמורות, או להעלות קובץ שמע ישירות מהמחשב.</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    disabled={isAutoHealing}
+                    onClick={async () => {
+                      setIsAutoHealing(true);
+                      try {
+                        const healed = await healEpisodeRecording(episode.id);
+                        const found = await findMediaBlobForEpisode(episode.id);
+                        if (found?.blob) {
+                          setAudioBlob(found.blob);
+                          setAudioUrl(URL.createObjectURL(found.blob));
+                          if (healed && onUpdateEpisode) onUpdateEpisode(healed);
+                          alert('נמצאה הקלטה ושוחזרה בהצלחה לסטודיו!');
+                        } else {
+                          alert('לא אותרה הקלטה תואמת בזיכרון הדפדפן. באפשרותך לטעון קובץ שמע ישירות מהמחשב.');
+                        }
+                      } catch (err: any) {
+                        alert('שגיאה בסריקת הזיכרון: ' + err.message);
+                      } finally {
+                        setIsAutoHealing(false);
+                      }
+                    }}
+                    className="px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs flex items-center gap-1.5 transition-all shadow-md active:scale-95 disabled:opacity-50"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>{isAutoHealing ? 'סורק...' : '🔍 סרוק ושחזר הקלטה'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => audioUploadInputRef.current?.click()}
+                    className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs flex items-center gap-1.5 transition-all border border-slate-700"
+                  >
+                    <Upload className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>טען מהמחשב</span>
                   </button>
                 </div>
               </div>

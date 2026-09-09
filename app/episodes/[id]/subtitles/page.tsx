@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState, Suspense } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
-import { getEpisodeById, saveEpisode } from '@/lib/storage';
+import { getEpisodeById, saveEpisode, healEpisodeRecording } from '@/lib/storage';
 import { Episode } from '@/lib/types';
 import SubtitleStudio from '@/components/subtitles/SubtitleStudio';
 import { ArrowRight, Sparkles, Subtitles } from 'lucide-react';
@@ -23,6 +23,11 @@ function SubtitlesPageContent() {
     const ep = getEpisodeById(id);
     if (ep) {
       setEpisode(ep);
+      if (!ep.recording || !ep.recording.duration || ep.recording.duration === 0 || ep.status !== 'recorded') {
+        healEpisodeRecording(id).then(healed => {
+          if (healed) setEpisode(healed);
+        });
+      }
     }
     setLoading(false);
   }, [id]);

@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { Episode, SubtitleItem, SubtitleStyle, HighlightClip } from '@/lib/types';
-import { saveEpisode, getMediaBlob, saveMediaBlob } from '@/lib/storage';
+import { saveEpisode, getMediaBlob, saveMediaBlob, findMediaBlobForEpisode } from '@/lib/storage';
 import { 
   exportToSRT, 
   exportToVTT, 
@@ -396,6 +396,12 @@ export default function SubtitleStudio({
         if (!blob) {
           blob = await getMediaBlob(`emergency_rec_${episode.id}`);
         }
+        if (!blob) {
+          const found = await findMediaBlobForEpisode(episode.id);
+          if (found && found.blob) {
+            blob = found.blob;
+          }
+        }
         setIsStandaloneMedia(isStandalone);
         if (blob) {
           setVideoUrl(URL.createObjectURL(blob));
@@ -436,6 +442,13 @@ export default function SubtitleStudio({
       // 3. Try crash recovery emergency blob
       if (!audioBlob) {
         audioBlob = await getMediaBlob(`emergency_rec_${episode.id}`);
+      }
+      // 4. Try deep scan for episode blob
+      if (!audioBlob) {
+        const found = await findMediaBlobForEpisode(episode.id);
+        if (found && found.blob) {
+          audioBlob = found.blob;
+        }
       }
 
       if (!audioBlob) {

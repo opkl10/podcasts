@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { Episode, PodcastShow } from '@/lib/types';
-import { formatTime, exportEpisodeNotes, getMediaBlob, deleteMediaBlob, deleteEpisode } from '@/lib/storage';
+import { formatTime, exportEpisodeNotes, getMediaBlob, deleteMediaBlob, deleteEpisode, findMediaBlobForEpisode } from '@/lib/storage';
 import { convertBlobToStereoWav, convertBlobToMonoWav, exportToSRT, exportToVTT } from '@/lib/audioUtils';
 import { 
   FolderArchive, 
@@ -64,6 +64,10 @@ export default function RecordedEpisodesVault({
         blob = await getMediaBlob(episode.recording.videoBlobKey);
       }
       if (!blob) {
+        const found = await findMediaBlobForEpisode(episode.id);
+        if (found && found.blob) blob = found.blob;
+      }
+      if (!blob) {
         alert('קובץ הווידאו אינו זמין בדיסק המקומי.');
         return;
       }
@@ -89,6 +93,10 @@ export default function RecordedEpisodesVault({
         blob = await getMediaBlob(episode.recording.audioBlobKey);
       } else if (episode.recording?.videoBlobKey) {
         blob = await getMediaBlob(episode.recording.videoBlobKey);
+      }
+      if (!blob) {
+        const found = await findMediaBlobForEpisode(episode.id);
+        if (found && found.blob) blob = found.blob;
       }
       if (!blob) {
         alert('קובץ האודיו אינו זמין בדיסק המקומי.');
@@ -117,6 +125,10 @@ export default function RecordedEpisodesVault({
         blob = await getMediaBlob(episode.recording.audioBlobKey);
       } else if (episode.recording?.videoBlobKey) {
         blob = await getMediaBlob(episode.recording.videoBlobKey);
+      }
+      if (!blob) {
+        const found = await findMediaBlobForEpisode(episode.id);
+        if (found && found.blob) blob = found.blob;
       }
       if (!blob) {
         alert('קובץ האודיו אינו זמין בדיסק המקומי.');

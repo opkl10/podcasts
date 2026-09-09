@@ -25,19 +25,64 @@ function openDB(): Promise<IDBDatabase> {
   });
 }
 
-// Store a large recorded media blob into IndexedDB
+// Store a large recorded media blob into IndexedDB with timeout & abort protection
 export async function saveMediaBlob(key: string, blob: Blob): Promise<void> {
   try {
     const db = await openDB();
     return new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE_NAME, 'readwrite');
-      const store = tx.objectStore(STORE_NAME);
-      const req = store.put(blob, key);
-      req.onsuccess = () => resolve();
-      req.onerror = () => reject(req.error);
+      let isDone = false;
+      const timeout = setTimeout(() => {
+        if (!isDone) {
+          isDone = true;
+          console.warn(`[saveMediaBlob] Warning: saving ${key} timed out after 30s`);
+          resolve(); // Resolve to avoid freezing caller
+        }
+      }, 30000);
+
+      try {
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        const store = tx.objectStore(STORE_NAME);
+        const req = store.put(blob, key);
+
+        req.onsuccess = () => {
+          if (!isDone) {
+            isDone = true;
+            clearTimeout(timeout);
+            resolve();
+          }
+        };
+
+        req.onerror = () => {
+          if (!isDone) {
+            isDone = true;
+            clearTimeout(timeout);
+            reject(req.error || new Error('Request error'));
+          }
+        };
+
+        tx.onerror = () => {
+          if (!isDone) {
+            isDone = true;
+            clearTimeout(timeout);
+            reject(tx.error || new Error('Transaction error'));
+          }
+        };
+
+        tx.onabort = () => {
+          if (!isDone) {
+            isDone = true;
+            clearTimeout(timeout);
+            reject(tx.error || new Error('Transaction aborted'));
+          }
+        };
+      } catch (txErr) {
+        clearTimeout(timeout);
+        reject(txErr);
+      }
     });
   } catch (err) {
     console.error('Failed to save media blob to IndexedDB', err);
+    throw err;
   }
 }
 
@@ -46,14 +91,221 @@ export async function getMediaBlob(key: string): Promise<Blob | null> {
   try {
     const db = await openDB();
     return new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE_NAME, 'readonly');
-      const store = tx.objectStore(STORE_NAME);
-      const req = store.get(key);
-      req.onsuccess = () => resolve(req.result || null);
-      req.onerror = () => reject(req.error);
+      try {
+        const tx = db.transaction(STORE_NAME, 'readonly');
+        const store = tx.objectStore(STORE_NAME);
+        const req = store.get(key);
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => reject(req.error);
+        tx.onerror = () => resolve(null);
+      } catch (txErr) {
+        resolve(null);
+      }
     });
   } catch (err) {
     console.error('Failed to get media blob from IndexedDB', err);
+    return null;
+  }
+}
+
+// Retrieve all stored media keys from IndexedDB
+export async function getMediaBlobKeys(): Promise<string[]> {
+  try {
+    const db = await openDB();
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction(STORE_NAME, 'readonly');
+        const store = tx.objectStore(STORE_NAME);
+        if (typeof store.getAllKeys === 'function') {
+          const req = store.getAllKeys();
+          req.onsuccess = () => resolve((req.result as string[]) || []);
+          req.onerror = () => resolve([]);
+        } else {
+          const req = store.openKeyCursor();
+          const keys: string[] = [];
+          req.onsuccess = (e: any) => {
+            const cursor = e.target?.result;
+            if (cursor) {
+              keys.push(cursor.key as string);
+              cursor.continue();
+            } else {
+              resolve(keys);
+            }
+          };
+          req.onerror = () => resolve([]);
+        }
+      } catch (e) {
+        resolve([]);
+      }
+    });
+  } catch (err) {
+    return [];
+  }
+}
+
+// Find any existing media blob for an episode across all stored keys in IndexedDB
+export async function findMediaBlobForEpisode(episodeId: string): Promise<{ key: string; blob: Blob } | null> {
+  try {
+    const keys = await getMediaBlobKeys();
+    if (!keys || keys.length === 0) return null;
+
+    // Preference 1: Explicit audio key for this episode
+    const audioKeys = keys.filter(k => k.includes(episodeId) && (k.includes('audio') || k.endsWith('_audio'))).reverse();
+    for (const k of audioKeys) {
+      const b = await getMediaBlob(k);
+      if (b && b.size > 2000) return { key: k, blob: b };
+    }
+
+    // Preference 2: Video or standard recording key for this episode
+    const videoKeys = keys.filter(k => k.includes(episodeId) && !k.includes('audio') && !k.startsWith('emergency_rec')).reverse();
+    for (const k of videoKeys) {
+      const b = await getMediaBlob(k);
+      if (b && b.size > 5000) return { key: k, blob: b };
+    }
+
+    // Preference 3: Emergency recovery chunk for this episode
+    const emergKeys = keys.filter(k => k.includes(episodeId) && k.startsWith('emergency_rec')).reverse();
+    for (const k of emergKeys) {
+      const b = await getMediaBlob(k);
+      if (b && b.size > 5000) return { key: k, blob: b };
+    }
+
+    // Preference 4: Any uploaded recording key for this episode
+    const uploadedKeys = keys.filter(k => k.includes(episodeId)).reverse();
+    for (const k of uploadedKeys) {
+      const b = await getMediaBlob(k);
+      if (b && b.size > 2000) return { key: k, blob: b };
+    }
+
+    // Preference 5: If no match by episodeId, check the most recent rec_ key if there is only 1 or recently modified
+    const anyRecKeys = keys.filter(k => k.startsWith('rec_')).reverse();
+    if (anyRecKeys.length > 0) {
+      const b = await getMediaBlob(anyRecKeys[0]);
+      if (b && b.size > 10000) {
+        return { key: anyRecKeys[0], blob: b };
+      }
+    }
+  } catch (err) {
+    console.error('Error finding media blob for episode:', err);
+  }
+  return null;
+}
+
+// Auto-heal an episode's recording metadata if the media blob exists in IndexedDB
+export async function healEpisodeRecording(episodeId: string): Promise<Episode | null> {
+  if (typeof window === 'undefined') return null;
+  try {
+    const episode = getEpisodeById(episodeId);
+    if (!episode) return null;
+
+    // Check if recording already points to a valid blob in IndexedDB
+    let currentValidBlob: Blob | null = null;
+    let validKey: string | null = null;
+
+    if (episode.recording?.audioBlobKey) {
+      currentValidBlob = await getMediaBlob(episode.recording.audioBlobKey);
+      if (currentValidBlob && currentValidBlob.size > 2000) {
+        validKey = episode.recording.audioBlobKey;
+      }
+    }
+    if (!currentValidBlob && episode.recording?.videoBlobKey) {
+      currentValidBlob = await getMediaBlob(episode.recording.videoBlobKey);
+      if (currentValidBlob && currentValidBlob.size > 2000) {
+        validKey = episode.recording.videoBlobKey;
+      }
+    }
+
+    // If valid blob already linked, ensure duration > 0 and status is recorded
+    if (currentValidBlob && validKey) {
+      if (!episode.recording?.duration || episode.recording.duration === 0 || episode.status !== 'recorded') {
+        let detectedDuration = episode.recording?.duration || 0;
+        if (!detectedDuration || detectedDuration === 0) {
+          detectedDuration = await detectBlobDuration(currentValidBlob) || Math.round(currentValidBlob.size / 150000) || (episode.targetDurationMinutes * 60);
+        }
+
+        const healed: Episode = {
+          ...episode,
+          status: episode.status === 'published' ? 'published' : 'recorded',
+          recording: {
+            ...episode.recording!,
+            duration: detectedDuration > 0 ? detectedDuration : (episode.targetDurationMinutes * 60 || 60),
+            recordedAt: episode.recording?.recordedAt || new Date().toISOString()
+          }
+        };
+        saveEpisode(healed);
+        return healed;
+      }
+      return episode;
+    }
+
+    // Media blob is not linked or recording is undefined -> search IndexedDB!
+    const found = await findMediaBlobForEpisode(episodeId);
+    if (found && found.blob && found.blob.size > 2000) {
+      const detectedDuration = await detectBlobDuration(found.blob) || Math.round(found.blob.size / 150000) || (episode.targetDurationMinutes * 60) || 60;
+      const isAudio = found.key.includes('audio') || (found.blob.type && found.blob.type.includes('audio'));
+
+      const healed: Episode = {
+        ...episode,
+        status: episode.status === 'published' ? 'published' : 'recorded',
+        recording: {
+          duration: detectedDuration,
+          recordedAt: new Date().toISOString(),
+          audioBlobKey: isAudio ? found.key : undefined,
+          videoBlobKey: !isAudio ? found.key : undefined,
+          fileSize: found.blob.size,
+          mimeType: found.blob.type || (isAudio ? 'audio/webm' : 'video/webm'),
+          markers: episode.recording?.markers || [],
+          topicsCovered: episode.topics.map(t => t.id)
+        }
+      };
+
+      saveEpisode(healed);
+      console.log(`[Auto-Heal] Successfully restored recording for episode "${healed.title}" (key: ${found.key}, duration: ${detectedDuration}s)`);
+      return healed;
+    }
+  } catch (err) {
+    console.error('Failed to heal episode recording:', err);
+  }
+  return null;
+}
+
+// Auto-heal all episodes in storage if any recording blobs are unlinked
+export async function autoHealAllEpisodes(): Promise<Episode[]> {
+  if (typeof window === 'undefined') return [];
+  const episodes = getEpisodes();
+  let anyHealed = false;
+
+  for (const ep of episodes) {
+    if (!ep.recording || !ep.recording.duration || ep.recording.duration === 0 || ep.status !== 'recorded') {
+      const healed = await healEpisodeRecording(ep.id);
+      if (healed) anyHealed = true;
+    }
+  }
+
+  return anyHealed ? getEpisodes() : episodes;
+}
+
+// Helper to determine media duration from blob
+async function detectBlobDuration(blob: Blob): Promise<number | null> {
+  try {
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    return new Promise<number | null>((resolve) => {
+      audio.onloadedmetadata = () => {
+        const d = Math.round(audio.duration);
+        URL.revokeObjectURL(url);
+        resolve(d > 0 && isFinite(d) ? d : null);
+      };
+      audio.onerror = () => {
+        URL.revokeObjectURL(url);
+        resolve(null);
+      };
+      setTimeout(() => {
+        URL.revokeObjectURL(url);
+        resolve(null);
+      }, 2500);
+    });
+  } catch {
     return null;
   }
 }

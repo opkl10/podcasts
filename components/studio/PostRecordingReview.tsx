@@ -448,6 +448,8 @@ export default function PostRecordingReview({
         <AudioEditorAudiogramStudio
           episode={episode}
           isOpen={isAudiogramOpen}
+          initialAudioBlob={audioBlob}
+          initialVideoBlob={videoBlob}
           onClose={() => setIsAudiogramOpen(false)}
         />
       )}

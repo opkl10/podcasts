@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { Episode, EpisodeStatus, PodcastShow } from '@/lib/types';
-import { getPodcasts, getPodcastById, saveMediaBlob, getMediaBlob, deleteMediaBlob, formatTime } from '@/lib/storage';
+import { getPodcasts, getPodcastById, saveMediaBlob, getMediaBlob, deleteMediaBlob, formatTime, healEpisodeRecording } from '@/lib/storage';
 import { 
   ArrowRight, 
   Mic, 
@@ -69,6 +69,17 @@ export default function EpisodeDetailsHeader({
   useEffect(() => {
     setPodcasts(getPodcasts());
   }, []);
+
+  useEffect(() => {
+    // If episode has missing recording or 0 duration, auto-heal from IndexedDB
+    if (!episode.recording || !episode.recording.duration || episode.recording.duration === 0 || episode.status !== 'recorded') {
+      healEpisodeRecording(episode.id).then(healed => {
+        if (healed) {
+          onUpdateEpisode(healed);
+        }
+      });
+    }
+  }, [episode.id]);
 
   useEffect(() => {
     let isMounted = true;
