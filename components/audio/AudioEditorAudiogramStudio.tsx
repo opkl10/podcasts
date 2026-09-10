@@ -610,6 +610,9 @@ export default function AudioEditorAudiogramStudio({
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const sourceNodeRef = useRef<MediaElementAudioSourceNode | null>(null);
+  const connectedAudioElementRef = useRef<HTMLAudioElement | null>(null);
+  const decodedAudioBufferRef = useRef<AudioBuffer | null>(null);
+  const lastSeekTimeRef = useRef<number>(0);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const animFrameRef = useRef<number | null>(null);
   const logoFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -1026,29 +1029,84 @@ export default function AudioEditorAudiogramStudio({
     loadMedia();
   }, [isOpen, episode, initialAudioBlob, initialVideoBlob]);
 
-  // 2. Setup Web Audio API Analyser for speech-responsive waveforms
+  // 2. Setup Web Audio API Analyser for speech-responsive waveforms with safe reconnect
   const setupWebAudio = () => {
-    if (audioContextRef.current || !audioElementRef.current) return;
+    if (!audioElementRef.current) return;
     try {
       const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-      const ctx = new AudioCtx();
-      audioContextRef.current = ctx;
+      if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
+        audioContextRef.current = new AudioCtx();
+      }
+      const ctx = audioContextRef.current;
+      if (ctx.state === 'suspended') {
+        ctx.resume().catch(() => {});
+      }
 
-      const analyser = ctx.createAnalyser();
-      analyser.fftSize = 512;
-      analyser.smoothingTimeConstant = 0.82;
-      analyserRef.current = analyser;
+      if (!analyserRef.current) {
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 512;
+        analyser.smoothingTimeConstant = 0.82;
+        analyserRef.current = analyser;
+      }
+      const analyser = analyserRef.current;
 
-      const source = ctx.createMediaElementSource(audioElementRef.current);
-      sourceNodeRef.current = source;
-
-      // Connect source to analyser for dynamic visualizer, and connect analyser to audio destination (speakers) for full sound playback!
-      source.connect(analyser);
-      analyser.connect(ctx.destination);
+      // Connect MediaElementSource safely without duplicate connection errors
+      if (connectedAudioElementRef.current !== audioElementRef.current) {
+        try {
+          if (sourceNodeRef.current) {
+            try { sourceNodeRef.current.disconnect(); } catch {}
+          }
+          const source = ctx.createMediaElementSource(audioElementRef.current);
+          sourceNodeRef.current = source;
+          connectedAudioElementRef.current = audioElementRef.current;
+          source.connect(analyser);
+          analyser.connect(ctx.destination);
+        } catch (e) {
+          console.warn('[AudiogramStudio] MediaElementSource setup notice:', e);
+        }
+      }
     } catch (e) {
-      console.warn('Web Audio setup notice:', e);
+      console.warn('[AudiogramStudio] Web Audio setup notice:', e);
     }
   };
+
+  // 2b. Pre-decode audio bytes into an AudioBuffer for 100% resilient speech-reactive waveforms
+  useEffect(() => {
+    let isCancelled = false;
+
+    const decodeCurrentAudio = async () => {
+      let bufferToDecode: ArrayBuffer | null = null;
+      try {
+        if (audioBlob) {
+          bufferToDecode = await audioBlob.arrayBuffer();
+        } else if (audioUrl) {
+          const res = await fetch(audioUrl);
+          bufferToDecode = await res.arrayBuffer();
+        }
+      } catch (err) {
+        console.warn('[AudiogramStudio] Could not get audio buffer for decoding:', err);
+      }
+
+      if (!bufferToDecode || isCancelled) return;
+
+      try {
+        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+        const tempCtx = new AudioCtx();
+        const decoded = await tempCtx.decodeAudioData(bufferToDecode.slice(0));
+        tempCtx.close().catch(() => {});
+        if (!isCancelled) {
+          decodedAudioBufferRef.current = decoded;
+        }
+      } catch (err) {
+        console.warn('[AudiogramStudio] decodeAudioData error:', err);
+      }
+    };
+
+    decodeCurrentAudio();
+    return () => {
+      isCancelled = true;
+    };
+  }, [audioBlob, audioUrl]);
 
   // 3. Preload Background & Logo Images
   useEffect(() => {
@@ -1193,20 +1251,98 @@ export default function AudioEditorAudiogramStudio({
         ctx.stroke();
       }
 
-      // B. EXTRACT AUDIO FREQUENCIES / TIME DOMAIN
+      // B. EXTRACT AUDIO FREQUENCIES / TIME DOMAIN (Dual-Engine: Live Analyser + Sample-Accurate Decoded Buffer)
+      const currentAudioPos = isExportingVideo && exportStartTimeRef.current
+        ? (trimStart + (performance.now() - exportStartTimeRef.current) / 1000)
+        : (audioElementRef.current ? audioElementRef.current.currentTime : currentTime);
+
+      const isAudioActive = isPlaying || isExportingVideo;
+      const isRecentlyScrubbed = (performance.now() - lastSeekTimeRef.current) < 500;
+
       let freqArray = new Uint8Array(64);
       let timeArray = new Uint8Array(256);
 
-      if (analyserRef.current && isPlaying) {
-        freqArray = new Uint8Array(analyserRef.current.frequencyBinCount);
-        analyserRef.current.getByteFrequencyData(freqArray);
-        timeArray = new Uint8Array(analyserRef.current.fftSize);
-        analyserRef.current.getByteTimeDomainData(timeArray);
-      } else {
-        // Idle ambient gentle breathing
+      let analyserHasSignal = false;
+      if (analyserRef.current && isAudioActive) {
+        const fullFreq = new Uint8Array(analyserRef.current.frequencyBinCount);
+        analyserRef.current.getByteFrequencyData(fullFreq);
+        const fullTime = new Uint8Array(analyserRef.current.fftSize);
+        analyserRef.current.getByteTimeDomainData(fullTime);
+
+        // Verify if analyser is receiving real acoustic sound (not silenced by CORS/browser)
+        let sum = 0;
+        for (let i = 0; i < Math.min(fullFreq.length, 64); i++) {
+          sum += fullFreq[i];
+        }
+        if (sum > 10) {
+          analyserHasSignal = true;
+          for (let i = 0; i < 64; i++) {
+            freqArray[i] = fullFreq[i] || 0;
+          }
+          for (let i = 0; i < 256; i++) {
+            timeArray[i] = fullTime[i] || 128;
+          }
+        }
+      }
+
+      // Resilient Fallback: Sample directly from in-memory Decoded AudioBuffer
+      if (!analyserHasSignal && decodedAudioBufferRef.current && (isAudioActive || isRecentlyScrubbed)) {
+        const buffer = decodedAudioBufferRef.current;
+        const channelData = buffer.getChannelData(0);
+        const sampleRate = buffer.sampleRate;
+        const centerSample = Math.floor(currentAudioPos * sampleRate);
+
+        // 1. Extract accurate PCM time-domain waveform around current position
+        for (let i = 0; i < 256; i++) {
+          const sampleIdx = centerSample - 128 + i;
+          if (sampleIdx >= 0 && sampleIdx < channelData.length) {
+            const val = Math.max(-1, Math.min(1, channelData[sampleIdx]));
+            timeArray[i] = Math.round((val + 1) * 127.5);
+          } else {
+            timeArray[i] = 128;
+          }
+        }
+
+        // 2. Compute local speech acoustic energy (RMS) around current timestamp (~23ms window)
+        let sumSq = 0;
+        const rmsStart = Math.max(0, centerSample - 512);
+        const rmsEnd = Math.min(channelData.length, centerSample + 512);
+        const count = rmsEnd - rmsStart;
+        if (count > 0) {
+          for (let s = rmsStart; s < rmsEnd; s++) {
+            const val = channelData[s];
+            sumSq += val * val;
+          }
+        }
+        const rms = count > 0 ? Math.sqrt(sumSq / count) : 0;
+        const energy = Math.min(255, Math.pow(Math.min(1, rms * 3.8), 0.7) * 255);
+
+        // 3. Generate speech-reactive frequency spectrum bins
+        if (energy > 5) {
+          const t = currentAudioPos * 35;
+          for (let b = 0; b < 64; b++) {
+            const subIdx = centerSample + (b * 6) - 192;
+            const samplePeak = (subIdx >= 0 && subIdx < channelData.length) ? Math.abs(channelData[subIdx]) : 0;
+            // Vocal formant distribution: natural speech presence in low-mids tapering off gracefully in highs
+            const vocalFormant = Math.exp(-b / 24) * (0.75 + 0.25 * Math.sin(b * 0.35 + t));
+            const binVal = (energy * 0.85 * vocalFormant) + (samplePeak * 170 * (1 - b / 75));
+            freqArray[b] = Math.min(255, Math.max(10, Math.round(binVal)));
+          }
+        } else {
+          // Subtle gentle ambient breathing during natural pauses in speech
+          const t = performance.now() * 0.003;
+          for (let i = 0; i < 64; i++) {
+            freqArray[i] = Math.sin(t + i * 0.2) * 8 + 12;
+          }
+        }
+      } else if (!analyserHasSignal) {
+        // Idle ambient gentle breathing when stopped/paused
         const t = performance.now() * 0.003;
         for (let i = 0; i < 64; i++) {
           freqArray[i] = Math.sin(t + i * 0.2) * 15 + 20;
+        }
+        for (let i = 0; i < 256; i++) {
+          timeArray[i] = 128 + Math.round(Math.sin(t + i * 0.08) * 8);
         }
       }
 
@@ -2079,12 +2215,14 @@ export default function AudioEditorAudiogramStudio({
   ]);
 
   // Audio Playback Handlers
-  const handleTogglePlay = () => {
+  const handleTogglePlay = async () => {
     if (!audioElementRef.current) return;
     setupWebAudio();
 
     if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
-      audioContextRef.current.resume().catch(() => {});
+      try {
+        await audioContextRef.current.resume();
+      } catch {}
     }
 
     if (isPlaying) {
@@ -2146,6 +2284,7 @@ export default function AudioEditorAudiogramStudio({
   };
 
   const handleSeek = (newTime: number) => {
+    lastSeekTimeRef.current = performance.now();
     if (!audioElementRef.current) return;
     audioElementRef.current.currentTime = newTime;
     setCurrentTime(newTime);
@@ -3116,18 +3255,19 @@ export default function AudioEditorAudiogramStudio({
             </>
           )}
 
-            {/* Hidden Native Audio Element */}
-              {audioUrl && (
-                <audio
-                  ref={audioElementRef}
-                  src={audioUrl}
-                  onTimeUpdate={handleTimeUpdate}
-                  onLoadedMetadata={handleLoadedMetadata}
-                  onEnded={() => setIsPlaying(false)}
-                  className="hidden"
-                />
-              )}
-            </div>
+            {/* Hidden Native Audio Element (Persistent, CORS-safe, PlaysInline) */}
+            <audio
+              ref={audioElementRef}
+              src={audioUrl || undefined}
+              crossOrigin="anonymous"
+              playsInline
+              preload="auto"
+              onTimeUpdate={handleTimeUpdate}
+              onLoadedMetadata={handleLoadedMetadata}
+              onEnded={() => setIsPlaying(false)}
+              className="hidden"
+            />
+          </div>
 
             {/* Clip Active Mode Bar */}
             {isClipLockMode && trimEnd > trimStart && (
