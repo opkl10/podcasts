@@ -51,8 +51,21 @@ export default function StudioPage({ params }: StudioPageProps) {
     );
   }
 
+  useEffect(() => {
+    if (episode && episode.mediaType === 'gaming_creator') {
+      router.replace(`/gaming?episodeId=${episode.id}`);
+    }
+  }, [episode, router]);
+
   if (episode.mediaType === 'gaming_creator') {
-    return <GamingRecordingStudio episode={episode} />;
+    return (
+      <div className="flex items-center justify-center min-h-[70vh]">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-10 h-10 border-4 border-purple-500 border-t-transparent rounded-full animate-spin"></div>
+          <span className="text-sm font-semibold text-purple-300">מעביר לאולפן גיימינג ייעודי...</span>
+        </div>
+      </div>
+    );
   }
 
   return <RecordingStudio episode={episode} />;

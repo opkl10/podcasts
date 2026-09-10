@@ -22,7 +22,8 @@ import {
   Music,
   Cloud,
   Palette,
-  Activity
+  Activity,
+  Gamepad2
 } from 'lucide-react';
 import AudioEditorAudiogramStudio from '@/components/audio/AudioEditorAudiogramStudio';
 
@@ -30,6 +31,7 @@ interface PostRecordingReviewProps {
   episode: Episode;
   videoBlob: Blob | null;
   audioBlob: Blob | null;
+  gameAudioBlob?: Blob | null;
   videoUrl: string | null;
   durationSeconds: number;
   markers: TimestampMarker[];
@@ -40,6 +42,7 @@ export default function PostRecordingReview({
   episode,
   videoBlob,
   audioBlob,
+  gameAudioBlob,
   videoUrl,
   durationSeconds,
   markers,
@@ -115,6 +118,16 @@ export default function PostRecordingReview({
     const a = document.createElement('a');
     a.href = url;
     a.download = `master-audio-ep${episode.episodeNumber}-${episode.title.replace(/\s+/g, '-')}.webm`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleDownloadGameAudio = () => {
+    if (!gameAudioBlob) return;
+    const url = URL.createObjectURL(gameAudioBlob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `game-audio-ep${episode.episodeNumber}-${episode.title.replace(/\s+/g, '-')}.webm`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -264,6 +277,25 @@ export default function PostRecordingReview({
                 </div>
                 <Download className="w-4 h-4 text-emerald-400 group-hover:translate-y-0.5 transition-transform shrink-0" />
               </button>
+
+              {/* 2b. Isolated Console / Game Audio Download (if gaming) */}
+              {gameAudioBlob && (
+                <button
+                  onClick={handleDownloadGameAudio}
+                  className="flex items-center justify-between p-3.5 rounded-2xl bg-cyan-600/10 hover:bg-cyan-600/20 border border-cyan-500/30 text-cyan-300 hover:text-white transition-all text-right group"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-2 rounded-xl bg-cyan-600 text-white shrink-0">
+                      <Gamepad2 className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold text-white">סאונד משחק נקי (Console)</p>
+                      <p className="text-[10px] text-slate-400">ערוץ אלגטו מבודד לעריכה</p>
+                    </div>
+                  </div>
+                  <Download className="w-4 h-4 text-cyan-400 group-hover:translate-y-0.5 transition-transform shrink-0" />
+                </button>
+              )}
 
               {/* 3. Show Notes Markdown */}
               <button

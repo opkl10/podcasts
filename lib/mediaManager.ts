@@ -1,6 +1,6 @@
 import { AudioInputDevice, VideoInputDevice } from './types';
 
-// Detect and enumerate media devices with special flag for iPhone / Continuity Camera
+// Detect and enumerate media devices with special flag for iPhone / Continuity Camera / Capture Cards
 export async function getMediaDevices(): Promise<{
   audioInputs: AudioInputDevice[];
   videoInputs: VideoInputDevice[];
@@ -13,7 +13,15 @@ export async function getMediaDevices(): Promise<{
     let stream: MediaStream | null = null;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
-    } catch {}
+    } catch {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      } catch {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        } catch {}
+      }
+    }
 
     const devices = await navigator.mediaDevices.enumerateDevices();
 
@@ -31,10 +39,48 @@ export async function getMediaDevices(): Promise<{
           label: device.label || `מיקרופון (${audioInputs.length + 1})`
         });
       } else if (device.kind === 'videoinput') {
-        const labelLower = device.label.toLowerCase();
-        const isIPhone = labelLower.includes('iphone') || labelLower.includes('continuity') || labelLower.includes('desk view') || labelLower.includes('center stage');
-        const isContinuity = labelLower.includes('continuity') || labelLower.includes('iphone');
-        const isCaptureCard = labelLower.includes('elgato') || labelLower.includes('cam link') || labelLower.includes('capture') || labelLower.includes('hdmi') || labelLower.includes('usb video') || labelLower.includes('game');
+        const labelLower = (device.label || '').toLowerCase();
+        
+        // Comprehensive iPhone / Continuity Camera matching (Hebrew + English + 3rd-party companion apps)
+        const isIPhone = 
+          labelLower.includes('iphone') || 
+          labelLower.includes('אייפון') || 
+          labelLower.includes('continuity') || 
+          labelLower.includes('המשכיות') || 
+          labelLower.includes('desk view') || 
+          labelLower.includes('center stage') || 
+          labelLower.includes('במה מרכזית') ||
+          labelLower.includes('camo') || 
+          labelLower.includes('epoccam') || 
+          labelLower.includes('iriun') || 
+          labelLower.includes('droidcam') || 
+          labelLower.includes('apple') || 
+          labelLower.includes('ios');
+
+        const isContinuity = 
+          labelLower.includes('continuity') || 
+          labelLower.includes('המשכיות') || 
+          labelLower.includes('iphone') || 
+          labelLower.includes('אייפון');
+
+        // Comprehensive Capture Card matching (Elgato, Cam Link, HD60, 4K X/Pro, HDMI, USB Video)
+        const isCaptureCard = 
+          labelLower.includes('elgato') || 
+          labelLower.includes('cam link') || 
+          labelLower.includes('camlink') || 
+          labelLower.includes('hd60') || 
+          labelLower.includes('4k x') || 
+          labelLower.includes('4kx') || 
+          labelLower.includes('4k60') || 
+          labelLower.includes('4k pro') || 
+          labelLower.includes('capture') || 
+          labelLower.includes('לוכד') || 
+          labelLower.includes('hdmi') || 
+          labelLower.includes('usb video') || 
+          labelLower.includes('usb3.0') || 
+          labelLower.includes('avermedia') || 
+          labelLower.includes('shadowcast') || 
+          labelLower.includes('game capture');
 
         videoInputs.push({
           deviceId: device.deviceId,
@@ -55,6 +101,37 @@ export async function getMediaDevices(): Promise<{
 
 export type VideoResolution = '720p' | '1080p' | '4k';
 
+// Progressive constraint stages for Hardware Capture Cards (Elgato 4K, Cam Link 4K, HD60)
+export function getCaptureCardConstraints(resolution: VideoResolution = '1080p', deviceId?: string): MediaTrackConstraints[] {
+  const baseId = deviceId ? { deviceId: { exact: deviceId } } : {};
+  const idealId = deviceId ? { deviceId: { ideal: deviceId } } : {};
+
+  if (resolution === '4k') {
+    return [
+      // 1. True 4K 60FPS (Elgato 4K X / 4K60 Pro / 4K Pro)
+      { ...baseId, width: { ideal: 3840, min: 2560 }, height: { ideal: 2160, min: 1440 }, frameRate: { ideal: 60 } },
+      // 2. True 4K 30FPS (Elgato Cam Link 4K / HDMI 4K30)
+      { ...baseId, width: { ideal: 3840, min: 2560 }, height: { ideal: 2160, min: 1440 }, frameRate: { ideal: 30 } },
+      // 3. 4K ideal without strict min
+      { ...baseId, width: { ideal: 3840 }, height: { ideal: 2160 }, frameRate: { ideal: 60 } },
+      // 4. High-Bitrate Full HD 60FPS fallback
+      { ...baseId, width: { ideal: 1920, min: 1280 }, height: { ideal: 1080, min: 720 }, frameRate: { ideal: 60 } },
+      // 5. Relaxed 1080p
+      { ...idealId, width: { ideal: 1920 }, height: { ideal: 1080 } },
+      // 6. Generic device fallback
+      { ...idealId }
+    ];
+  }
+
+  // 1080p
+  return [
+    { ...baseId, width: { ideal: 1920, min: 1280 }, height: { ideal: 1080, min: 720 }, frameRate: { ideal: 60 } },
+    { ...baseId, width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 60 } },
+    { ...idealId, width: { ideal: 1920 }, height: { ideal: 1080 } },
+    { ...idealId }
+  ];
+}
+
 // High-Precision Video Resolution Constraints for Full HD & 4K Ultra HD
 export function getVideoConstraints(resolution: VideoResolution = '1080p', deviceId?: string): MediaTrackConstraints {
   const base: MediaTrackConstraints = deviceId ? { deviceId: { ideal: deviceId } } : {};
@@ -63,16 +140,16 @@ export function getVideoConstraints(resolution: VideoResolution = '1080p', devic
     case '4k':
       return {
         ...base,
-        width: { ideal: 3840 },
-        height: { ideal: 2160 },
-        frameRate: { ideal: 60, max: 60 }
+        width: { ideal: 3840, min: 1920 },
+        height: { ideal: 2160, min: 1080 },
+        frameRate: { ideal: 60 }
       };
     case '1080p':
       return {
         ...base,
         width: { ideal: 1920 },
         height: { ideal: 1080 },
-        frameRate: { ideal: 60, max: 60 }
+        frameRate: { ideal: 60 }
       };
     case '720p':
     default:
@@ -80,7 +157,7 @@ export function getVideoConstraints(resolution: VideoResolution = '1080p', devic
         ...base,
         width: { ideal: 1280 },
         height: { ideal: 720 },
-        frameRate: { ideal: 60, max: 60 }
+        frameRate: { ideal: 60 }
       };
   }
 }
@@ -330,32 +407,53 @@ export async function getScreenCaptureStream(options: {
   });
 }
 
-// Dual Audio Mixer: Mic Audio + Game/System Audio with Live VU Metering
+// Dual Audio Mixer: Mic Audio + Game/Console Audio with Live VU Metering, Channel Splitting & Headphone Monitoring
 export class GamingAudioMixer {
   private audioCtx: AudioContext | null = null;
   private micSource: MediaStreamAudioSourceNode | null = null;
   private gameSource: MediaStreamAudioSourceNode | null = null;
   private micGainNode: GainNode | null = null;
   private gameGainNode: GainNode | null = null;
-  private destinationNode: MediaStreamAudioDestinationNode | null = null;
+  private monitorGainNode: GainNode | null = null;
+  private masterDestinationNode: MediaStreamAudioDestinationNode | null = null;
+  private micDestinationNode: MediaStreamAudioDestinationNode | null = null;
+  private gameDestinationNode: MediaStreamAudioDestinationNode | null = null;
   private micAnalyser: AnalyserNode | null = null;
   private gameAnalyser: AnalyserNode | null = null;
+  private mergerNode: ChannelMergerNode | null = null;
   private animId: number | null = null;
 
+  private isMonitoringGame: boolean = true;
+  private isChannelSplit: boolean = false;
   private onLevelsChange?: (micLevel: number, gameLevel: number) => void;
 
   constructor(onLevelsChange?: (micLevel: number, gameLevel: number) => void) {
     this.onLevelsChange = onLevelsChange;
   }
 
-  public setup(micStream: MediaStream | null, gameStream: MediaStream | null): MediaStream | null {
+  public setup(
+    micStream: MediaStream | null, 
+    gameStream: MediaStream | null, 
+    options?: { splitChannels?: boolean; monitorGame?: boolean }
+  ): { 
+    mixedStream: MediaStream | null; 
+    isolatedMicStream: MediaStream | null; 
+    isolatedGameStream: MediaStream | null; 
+  } {
     this.stop();
 
+    if (options) {
+      if (options.splitChannels !== undefined) this.isChannelSplit = options.splitChannels;
+      if (options.monitorGame !== undefined) this.isMonitoringGame = options.monitorGame;
+    }
+
     const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-    if (!AudioContextClass) return null;
+    if (!AudioContextClass) return { mixedStream: null, isolatedMicStream: null, isolatedGameStream: null };
 
     this.audioCtx = new AudioContextClass({ latencyHint: 'interactive' });
-    this.destinationNode = this.audioCtx.createMediaStreamDestination();
+    this.masterDestinationNode = this.audioCtx.createMediaStreamDestination();
+    this.micDestinationNode = this.audioCtx.createMediaStreamDestination();
+    this.gameDestinationNode = this.audioCtx.createMediaStreamDestination();
 
     // 1. Mic Channel
     if (micStream && micStream.getAudioTracks().length > 0) {
@@ -367,13 +465,15 @@ export class GamingAudioMixer {
 
         this.micSource.connect(this.micGainNode);
         this.micGainNode.connect(this.micAnalyser);
-        this.micGainNode.connect(this.destinationNode);
+        
+        // Connect to isolated mic track destination
+        this.micGainNode.connect(this.micDestinationNode);
       } catch (err) {
         console.warn('Could not connect mic track to mixer:', err);
       }
     }
 
-    // 2. Game Channel
+    // 2. Game Channel (Console / Elgato / Desktop)
     if (gameStream && gameStream.getAudioTracks().length > 0) {
       try {
         this.gameSource = this.audioCtx.createMediaStreamSource(gameStream);
@@ -383,16 +483,41 @@ export class GamingAudioMixer {
 
         this.gameSource.connect(this.gameGainNode);
         this.gameGainNode.connect(this.gameAnalyser);
-        this.gameGainNode.connect(this.destinationNode);
+
+        // Connect to isolated game track destination
+        this.gameGainNode.connect(this.gameDestinationNode);
+
+        // Headphone Monitoring for Game Audio (So player can hear the console live in headphones!)
+        this.monitorGainNode = this.audioCtx.createGain();
+        this.monitorGainNode.gain.setValueAtTime(this.isMonitoringGame ? 1.0 : 0.0, this.audioCtx.currentTime);
+        this.gameGainNode.connect(this.monitorGainNode);
+        this.monitorGainNode.connect(this.audioCtx.destination);
       } catch (err) {
         console.warn('Could not connect game track to mixer:', err);
       }
     }
 
+    // 3. Connect to Master Destination (either Split Channels or Stereo Mix)
+    if (this.isChannelSplit) {
+      // Channel 0 = Mic (Left), Channel 1 = Game (Right)
+      this.mergerNode = this.audioCtx.createChannelMerger(2);
+      if (this.micGainNode) this.micGainNode.connect(this.mergerNode, 0, 0);
+      if (this.gameGainNode) this.gameGainNode.connect(this.mergerNode, 0, 1);
+      this.mergerNode.connect(this.masterDestinationNode);
+    } else {
+      // Standard stereo composite mix
+      if (this.micGainNode) this.micGainNode.connect(this.masterDestinationNode);
+      if (this.gameGainNode) this.gameGainNode.connect(this.masterDestinationNode);
+    }
+
     // Start Level Loop
     this.startLevelLoop();
 
-    return this.destinationNode.stream;
+    return {
+      mixedStream: this.masterDestinationNode.stream,
+      isolatedMicStream: this.micDestinationNode.stream,
+      isolatedGameStream: this.gameDestinationNode.stream
+    };
   }
 
   public setMicVolume(volume: number) {
@@ -405,6 +530,25 @@ export class GamingAudioMixer {
     if (this.gameGainNode && this.audioCtx) {
       this.gameGainNode.gain.setValueAtTime(Math.max(0, volume), this.audioCtx.currentTime);
     }
+  }
+
+  public setMonitoringGameAudio(enabled: boolean) {
+    this.isMonitoringGame = enabled;
+    if (this.monitorGainNode && this.audioCtx) {
+      this.monitorGainNode.gain.setValueAtTime(enabled ? 1.0 : 0.0, this.audioCtx.currentTime);
+    }
+  }
+
+  public setSplitChannels(enabled: boolean) {
+    this.isChannelSplit = enabled;
+  }
+
+  public getIsolatedMicStream(): MediaStream | null {
+    return this.micDestinationNode?.stream || null;
+  }
+
+  public getIsolatedGameStream(): MediaStream | null {
+    return this.gameDestinationNode?.stream || null;
   }
 
   private startLevelLoop() {
@@ -451,6 +595,14 @@ export class GamingAudioMixer {
     if (this.gameSource) {
       try { this.gameSource.disconnect(); } catch {}
       this.gameSource = null;
+    }
+    if (this.monitorGainNode) {
+      try { this.monitorGainNode.disconnect(); } catch {}
+      this.monitorGainNode = null;
+    }
+    if (this.mergerNode) {
+      try { this.mergerNode.disconnect(); } catch {}
+      this.mergerNode = null;
     }
     if (this.audioCtx && this.audioCtx.state !== 'closed') {
       try { this.audioCtx.close(); } catch {}

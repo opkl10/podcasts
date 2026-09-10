@@ -16,8 +16,7 @@ import {
   Mic,
   BookOpen,
   Radio,
-  Video,
-  Gamepad2
+  Video
 } from 'lucide-react';
 
 const TEMPLATES = [
@@ -109,8 +108,8 @@ export default function NewEpisodePage() {
   const router = useRouter();
   const [podcasts, setPodcasts] = useState<PodcastShow[]>([]);
   const [selectedPodcastId, setSelectedPodcastId] = useState<string>('');
+  const [mediaType, setMediaType] = useState<'video' | 'audio_only'>('video');
   const [selectedTemplate, setSelectedTemplate] = useState<string>('interview');
-  const [mediaType, setMediaType] = useState<'video' | 'audio_only' | 'gaming_creator'>('video');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [hostName, setHostName] = useState('');
@@ -170,11 +169,7 @@ export default function NewEpisodePage() {
     };
 
     saveEpisode(newEpisode);
-    if (mediaType === 'gaming_creator') {
-      router.push(`/gaming?episodeId=${newEpisode.id}`);
-    } else {
-      router.push(`/episodes/${newEpisode.id}`);
-    }
+    router.push(`/episodes/${newEpisode.id}`);
   };
 
   return (
@@ -259,12 +254,12 @@ export default function NewEpisodePage() {
             </div>
           </div>
 
-          {/* Format: Video Podcast vs Gaming Creator vs Audio Only Radio */}
+          {/* Format: Video Podcast vs Audio Only Radio */}
           <div>
             <label className="block text-xs font-bold text-slate-300 mb-2">
               פורמט ההקלטה:
             </label>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div
                 onClick={() => setMediaType('video')}
                 className={`p-3.5 rounded-2xl border cursor-pointer transition-all flex items-center gap-3 ${
@@ -279,23 +274,6 @@ export default function NewEpisodePage() {
                 <div>
                   <h4 className="text-xs font-bold text-white">🎬 וידאו פודקאסט</h4>
                   <p className="text-[10px] text-slate-400">צילום 4K/1080p, מצלמת אייפון, אוברלייז וגרפיקה</p>
-                </div>
-              </div>
-
-              <div
-                onClick={() => setMediaType('gaming_creator')}
-                className={`p-3.5 rounded-2xl border cursor-pointer transition-all flex items-center gap-3 ${
-                  mediaType === 'gaming_creator'
-                    ? 'bg-purple-950/50 border-purple-500 shadow-lg ring-1 ring-purple-500/30'
-                    : 'bg-slate-900/60 border-slate-800 hover:border-slate-700'
-                }`}
-              >
-                <div className={`p-2.5 rounded-xl ${mediaType === 'gaming_creator' ? 'bg-purple-600 text-white' : 'bg-slate-800 text-slate-400'}`}>
-                  <Gamepad2 className="w-5 h-5" />
-                </div>
-                <div>
-                  <h4 className="text-xs font-bold text-white">🎮 גיימינג ווידאו (Multi-Cam)</h4>
-                  <p className="text-[10px] text-slate-400">לכידת משחק 60FPS / אלגטו, Facecam ומיקסר סאונד</p>
                 </div>
               </div>
 

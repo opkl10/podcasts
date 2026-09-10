@@ -59,7 +59,6 @@ import {
   Radio,
   Activity,
   Palette,
-  Gamepad2,
   Monitor,
   MonitorPlay,
   Cast,
@@ -1278,15 +1277,6 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
 
           <div>
             <div className="flex items-center gap-2 flex-wrap">
-              {/* Quick Link to Standalone Gaming Studio */}
-              <Link
-                href={`/gaming?episodeId=${episode.id}`}
-                className="flex items-center gap-1.5 px-3 py-1 rounded-xl bg-purple-950/40 hover:bg-purple-900/50 border border-purple-500/30 text-purple-300 hover:text-white text-[11px] font-bold transition-all shadow-sm"
-                title="מעבר לאולפן גיימינג ייעודי עם לכידת מסך ב-60FPS ו-Elgato"
-              >
-                <Gamepad2 className="w-3.5 h-3.5 text-purple-400" />
-                <span>🎮 אולפן גיימינג (60FPS)</span>
-              </Link>
               <span className="text-xs text-slate-400 font-medium">עונה {episode.season} • פרק {episode.episodeNumber}</span>
             </div>
             <h1 className="text-base sm:text-lg font-black text-white truncate max-w-md">{episode.title}</h1>
