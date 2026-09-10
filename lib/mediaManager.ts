@@ -63,16 +63,16 @@ export function getVideoConstraints(resolution: VideoResolution = '1080p', devic
     case '4k':
       return {
         ...base,
-        width: { ideal: 3840, min: 1920 },
-        height: { ideal: 2160, min: 1080 },
-        frameRate: { ideal: 60, min: 30 }
+        width: { ideal: 3840 },
+        height: { ideal: 2160 },
+        frameRate: { ideal: 60, max: 60 }
       };
     case '1080p':
       return {
         ...base,
-        width: { ideal: 1920, min: 1280 },
-        height: { ideal: 1080, min: 720 },
-        frameRate: { ideal: 60, min: 30 }
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
+        frameRate: { ideal: 60, max: 60 }
       };
     case '720p':
     default:
@@ -80,7 +80,7 @@ export function getVideoConstraints(resolution: VideoResolution = '1080p', devic
         ...base,
         width: { ideal: 1280 },
         height: { ideal: 720 },
-        frameRate: { ideal: 30 }
+        frameRate: { ideal: 60, max: 60 }
       };
   }
 }
@@ -299,16 +299,24 @@ export class AudioMeter {
   }
 }
 
-// High-FPS Screen & Game Capture Stream Helper
-export async function getScreenCaptureStream(options: { frameRate?: number; audio?: boolean } = {}): Promise<MediaStream> {
+// High-FPS Screen & Game Capture Stream Helper (Supports 4K UHD & Full HD 1080p)
+export async function getScreenCaptureStream(options: { 
+  frameRate?: number; 
+  audio?: boolean; 
+  resolution?: VideoResolution 
+} = {}): Promise<MediaStream> {
   if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getDisplayMedia) {
     throw new Error('Screen capture is not supported in this browser environment');
   }
 
-  const { frameRate = 60, audio = true } = options;
+  const { frameRate = 60, audio = true, resolution = '1080p' } = options;
+  const width = resolution === '4k' ? 3840 : resolution === '1080p' ? 1920 : 1280;
+  const height = resolution === '4k' ? 2160 : resolution === '1080p' ? 1080 : 720;
 
   return await navigator.mediaDevices.getDisplayMedia({
     video: {
+      width: { ideal: width, max: 3840 },
+      height: { ideal: height, max: 2160 },
       frameRate: { ideal: frameRate, max: 60 },
       displaySurface: 'window',
       cursor: 'always'

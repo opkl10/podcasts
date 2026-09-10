@@ -738,7 +738,7 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
   // 1. Screen & Gameplay Capture Handlers
   const handleStartScreenCapture = async () => {
     try {
-      const stream = await getScreenCaptureStream({ frameRate: 60, audio: true });
+      const stream = await getScreenCaptureStream({ frameRate: 60, audio: true, resolution: videoResolution });
       setScreenStream(stream);
       setIsScreenCapturing(true);
       setGameplaySourceType('screen');
@@ -782,8 +782,16 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
     }
 
     try {
+      const is4K = videoResolution === '4k';
+      const targetW = is4K ? 3840 : 1920;
+      const targetH = is4K ? 2160 : 1080;
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { deviceId: { exact: deviceId }, width: { ideal: 1920 }, frameRate: { ideal: 60 } },
+        video: { 
+          deviceId: { exact: deviceId }, 
+          width: { ideal: targetW }, 
+          height: { ideal: targetH }, 
+          frameRate: { ideal: 60, max: 60 } 
+        },
         audio: true
       });
       setCaptureCardStream(stream);
@@ -884,12 +892,15 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    canvas.width = 1920;
-    canvas.height = 1080;
+    const targetW = videoResolution === '4k' ? 3840 : videoResolution === '1080p' ? 1920 : 1280;
+    const targetH = videoResolution === '4k' ? 2160 : videoResolution === '1080p' ? 1080 : 720;
+    canvas.width = targetW;
+    canvas.height = targetH;
 
     const renderGamingStage = () => {
       const W = canvas.width;
       const H = canvas.height;
+      const scale = W / 1920;
 
       // A. Gameplay Layer
       const gameVideo = gameplayVideoRef.current;
@@ -908,8 +919,8 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
 
         // Cyber Grid Lines
         ctx.strokeStyle = 'rgba(99, 102, 241, 0.08)';
-        ctx.lineWidth = 1.5;
-        const step = 60;
+        ctx.lineWidth = 1.5 * scale;
+        const step = 60 * scale;
         for (let x = 0; x < W; x += step) {
           ctx.beginPath();
           ctx.moveTo(x, 0);
@@ -924,13 +935,14 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
         }
 
         ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
-        ctx.font = 'bold 36px Rubik, sans-serif';
+        ctx.font = `bold ${Math.round(36 * scale)}px Rubik, sans-serif`;
         ctx.textAlign = 'center';
-        ctx.fillText('🎮 בחר מקור גיימפליי: לכידת מסך 60FPS או כרטיס אלגטו', W / 2, H / 2 - 20);
+        ctx.fillText('🎮 בחר מקור גיימפליי: לכידת מסך 60FPS או כרטיס אלגטו', W / 2, H / 2 - 20 * scale);
 
         ctx.fillStyle = 'rgba(148, 163, 184, 0.6)';
-        ctx.font = '500 20px Rubik, sans-serif';
-        ctx.fillText('הסאונד של המשחק והמיקרופון ממוקססים במיקסר כפול בלייב', W / 2, H / 2 + 25);
+        ctx.font = `500 ${Math.round(20 * scale)}px Rubik, sans-serif`;
+        const resText = videoResolution === '4k' ? '4K Ultra HD (3840×2160)' : videoResolution === '1080p' ? 'Full HD (1920×1080)' : 'HD (1280×720)';
+        ctx.fillText(`הקלטת מאסטר ב-${resText} ב-60FPS עם מיקסר אודיו כפול`, W / 2, H / 2 + 30 * scale);
       }
 
       // B. Facecam Layer (Webcam / iPhone / Cam Link)
@@ -940,31 +952,32 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
       if (hasFacecam) {
         ctx.save();
 
-        let fw = 460;
-        let fh = 260;
-        if (facecamSize === 'small') { fw = 360; fh = 202; }
-        else if (facecamSize === 'large') { fw = 560; fh = 315; }
+        let fw = 460 * scale;
+        let fh = 260 * scale;
+        if (facecamSize === 'small') { fw = 360 * scale; fh = 202 * scale; }
+        else if (facecamSize === 'large') { fw = 560 * scale; fh = 315 * scale; }
 
         if (facecamShape === 'circle') {
           fh = fw; // 1:1 circle
         }
 
-        let fx = W - fw - 40;
-        let fy = H - fh - 40;
+        const margin = 40 * scale;
+        let fx = W - fw - margin;
+        let fy = H - fh - margin;
 
         if (facecamLayout === 'pip_bl') {
-          fx = 40;
-          fy = H - fh - 40;
+          fx = margin;
+          fy = H - fh - margin;
         } else if (facecamLayout === 'pip_tr') {
-          fx = W - fw - 40;
-          fy = 40;
+          fx = W - fw - margin;
+          fy = margin;
         } else if (facecamLayout === 'pip_tl') {
-          fx = 40;
-          fy = 40;
+          fx = margin;
+          fy = margin;
         } else if (facecamLayout === 'split') {
-          fx = W / 2 + 20;
+          fx = W / 2 + 20 * scale;
           fy = (H - (H * 0.85)) / 2;
-          fw = W / 2 - 40;
+          fw = W / 2 - 40 * scale;
           fh = H * 0.85;
         } else if (facecamLayout === 'solo_cam') {
           fx = 0;
@@ -982,7 +995,7 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
           const cy = fy + fh / 2;
           ctx.arc(cx, cy, fw / 2, 0, Math.PI * 2);
         } else if (facecamShape === 'rounded') {
-          if (ctx.roundRect) ctx.roundRect(fx, fy, fw, fh, 24);
+          if (ctx.roundRect) ctx.roundRect(fx, fy, fw, fh, 24 * scale);
           else ctx.rect(fx, fy, fw, fh);
         } else {
           ctx.rect(fx, fy, fw, fh);
@@ -1003,10 +1016,10 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
         if (facecamLayout !== 'solo_cam') {
           ctx.save();
           ctx.strokeStyle = facecamGlowColor || '#06b6d4';
-          ctx.lineWidth = facecamBorderWidth || 3;
+          ctx.lineWidth = (facecamBorderWidth || 3) * scale;
           if (facecamGlowBlur > 0) {
             ctx.shadowColor = facecamGlowColor || '#06b6d4';
-            ctx.shadowBlur = facecamGlowBlur;
+            ctx.shadowBlur = facecamGlowBlur * scale;
           }
 
           ctx.beginPath();
@@ -1015,7 +1028,7 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
             const cy = fy + fh / 2;
             ctx.arc(cx, cy, fw / 2, 0, Math.PI * 2);
           } else if (facecamShape === 'rounded') {
-            if (ctx.roundRect) ctx.roundRect(fx, fy, fw, fh, 24);
+            if (ctx.roundRect) ctx.roundRect(fx, fy, fw, fh, 24 * scale);
             else ctx.rect(fx, fy, fw, fh);
           } else {
             ctx.rect(fx, fy, fw, fh);
@@ -1030,40 +1043,45 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
       // C. Streamer Gamer HUD / Overlays
       if (showGamerHud) {
         ctx.save();
-        const badgeX = 30;
-        const badgeY = 30;
+        const badgeX = 30 * scale;
+        const badgeY = 30 * scale;
+        const badgeW = 270 * scale;
+        const badgeH = 50 * scale;
         ctx.fillStyle = 'rgba(5, 8, 16, 0.85)';
-        if (ctx.roundRect) ctx.roundRect(badgeX, badgeY, 270, 50, 14);
-        else ctx.rect(badgeX, badgeY, 270, 50);
+        if (ctx.roundRect) ctx.roundRect(badgeX, badgeY, badgeW, badgeH, 14 * scale);
+        else ctx.rect(badgeX, badgeY, badgeW, badgeH);
         ctx.fill();
         ctx.strokeStyle = facecamGlowColor || '#06b6d4';
-        ctx.lineWidth = 1.5;
+        ctx.lineWidth = 1.5 * scale;
         ctx.stroke();
 
         // Pulsing Live Indicator
         ctx.beginPath();
         ctx.fillStyle = isRecording ? '#ef4444' : '#10b981';
-        ctx.arc(badgeX + 24, badgeY + 25, 7, 0, Math.PI * 2);
+        ctx.arc(badgeX + 24 * scale, badgeY + 25 * scale, 7 * scale, 0, Math.PI * 2);
         ctx.fill();
 
         ctx.fillStyle = '#ffffff';
-        ctx.font = 'bold 17px Rubik, sans-serif';
+        ctx.font = `bold ${Math.round(17 * scale)}px Rubik, sans-serif`;
         ctx.textAlign = 'right';
-        ctx.fillText(gamerTag || 'סטרימר', badgeX + 250, badgeY + 31);
+        ctx.fillText(gamerTag || 'סטרימר', badgeX + 250 * scale, badgeY + 31 * scale);
 
         // FPS & Resolution Badge
+        const fpsW = 210 * scale;
+        const fpsH = 40 * scale;
         ctx.fillStyle = 'rgba(5, 8, 16, 0.85)';
-        if (ctx.roundRect) ctx.roundRect(W - 200, 30, 170, 40, 12);
-        else ctx.rect(W - 200, 30, 170, 40);
+        if (ctx.roundRect) ctx.roundRect(W - fpsW - 30 * scale, 30 * scale, fpsW, fpsH, 12 * scale);
+        else ctx.rect(W - fpsW - 30 * scale, 30 * scale, fpsW, fpsH);
         ctx.fill();
         ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
-        ctx.lineWidth = 1;
+        ctx.lineWidth = 1 * scale;
         ctx.stroke();
 
         ctx.fillStyle = '#38bdf8';
-        ctx.font = 'bold 13px monospace';
+        ctx.font = `bold ${Math.round(13 * scale)}px monospace`;
         ctx.textAlign = 'center';
-        ctx.fillText('60 FPS • 1080p FHD', W - 115, 55);
+        const resBadge = videoResolution === '4k' ? '60 FPS • 4K Ultra HD' : videoResolution === '1080p' ? '60 FPS • 1080p FHD' : '60 FPS • 720p HD';
+        ctx.fillText(resBadge, W - 30 * scale - fpsW / 2, 30 * scale + 25 * scale);
 
         ctx.restore();
       }
@@ -1094,7 +1112,8 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
     showGamerHud,
     isMirrored,
     isUsingRemoteCam,
-    isRecording
+    isRecording,
+    videoResolution
   ]);
 
   // 4. Timer Handling
@@ -1369,12 +1388,12 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
     if (!MediaRecorder.isTypeSupported(audioMimeType)) audioMimeType = 'audio/mp4';
 
     try {
-      // Dynamic Bitrate: 35 Mbps (4K UHD) | 8 Mbps (FHD 1080p) | 3 Mbps (HD 720p)
+      // Dynamic High-Fidelity Bitrate: 45 Mbps (4K UHD Master) | 12 Mbps (FHD 1080p Master) | 4 Mbps (HD 720p)
       const targetVideoBitrate = videoResolution === '4k' 
-        ? 35000000 
+        ? 45000000 
         : videoResolution === '1080p' 
-        ? 8000000 
-        : 3000000;
+        ? 12000000 
+        : 4000000;
 
       let recordStream = processedStreamRef.current || currentStream;
 
@@ -1892,6 +1911,35 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
                       <span>{b.label}</span>
                     </button>
                   ))}
+
+                  {/* Resolution Quick Switcher */}
+                  <span className="text-[10px] font-bold text-amber-300 px-1.5 py-0.5 border-r border-slate-700">
+                    איכות:
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setVideoResolution('4k')}
+                    className={`px-2 py-1 rounded-xl text-[10px] font-black transition-all ${
+                      videoResolution === '4k'
+                        ? 'bg-gradient-to-r from-amber-500 to-yellow-600 text-slate-950 shadow'
+                        : 'text-slate-400 hover:text-white bg-slate-900/60'
+                    }`}
+                    title="הקלטת 4K Ultra HD ב-60FPS"
+                  >
+                    🌟 4K
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setVideoResolution('1080p')}
+                    className={`px-2 py-1 rounded-xl text-[10px] font-bold transition-all ${
+                      videoResolution === '1080p'
+                        ? 'bg-indigo-600 text-white shadow'
+                        : 'text-slate-400 hover:text-white bg-slate-900/60'
+                    }`}
+                    title="הקלטת Full HD 1080p ב-60FPS"
+                  >
+                    🎬 1080p
+                  </button>
                 </div>
 
                 {/* Floating Screen Capture Quick Button if not active */}
@@ -2453,7 +2501,46 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  {/* Resolution & Quality Switcher */}
+                  <div className="flex items-center gap-1 bg-slate-900 p-1 rounded-xl border border-purple-500/30">
+                    <button
+                      type="button"
+                      onClick={() => setVideoResolution('4k')}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-black transition-all flex items-center gap-1 ${
+                        videoResolution === '4k'
+                          ? 'bg-gradient-to-r from-amber-500 to-yellow-600 text-slate-950 font-black shadow-md scale-105'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                      title="הקלטת 4K Ultra HD (3840×2160 ב-60FPS ב-45Mbps)"
+                    >
+                      <span>🌟 4K UHD</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setVideoResolution('1080p')}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all flex items-center gap-1 ${
+                        videoResolution === '1080p'
+                          ? 'bg-indigo-600 text-white shadow-md scale-105'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                      title="הקלטת Full HD 1080p (1920×1080 ב-60FPS ב-12Mbps)"
+                    >
+                      <span>🎬 FHD 1080p</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setVideoResolution('720p')}
+                      className={`px-2 py-1 rounded-lg text-[10px] font-bold transition-all ${
+                        videoResolution === '720p'
+                          ? 'bg-slate-700 text-white shadow'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      <span>HD 720p</span>
+                    </button>
+                  </div>
+
                   <button
                     onClick={async () => {
                       const { audioInputs, videoInputs } = await getMediaDevices();
@@ -2494,7 +2581,12 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
 
                     {/* Screen Capture Action Button */}
                     <div className="space-y-1.5">
-                      <label className="text-[11px] font-bold text-slate-300 block">לכידת משחק / מסך ב-60FPS:</label>
+                      <div className="flex items-center justify-between">
+                        <label className="text-[11px] font-bold text-slate-300 block">לכידת משחק / מסך:</label>
+                        <span className="text-[10px] font-mono text-purple-300 bg-purple-950/60 px-2 py-0.5 rounded border border-purple-800/60">
+                          {videoResolution === '4k' ? '4K UHD (3840×2160)' : videoResolution === '1080p' ? 'Full HD (1920×1080)' : 'HD (1280×720)'}
+                        </span>
+                      </div>
                       {isScreenCapturing ? (
                         <button
                           type="button"
@@ -2511,7 +2603,7 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
                           className="w-full flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-bold transition-all shadow-lg shadow-purple-950/50 active:scale-95 border border-purple-400/30"
                         >
                           <MonitorPlay className="w-3.5 h-3.5 text-purple-200" />
-                          <span>🖥️ בחר מסך משחק (60FPS)</span>
+                          <span>🖥️ בחר מסך משחק ({videoResolution === '4k' ? '4K 60FPS' : 'FHD 60FPS'})</span>
                         </button>
                       )}
                     </div>
@@ -2543,7 +2635,7 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
                         ))}
                       </select>
                       <p className="text-[10px] text-slate-400">
-                        תומך ב-Elgato HD60 X/S+, Cam Link 4K, AVerMedia, וכרטיסי לכידה USB/HDMI.
+                        תומך ב-Elgato 4K X/Pro, HD60 X/S+, Cam Link 4K, AVerMedia, וכרטיסי USB/HDMI.
                       </p>
                     </div>
                   </div>
@@ -2551,7 +2643,7 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
                   {/* Info footer */}
                   <div className="p-2.5 rounded-xl bg-purple-950/30 border border-purple-900/40 text-[10px] text-purple-200/80 flex items-center gap-2">
                     <Zap className="w-3.5 h-3.5 text-purple-400 shrink-0" />
-                    <span>הקלטת הווידאו מתבצעת ברקע ב-60 פריימים לשנייה מלאים.</span>
+                    <span>הקלטת הווידאו מתבצעת ב-{videoResolution === '4k' ? '4K UHD ב-45Mbps' : 'Full HD 1080p ב-12Mbps'} ב-60FPS מלאים.</span>
                   </div>
                 </div>
 
