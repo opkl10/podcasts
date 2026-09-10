@@ -114,6 +114,7 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
   // Canvas Compositor Elements & 60FPS Stream
   const gamingCompositorCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const facecamVideoRef = useRef<HTMLVideoElement | null>(null);
+  const remoteImageRef = useRef<HTMLImageElement | null>(null);
   const gameplayVideoRef = useRef<HTMLVideoElement | null>(null);
   const gamingCompositeStreamRef = useRef<MediaStream | null>(null);
 
@@ -313,9 +314,13 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
         if (data.isFresh && data.frame) {
           setRemoteFrame(data.frame);
           setRemoteConnectionStatus('connected');
+          setIsUsingRemoteCam(true);
+          if (remoteImageRef.current) {
+            remoteImageRef.current.src = data.frame;
+          }
         }
       } catch (e) {}
-    }, 150);
+    }, 120);
 
     return () => {
       if (webrtcReceiverRef.current) {
@@ -689,9 +694,12 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
         ctx.fillText(`הקלטת מאסטר ב-${resText} ב-60FPS עם מיקסר אודיו כפול`, W / 2, H / 2 + 30 * scale);
       }
 
-      // --- LAYER 2: Facecam Multi-Cam (Webcam / iPhone / Cam Link) ---
+      // --- LAYER 2: Facecam Multi-Cam (Webcam / iPhone / Cam Link / Remote Cam) ---
       const faceVideo = facecamVideoRef.current;
-      const hasFacecam = faceVideo && faceVideo.readyState >= 2 && facecamLayout !== 'solo_game' && !isVideoMuted;
+      const isVideoReady = faceVideo && faceVideo.readyState >= 2;
+      const remoteImg = remoteImageRef.current;
+      const isRemoteImgReady = isUsingRemoteCam && remoteImg && remoteImg.complete && remoteImg.naturalWidth > 0;
+      const hasFacecam = (isVideoReady || isRemoteImgReady) && facecamLayout !== 'solo_game' && !isVideoMuted;
 
       if (hasFacecam) {
         ctx.save();
@@ -747,12 +755,23 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
 
         ctx.save();
         ctx.clip();
+        
+        const shouldDrawRemoteImage = isUsingRemoteCam && isRemoteImgReady && (!isVideoReady || !remoteStream);
+        
         if (isMirrored && !isUsingRemoteCam) {
           ctx.translate(fx + fw, fy);
           ctx.scale(-1, 1);
-          ctx.drawImage(faceVideo, 0, 0, fw, fh);
+          if (shouldDrawRemoteImage && remoteImg) {
+            ctx.drawImage(remoteImg, 0, 0, fw, fh);
+          } else if (faceVideo && isVideoReady) {
+            ctx.drawImage(faceVideo, 0, 0, fw, fh);
+          }
         } else {
-          ctx.drawImage(faceVideo, fx, fy, fw, fh);
+          if (shouldDrawRemoteImage && remoteImg) {
+            ctx.drawImage(remoteImg, fx, fy, fw, fh);
+          } else if (faceVideo && isVideoReady) {
+            ctx.drawImage(faceVideo, fx, fy, fw, fh);
+          }
         }
         ctx.restore();
 
@@ -1102,6 +1121,14 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
         width={3840}
         height={2160}
         style={{ position: 'fixed', top: -9999, left: -9999, width: 3840, height: 2160, opacity: 0, pointerEvents: 'none' }}
+      />
+      {/* Off-screen Image decoder for live remote iPhone camera frames */}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        ref={remoteImageRef}
+        alt=""
+        crossOrigin="anonymous"
+        style={{ position: 'fixed', top: -9999, left: -9999, width: 640, height: 360, opacity: 0, pointerEvents: 'none' }}
       />
 
       {/* TOP HEADER & STATUS BAR */}
