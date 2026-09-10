@@ -164,6 +164,7 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
   const [gameOffsetY, setGameOffsetY] = useState<number>(0);
   const [showFramingControls, setShowFramingControls] = useState<boolean>(false);
   const [showIPhoneGuide, setShowIPhoneGuide] = useState<boolean>(false);
+  const [showElgatoTroubleshooter, setShowElgatoTroubleshooter] = useState<boolean>(false);
 
   // Console & Game Audio Management (Elgato HDMI Audio / Desktop Audio / Stems)
   const [selectedGameAudioId, setSelectedGameAudioId] = useState<string>('');
@@ -1982,29 +1983,83 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
                   </button>
                 </div>
 
-                {/* 640x480 Low Quality / Safe Mode Diagnostic Alert */}
+                {/* 640x480 Low Quality / Safe Mode Diagnostic Alert & Step-by-Step Fixer */}
                 {captureDetails && captureDetails.width <= 640 && (
-                  <div className="p-3 rounded-xl bg-amber-950/70 border border-amber-500/40 space-y-2 text-xs text-amber-200">
-                    <div className="flex items-start gap-2">
-                      <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                      <div className="space-y-1">
-                        <span className="font-bold text-amber-300">
-                          למה האלגטו ננעל על 640×480?
-                        </span>
-                        <p className="text-[11px] text-amber-200/90 leading-relaxed">
-                          {captureCapabilities?.width?.max && (captureCapabilities.width.max as number) < 1920 ? (
-                            <>
-                              <b>זוהה חיבור USB 2.0 איטי:</b> הכרטיס מדווח למערכת על מקסימום 640×480. הדבר קורה לרוב בעת שימוש בכבל טעינה רגיל (כמו כבל Type-C הלבן של Mac) שמעביר רק 480Mbps. להעברת 4K נדרש כבל <b>USB 3.0 / Thunderbolt SuperSpeed (5Gbps+)</b> ישירות למחשב.
-                            </>
-                          ) : (
-                            <>
-                              מערכת ההפעלה macOS ודפדפן Chrome פותחים התקני וידאו בברירת מחדל בסיסית (Safe Default). 
-                              לחץ על <b>&quot;כפה 4K&quot;</b> למעלה כדי לאלץ את צינור החומרה לשדר ב-3840×2160.
-                            </>
-                          )}
-                        </p>
+                  <div className="p-3.5 rounded-2xl bg-gradient-to-b from-amber-950/80 to-slate-950 border border-amber-500/50 space-y-3 text-xs text-amber-200 shadow-xl">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-start gap-2">
+                        <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                        <div>
+                          <span className="font-bold text-amber-300 block text-xs">
+                            מדוע הכפייה ל-4K לא עובדת והאלגטו תקוע על 640×480?
+                          </span>
+                          <p className="text-[11px] text-amber-200/90 leading-relaxed mt-1">
+                            החומרה של האלגטו מדווחת למחשב כרגע על 640×480 בלבד, ולכן הדפדפן אינו יכול לשדרג תוכנתית. 
+                            <b> זה 100% בר-תיקון!</b> זה נובע מאחת מ-2 סיבות חומרה עיקריות (הגנת HDCP בקונסולה או כבל USB 2.0).
+                          </p>
+                        </div>
                       </div>
                     </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setShowElgatoTroubleshooter(prev => !prev)}
+                      className="w-full py-2 px-3 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-xs font-bold transition-all flex items-center justify-between"
+                    >
+                      <span>🛠️ 3 צעדים מהירים לשחרור 4K / 1080p (פתרון ב-60 שניות):</span>
+                      <ChevronDown className={`w-4 h-4 transition-transform ${showElgatoTroubleshooter ? 'rotate-180' : ''}`} />
+                    </button>
+
+                    {showElgatoTroubleshooter && (
+                      <div className="p-3 rounded-xl bg-black/60 border border-amber-500/30 space-y-2.5 text-[11px] text-slate-200 animate-in fade-in">
+                        <div className="space-y-1">
+                          <p className="font-bold text-amber-300 flex items-center gap-1.5">
+                            <span className="w-4 h-4 rounded-full bg-amber-500 text-slate-950 flex items-center justify-center font-mono text-[10px] font-black">1</span>
+                            <span>כיבוי HDCP בפלייסטיישן (הסיבה הנפוצה ביותר!):</span>
+                          </p>
+                          <p className="text-slate-300 pr-5 leading-relaxed">
+                            ב-PS5: כנס ל-<b>הגדרות (Settings) &gt; מערכת (System) &gt; HDMI &gt; הפעלת HDCP (Enable HDCP)</b> &larr; העבר ל-<b>כבוי (OFF)</b>.
+                            <br />
+                            <span className="text-amber-400/90 text-[10px]">* כשה-HDCP דולק, סוני נועלת כרטיסי לכידה חיצוניים על 640×480 SD. ברגע שמכבים, זה קופץ מיד ל-4K/1080p!</span>
+                          </p>
+                        </div>
+
+                        <div className="space-y-1 pt-1.5 border-t border-slate-800">
+                          <p className="font-bold text-amber-300 flex items-center gap-1.5">
+                            <span className="w-4 h-4 rounded-full bg-amber-500 text-slate-950 flex items-center justify-center font-mono text-[10px] font-black">2</span>
+                            <span>הגדרת רזולוציה ידנית וכיבוי 120Hz / VRR:</span>
+                          </p>
+                          <p className="text-slate-300 pr-5 leading-relaxed">
+                            ב-PS5: כנס ל-<b>הגדרות &gt; מסך ווידאו &gt; פלט וידאו &gt; רזולוציה</b> &larr; בחר <b>2160p (4K)</b> או <b>1080p</b> (לא &quot;אוטומטי&quot;).
+                            <br />
+                            וודא ש-<b>פלט 120Hz</b> ו-<b>VRR</b> מוגדרים על <b>כבוי</b> (Cam Link 4K לא תומך ב-120Hz).
+                          </p>
+                        </div>
+
+                        <div className="space-y-1 pt-1.5 border-t border-slate-800">
+                          <p className="font-bold text-amber-300 flex items-center gap-1.5">
+                            <span className="w-4 h-4 rounded-full bg-amber-500 text-slate-950 flex items-center justify-center font-mono text-[10px] font-black">3</span>
+                            <span>בדיקת מתאם ה-USB והכבל במק:</span>
+                          </p>
+                          <p className="text-slate-300 pr-5 leading-relaxed">
+                            חבר את ה-Cam Link 4K ישירות לשקע ה-USB-C / Thunderbolt של המק עם מתאם תומך <b>USB 3.0 (כחול / 5Gbps+)</b>.
+                            הימנע משימוש בכבל טעינה רגיל או מפצלים פשוטים (שמוגבלים ל-USB 2.0 480Mbps).
+                          </p>
+                        </div>
+
+                        <div className="pt-2 flex items-center gap-2">
+                          <button
+                            type="button"
+                            disabled={isCaptureLoading || isApplyingResolution}
+                            onClick={() => handleSelectCaptureCard(selectedCaptureCardId, videoResolution)}
+                            className="flex-1 py-1.5 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 transition-all shadow"
+                          >
+                            <RefreshCw className={`w-3.5 h-3.5 ${isCaptureLoading ? 'animate-spin' : ''}`} />
+                            <span>ביצעתי &larr; רענן חיבור אלגטו עכשיו</span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
