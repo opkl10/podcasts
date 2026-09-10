@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Episode, SubtitleItem, MovieFactCard, ElementTransform, CustomOverlayStyle, AudiogramStudioConfig, AudiogramStudioTemplate, HighlightClip } from '@/lib/types';
+import { Episode, SubtitleItem, MovieFactCard, ElementTransform, CustomOverlayStyle, AudiogramStudioConfig, AudiogramStudioTemplate, HighlightClip, MovableImageOverlay } from '@/lib/types';
 import { getMediaBlob, saveMediaBlob, formatTime, getPermanentLogo, savePermanentLogo, saveEpisode, findMediaBlobForEpisode, healEpisodeRecording, reassignEpisodeRecording, getEpisodes } from '@/lib/storage';
 import { trimAudioBlob } from '@/lib/audioUtils';
 import { 
@@ -250,6 +250,17 @@ export default function AudioEditorAudiogramStudio({
   const [bgDim, setBgDim] = useState<number>(30);
   const [solidColor, setSolidColor] = useState<string>('#0b0f19');
   const [ambientVignette, setAmbientVignette] = useState<boolean>(true);
+  const [bgPosX, setBgPosX] = useState<number>(0); // -100 to 100 percentage
+  const [bgPosY, setBgPosY] = useState<number>(0); // -100 to 100 percentage
+  const [bgScale, setBgScale] = useState<number>(1.0); // 1.0 to 3.0 zoom
+
+  // Movable Image Overlays (תמונות ומדבקות נעות ברקע / בשכבה עליונה)
+  const [movableImages, setMovableImages] = useState<MovableImageOverlay[]>([]);
+  const [selectedImageId, setSelectedImageId] = useState<string | null>(null);
+  const [newImageUrlInput, setNewImageUrlInput] = useState<string>('');
+  const movableImageFileInputRef = useRef<HTMLInputElement | null>(null);
+  const movableImageObjectsRef = useRef<Map<string, HTMLImageElement>>(new Map());
+
   const bgFileInputRef = useRef<HTMLInputElement | null>(null);
   const bgImageObjectRef = useRef<HTMLImageElement | null>(null);
   const audioUploadInputRef = useRef<HTMLInputElement | null>(null);
@@ -302,6 +313,54 @@ export default function AudioEditorAudiogramStudio({
     }
   };
 
+  // Movable Image Handlers
+  const handleAddMovableImage = (url: string, name?: string) => {
+    if (!url || !url.trim()) return;
+    const newImg: MovableImageOverlay = {
+      id: `img_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      url: url.trim(),
+      name: name || `תמונה ${movableImages.length + 1}`,
+      transform: {
+        x: Math.round(15 + ((movableImages.length * 7) % 35)),
+        y: Math.round(20 + ((movableImages.length * 7) % 35)),
+        scale: 1.0
+      },
+      opacity: 1.0,
+      borderRadius: 16,
+      shape: 'rounded',
+      layer: 'background',
+      visible: true
+    };
+    setMovableImages(prev => [...prev, newImg]);
+    setSelectedImageId(newImg.id);
+    setSelectedElementToStyle('custom_image');
+  };
+
+  const handleUploadMovableImageFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        if (reader.result) {
+          handleAddMovableImage(reader.result as string, file.name);
+        }
+      };
+      reader.readAsDataURL(file);
+      e.target.value = '';
+    }
+  };
+
+  const handleDeleteMovableImage = (id: string) => {
+    setMovableImages(prev => prev.filter(img => img.id !== id));
+    if (selectedImageId === id) {
+      setSelectedImageId(null);
+    }
+  };
+
+  const handleUpdateMovableImage = (id: string, updates: Partial<MovableImageOverlay>) => {
+    setMovableImages(prev => prev.map(img => img.id === id ? { ...img, ...updates } : img));
+  };
+
   // Permanent Logo State (loaded from storage)
   const [logoConfig, setLogoConfig] = useState<{
     show: boolean;
@@ -347,7 +406,7 @@ export default function AudioEditorAudiogramStudio({
   const [showSubtitles, setShowSubtitles] = useState<boolean>(true);
 
   // Active Element Selection for Free Styling Inspector
-  const [selectedElementToStyle, setSelectedElementToStyle] = useState<'host' | 'fact' | 'quote' | 'banner' | 'poster' | 'rating' | 'spoiler' | 'subtitles' | 'logo' | 'waveform'>('host');
+  const [selectedElementToStyle, setSelectedElementToStyle] = useState<'host' | 'fact' | 'quote' | 'banner' | 'poster' | 'rating' | 'spoiler' | 'subtitles' | 'logo' | 'waveform' | 'custom_image' | 'bg_pan'>('host');
 
   // Full Custom Styles for Each Element (חופש עיצוב מלא לכל אלמנט)
   const [hostCustomStyle, setHostCustomStyle] = useState<CustomOverlayStyle>({
@@ -495,6 +554,11 @@ export default function AudioEditorAudiogramStudio({
       case 'spoiler': return showSpoilerOverlay;
       case 'subtitles': return showSubtitles;
       case 'logo': return logoConfig.show;
+      case 'custom_image': {
+        const img = movableImages.find(i => i.id === selectedImageId) || movableImages[0];
+        return img ? img.visible : false;
+      }
+      case 'bg_pan': return bgType === 'image';
       default: return true;
     }
   };
@@ -511,6 +575,17 @@ export default function AudioEditorAudiogramStudio({
       case 'spoiler': setShowSpoilerOverlay(prev => override !== undefined ? override : !prev); break;
       case 'subtitles': setShowSubtitles(prev => override !== undefined ? override : !prev); break;
       case 'logo': setLogoConfig(prev => ({ ...prev, show: override !== undefined ? override : !prev.show })); break;
+      case 'custom_image': {
+        const targetId = selectedImageId || movableImages[0]?.id;
+        if (targetId) {
+          setMovableImages(prev => prev.map(img => img.id === targetId ? { ...img, visible: override !== undefined ? override : !img.visible } : img));
+        }
+        break;
+      }
+      case 'bg_pan': {
+        setBgType(prev => prev === 'image' ? 'preset' : 'image');
+        break;
+      }
     }
   };
 
@@ -603,7 +678,7 @@ export default function AudioEditorAudiogramStudio({
   // Tabs
   const [activeTab, setActiveTab] = useState<'styler' | 'waveform' | 'background' | 'overlays' | 'trimmer' | 'export'>('styler');
   const [isStockModalOpen, setIsStockModalOpen] = useState(false);
-  const [stockPickerTarget, setStockPickerTarget] = useState<'background' | 'poster' | 'logo'>('poster');
+  const [stockPickerTarget, setStockPickerTarget] = useState<'background' | 'poster' | 'logo' | 'movable_image'>('poster');
 
   // DOM & Audio Nodes Refs
   const audioElementRef = useRef<HTMLAudioElement | null>(null);
@@ -686,6 +761,10 @@ export default function AudioEditorAudiogramStudio({
         if (config.bgDim !== undefined) setBgDim(config.bgDim);
         if (config.solidColor) setSolidColor(config.solidColor);
         if (config.ambientVignette !== undefined) setAmbientVignette(config.ambientVignette);
+        if (config.bgPosX !== undefined) setBgPosX(config.bgPosX);
+        if (config.bgPosY !== undefined) setBgPosY(config.bgPosY);
+        if (config.bgScale !== undefined) setBgScale(config.bgScale);
+        if (config.movableImages && Array.isArray(config.movableImages)) setMovableImages(config.movableImages);
 
         if (config.waveformStyle) setWaveformStyle(config.waveformStyle as any);
         if (config.waveformColorMode) setWaveformColorMode(config.waveformColorMode);
@@ -777,6 +856,10 @@ export default function AudioEditorAudiogramStudio({
     bgDim,
     solidColor,
     ambientVignette,
+    bgPosX,
+    bgPosY,
+    bgScale,
+    movableImages,
 
     waveformStyle,
     waveformColorMode,
@@ -898,6 +981,10 @@ export default function AudioEditorAudiogramStudio({
       if (config.bgDim !== undefined) setBgDim(config.bgDim);
       if (config.solidColor) setSolidColor(config.solidColor);
       if (config.ambientVignette !== undefined) setAmbientVignette(config.ambientVignette);
+      if (config.bgPosX !== undefined) setBgPosX(config.bgPosX);
+      if (config.bgPosY !== undefined) setBgPosY(config.bgPosY);
+      if (config.bgScale !== undefined) setBgScale(config.bgScale);
+      if (config.movableImages && Array.isArray(config.movableImages)) setMovableImages(config.movableImages);
 
       if (config.waveformStyle) setWaveformStyle(config.waveformStyle as any);
       if (config.waveformColorMode) setWaveformColorMode(config.waveformColorMode);
@@ -1150,6 +1237,27 @@ export default function AudioEditorAudiogramStudio({
     }
   }, [posterUrl]);
 
+  // Preload Movable Images
+  useEffect(() => {
+    movableImages.forEach(imgData => {
+      if (imgData.url && !movableImageObjectsRef.current.has(imgData.id)) {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.src = imgData.url;
+        img.onload = () => {
+          movableImageObjectsRef.current.set(imgData.id, img);
+        };
+      }
+    });
+    // Remove deleted images from cache
+    const currentIds = new Set(movableImages.map(m => m.id));
+    for (const key of Array.from(movableImageObjectsRef.current.keys())) {
+      if (!currentIds.has(key)) {
+        movableImageObjectsRef.current.delete(key);
+      }
+    }
+  }, [movableImages]);
+
   // 4. Main Stage Canvas Render Loop (Draws Background + Logo + Overlays + Dynamic Waveforms + Subtitles)
   useEffect(() => {
     if (!isOpen) return;
@@ -1175,12 +1283,85 @@ export default function AudioEditorAudiogramStudio({
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = 'high';
 
+      // High-DPI resolution scale factor calibrated 1:1 with stage editor viewport
+      const resScale = stageSize.width > 0 ? (W / stageSize.width) : Math.max(1.0, W / 720);
+
+      // Helper to draw custom movable image on canvas
+      const drawCanvasMovableImage = (imgOverlay: MovableImageOverlay) => {
+        if (!imgOverlay.visible) return;
+        const imgObj = movableImageObjectsRef.current.get(imgOverlay.id);
+        if (!imgObj) return;
+
+        try {
+          ctx.save();
+          const ix = (imgOverlay.transform.x / 100) * W;
+          const iy = (imgOverlay.transform.y / 100) * H;
+          const iScale = (imgOverlay.transform.scale || 1.0) * resScale;
+
+          ctx.translate(ix, iy);
+          ctx.scale(iScale, iScale);
+          ctx.globalAlpha = Math.max(0, Math.min(1, imgOverlay.opacity));
+
+          const baseW = 240;
+          const aspect = (imgObj.naturalWidth && imgObj.naturalHeight)
+            ? imgObj.naturalWidth / imgObj.naturalHeight
+            : 1;
+          const iw = baseW;
+          const ih = baseW / aspect;
+
+          if ((imgOverlay.glowBlur ?? 0) > 0) {
+            ctx.shadowColor = imgOverlay.glowColor || '#6366f1';
+            ctx.shadowBlur = (imgOverlay.glowBlur || 0) * resScale;
+          }
+
+          ctx.beginPath();
+          const radius = imgOverlay.shape === 'circle'
+            ? Math.min(iw, ih) / 2
+            : imgOverlay.shape === 'rounded'
+            ? (imgOverlay.borderRadius ?? 16)
+            : 0;
+
+          if (imgOverlay.shape === 'circle') {
+            ctx.arc(iw / 2, ih / 2, Math.min(iw, ih) / 2, 0, Math.PI * 2);
+          } else if (radius > 0 && ctx.roundRect) {
+            ctx.roundRect(0, 0, iw, ih, Math.min(Math.min(iw, ih) / 2, radius));
+          } else {
+            ctx.rect(0, 0, iw, ih);
+          }
+
+          ctx.save();
+          ctx.clip();
+          ctx.drawImage(imgObj, 0, 0, iw, ih);
+          ctx.restore();
+
+          if ((imgOverlay.borderWidth ?? 0) > 0 && imgOverlay.borderColor) {
+            ctx.strokeStyle = imgOverlay.borderColor;
+            ctx.lineWidth = (imgOverlay.borderWidth ?? 1) * resScale;
+            ctx.stroke();
+          }
+
+          ctx.restore();
+        } catch (err) {}
+      };
+
       // A. DRAW BACKGROUND
       ctx.clearRect(0, 0, W, H);
 
       if (bgType === 'image' && bgImageObjectRef.current) {
         try {
-          ctx.drawImage(bgImageObjectRef.current, 0, 0, W, H);
+          ctx.save();
+          const scale = Math.max(0.1, bgScale || 1.0);
+          const offsetX = ((bgPosX || 0) / 100) * W;
+          const offsetY = ((bgPosY || 0) / 100) * H;
+          ctx.translate(W / 2 + offsetX, H / 2 + offsetY);
+          ctx.scale(scale, scale);
+          if (bgBlur > 0) {
+            ctx.filter = `blur(${bgBlur}px)`;
+          }
+          ctx.drawImage(bgImageObjectRef.current, -W / 2, -H / 2, W, H);
+          ctx.filter = 'none';
+          ctx.restore();
+
           if (bgDim > 0) {
             ctx.fillStyle = `rgba(0, 0, 0, ${bgDim / 100})`;
             ctx.fillRect(0, 0, W, H);
@@ -1249,6 +1430,15 @@ export default function AudioEditorAudiogramStudio({
         ctx.moveTo(0, y);
         ctx.lineTo(W, y);
         ctx.stroke();
+      }
+
+      // A2. DRAW BACKGROUND-LAYER MOVABLE IMAGES ON EXPORT (Rendered under waveforms so waveforms physically dance on top)
+      if (isExportingVideo) {
+        movableImages
+          .filter(img => img.visible && img.layer === 'background')
+          .forEach(img => {
+            drawCanvasMovableImage(img);
+          });
       }
 
       // B. EXTRACT AUDIO FREQUENCIES / TIME DOMAIN (Dual-Engine: Live Analyser + Sample-Accurate Decoded Buffer)
@@ -2149,24 +2339,7 @@ export default function AudioEditorAudiogramStudio({
               const padX = 18;
               const padY = subtitleCustomStyle.padding || 8;
               const subW = metrics.width + padX * 2;
-              const subH = subFontSize + padY * 2 + 4;
-
-              const sBg = hexToRgba(subtitleCustomStyle.backgroundColor || '#000000', subtitleCustomStyle.backgroundOpacity ?? 80);
-              ctx.fillStyle = sBg;
-              ctx.strokeStyle = subtitleCustomStyle.borderColor || 'transparent';
-              ctx.lineWidth = subtitleCustomStyle.borderWidth ?? 0;
-
-              if ((subtitleCustomStyle.glowBlur ?? 0) > 0) {
-                ctx.shadowColor = subtitleCustomStyle.glowColor || '#facc15';
-                ctx.shadowBlur = subtitleCustomStyle.glowBlur || 0;
-              }
-
-              const sRadius = subtitleCustomStyle.borderRadius ?? 12;
-              ctx.beginPath();
-              if (ctx.roundRect) ctx.roundRect(0, 0, subW, subH, Math.min(subH / 2, sRadius));
-              else ctx.rect(0, 0, subW, subH);
-              ctx.fill();
-              if (subtitleCustomStyle.borderWidth && subtitleCustomStyle.borderWidth > 0) ctx.stroke();
+                 if (subtitleCustomStyle.borderWidth && subtitleCustomStyle.borderWidth > 0) ctx.stroke();
 
               ctx.shadowBlur = 0;
               ctx.fillStyle = subtitleCustomStyle.textColor || '#ffffff';
@@ -2177,6 +2350,13 @@ export default function AudioEditorAudiogramStudio({
             } catch (e) {}
           }
         }
+
+        // 8. Foreground-Layer Movable Images (Rendered over waveforms & overlays on export)
+        movableImages
+          .filter(img => img.visible && img.layer === 'foreground')
+          .forEach(img => {
+            drawCanvasMovableImage(img);
+          });
       }
 
       animId = requestAnimationFrame(renderStage);
@@ -2192,7 +2372,12 @@ export default function AudioEditorAudiogramStudio({
     selectedBgPreset, 
     customBgImage,
     bgDim,
-    solidColor,
+    bgBlur,
+    bgPosX,
+    bgPosY,
+    bgScale,
+    movableImages,
+    solidColor, 
     waveformStyle, 
     waveformColorMode, 
     singleColor, 
@@ -3252,6 +3437,54 @@ export default function AudioEditorAudiogramStudio({
                   </div>
                 </DraggableOverlay>
               )}
+
+              {/* OVERLAY 10: Movable Background & Foreground Images / Stickers - DRAGGABLE */}
+              {movableImages
+                .filter(img => img.visible)
+                .map((img) => (
+                  <DraggableOverlay
+                    key={img.id}
+                    transform={img.transform}
+                    onUpdateTransform={(newTransform) => handleUpdateMovableImage(img.id, { transform: newTransform })}
+                    onClose={() => handleDeleteMovableImage(img.id)}
+                    isEditMode={isEditMode}
+                    className={img.layer === 'background' ? 'z-10' : 'z-30'}
+                    defaultPosition={{ x: 30, y: 30, scale: 1.0 }}
+                  >
+                    <div
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedImageId(img.id);
+                        setSelectedElementToStyle('custom_image');
+                        setActiveTab('background');
+                      }}
+                      style={{
+                        opacity: img.opacity,
+                        borderRadius: img.shape === 'circle' ? '9999px' : img.shape === 'rounded' ? `${img.borderRadius ?? 16}px` : '0px',
+                        borderColor: img.borderColor || 'transparent',
+                        borderWidth: `${img.borderWidth ?? 0}px`,
+                        borderStyle: (img.borderWidth && img.borderWidth > 0) ? 'solid' : 'none',
+                        boxShadow: (img.glowBlur ?? 0) > 0 ? `0 0 ${img.glowBlur}px ${img.glowColor || '#6366f1'}` : undefined,
+                      }}
+                      className={`relative cursor-pointer transition-all overflow-hidden select-none group/movable ${
+                        selectedElementToStyle === 'custom_image' && selectedImageId === img.id
+                          ? 'ring-2 ring-indigo-400 ring-offset-2 ring-offset-black'
+                          : ''
+                      }`}
+                    >
+                      <img
+                        src={img.url}
+                        alt={img.name || 'Movable Image'}
+                        className="w-48 max-w-[240px] max-h-[240px] object-contain select-none pointer-events-none block"
+                        crossOrigin="anonymous"
+                      />
+                      {/* Floating layer indicator badge */}
+                      <span className="absolute top-1 right-1 px-1.5 py-0.5 rounded text-[8px] font-bold bg-black/75 text-slate-300 opacity-0 group-hover/movable:opacity-100 transition-opacity">
+                        {img.layer === 'background' ? 'שכבת רקע' : 'שכבה קדמית'}
+                      </span>
+                    </div>
+                  </DraggableOverlay>
+                ))}
             </>
           )}
 
@@ -3565,7 +3798,7 @@ export default function AudioEditorAudiogramStudio({
                       <span className="text-[10px] text-cyan-400 font-mono font-bold">לחץ גם על האלמנט בפריים</span>
                     </div>
 
-                    <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-8 gap-1 p-1 bg-slate-900 rounded-xl border border-slate-800 text-[10px]">
+                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-1 p-1 bg-slate-900 rounded-xl border border-slate-800 text-[10px]">
                       {[
                         { id: 'host', label: '🎙️ תג מגיש' },
                         { id: 'fact', label: '⭐ עובדות' },
@@ -3574,6 +3807,8 @@ export default function AudioEditorAudiogramStudio({
                         { id: 'rating', label: '🏆 ציונים' },
                         { id: 'spoiler', label: '⚠️ ספוילר' },
                         { id: 'poster', label: '🖼️ פוסטר' },
+                        { id: 'custom_image', label: '🖼️ תמונה נעה' },
+                        { id: 'bg_pan', label: '🧭 מיקום רקע' },
                         { id: 'subtitles', label: '📝 כתוביות' }
                       ].map(el => (
                         <button
@@ -4092,13 +4327,269 @@ export default function AudioEditorAudiogramStudio({
                         </div>
                       </div>
                     )}
+
+                    {/* CUSTOM MOVABLE IMAGE CONTROLS */}
+                    {selectedElementToStyle === 'custom_image' && (
+                      <div className="space-y-3">
+                        {movableImages.length === 0 ? (
+                          <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-center space-y-2">
+                            <p className="text-xs text-slate-400">טרם הוספת תמונות נעות לפרק זה.</p>
+                            <div className="flex items-center justify-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => movableImageFileInputRef.current?.click()}
+                                className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold flex items-center gap-1 shadow"
+                              >
+                                <Upload className="w-3 h-3" />
+                                <span>העלאת תמונה</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setStockPickerTarget('movable_image');
+                                  setIsStockModalOpen(true);
+                                }}
+                                className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-indigo-300 text-xs font-bold flex items-center gap-1 border border-slate-700"
+                              >
+                                <FolderOpen className="w-3 h-3" />
+                                <span>מאגר תמונות</span>
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          (() => {
+                            const activeImg = movableImages.find(i => i.id === selectedImageId) || movableImages[0];
+                            return (
+                              <div className="space-y-3">
+                                {/* Image Selector if multiple images exist */}
+                                {movableImages.length > 1 && (
+                                  <div className="space-y-1">
+                                    <label className="text-[10px] text-slate-400 font-bold block">בחר תמונה לעריכה:</label>
+                                    <div className="flex items-center gap-2 overflow-x-auto pb-1">
+                                      {movableImages.map((img, i) => (
+                                        <button
+                                          key={img.id}
+                                          type="button"
+                                          onClick={() => setSelectedImageId(img.id)}
+                                          className={`flex items-center gap-1.5 p-1.5 rounded-xl border text-[10px] font-bold shrink-0 transition-all ${
+                                            img.id === activeImg.id
+                                              ? 'bg-indigo-950 border-indigo-500 text-white shadow-md'
+                                              : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
+                                          }`}
+                                        >
+                                          <img src={img.url} alt="" className="w-6 h-6 rounded object-contain bg-black/40" />
+                                          <span className="truncate max-w-[90px]">{img.name || `תמונה ${i + 1}`}</span>
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* Layer Selector (Background vs Foreground) */}
+                                <div className="space-y-1">
+                                  <label className="text-[10px] text-slate-400 font-bold block">שכבת עומק בפריים:</label>
+                                  <div className="grid grid-cols-2 gap-2 text-xs">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleUpdateMovableImage(activeImg.id, { layer: 'background' })}
+                                      className={`p-2 rounded-xl border font-bold text-center transition-all flex items-center justify-center gap-1.5 ${
+                                        activeImg.layer === 'background'
+                                          ? 'bg-indigo-600 border-indigo-400 text-white shadow-md'
+                                          : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
+                                      }`}
+                                    >
+                                      <span>🌊 שכבת רקע (מתחת לגלים)</span>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleUpdateMovableImage(activeImg.id, { layer: 'foreground' })}
+                                      className={`p-2 rounded-xl border font-bold text-center transition-all flex items-center justify-center gap-1.5 ${
+                                        activeImg.layer === 'foreground'
+                                          ? 'bg-pink-600 border-pink-400 text-white shadow-md'
+                                          : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
+                                      }`}
+                                    >
+                                      <span>🔝 שכבה קדמית (מעל הגלים)</span>
+                                    </button>
+                                  </div>
+                                </div>
+
+                                {/* Shape Selector */}
+                                <div className="space-y-1">
+                                  <label className="text-[10px] text-slate-400 font-bold block">צורת חיתוך התמונה:</label>
+                                  <div className="grid grid-cols-3 gap-1.5 text-xs">
+                                    {[
+                                      { id: 'rounded', label: 'פינות מעוגלות' },
+                                      { id: 'circle', label: 'עיגול מלא' },
+                                      { id: 'rectangle', label: 'ישר / מלבני' }
+                                    ].map(s => (
+                                      <button
+                                        key={s.id}
+                                        type="button"
+                                        onClick={() => handleUpdateMovableImage(activeImg.id, { shape: s.id as any })}
+                                        className={`p-1.5 rounded-xl border font-bold text-center transition-all ${
+                                          activeImg.shape === s.id
+                                            ? 'bg-indigo-600 border-indigo-400 text-white shadow'
+                                            : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
+                                        }`}
+                                      >
+                                        {s.label}
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+
+                                {/* Opacity & Border */}
+                                <div className="grid grid-cols-2 gap-2">
+                                  <div className="space-y-1">
+                                    <div className="flex justify-between text-slate-400 font-bold">
+                                      <span>שקיפות:</span>
+                                      <span className="font-mono text-indigo-400">{Math.round(activeImg.opacity * 100)}%</span>
+                                    </div>
+                                    <input
+                                      type="range"
+                                      min="0.1"
+                                      max="1.0"
+                                      step="0.05"
+                                      value={activeImg.opacity}
+                                      onChange={(e) => handleUpdateMovableImage(activeImg.id, { opacity: parseFloat(e.target.value) })}
+                                      className="w-full h-1.5 bg-slate-800 rounded appearance-none cursor-pointer accent-indigo-500"
+                                    />
+                                  </div>
+
+                                  <div className="space-y-1">
+                                    <div className="flex justify-between text-slate-400 font-bold">
+                                      <span>עובי מסגרת:</span>
+                                      <span className="font-mono text-indigo-400">{activeImg.borderWidth || 0}px</span>
+                                    </div>
+                                    <div className="flex items-center gap-1.5">
+                                      <input
+                                        type="color"
+                                        value={activeImg.borderColor || '#6366f1'}
+                                        onChange={(e) => handleUpdateMovableImage(activeImg.id, { borderColor: e.target.value })}
+                                        className="w-6 h-6 rounded cursor-pointer bg-transparent border-0 shrink-0"
+                                      />
+                                      <input
+                                        type="range"
+                                        min="0"
+                                        max="8"
+                                        step="1"
+                                        value={activeImg.borderWidth || 0}
+                                        onChange={(e) => handleUpdateMovableImage(activeImg.id, { borderWidth: parseInt(e.target.value) })}
+                                        className="w-full h-1.5 bg-slate-800 rounded appearance-none cursor-pointer accent-indigo-500"
+                                      />
+                                    </div>
+                                  </div>
+                                </div>
+
+                                {/* Glow & Shadow */}
+                                <div className="space-y-1">
+                                  <div className="flex justify-between text-slate-400 font-bold">
+                                    <span>אפקט זוהר היקפי (Glow):</span>
+                                    <span className="font-mono text-indigo-400">{activeImg.glowBlur || 0}px</span>
+                                  </div>
+                                  <div className="flex items-center gap-1.5">
+                                    <input
+                                      type="color"
+                                      value={activeImg.glowColor || '#6366f1'}
+                                      onChange={(e) => handleUpdateMovableImage(activeImg.id, { glowColor: e.target.value })}
+                                      className="w-6 h-6 rounded cursor-pointer bg-transparent border-0 shrink-0"
+                                    />
+                                    <input
+                                      type="range"
+                                      min="0"
+                                      max="30"
+                                      value={activeImg.glowBlur || 0}
+                                      onChange={(e) => handleUpdateMovableImage(activeImg.id, { glowBlur: parseInt(e.target.value) })}
+                                      className="w-full h-1.5 bg-slate-800 rounded appearance-none cursor-pointer accent-indigo-500"
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })()
+                        )}
+                      </div>
+                    )}
+
+                    {/* BACKGROUND PAN & ZOOM CONTROLS IN STYLER */}
+                    {selectedElementToStyle === 'bg_pan' && (
+                      <div className="p-3 rounded-xl bg-slate-950/90 border border-slate-800 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                            <Move className="w-3.5 h-3.5 text-pink-400" />
+                            <span>הזזה וזום תמונת רקע (Pan & Zoom):</span>
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setBgPosX(0);
+                              setBgPosY(0);
+                              setBgScale(1.0);
+                            }}
+                            className="text-[10px] text-pink-400 font-bold hover:underline"
+                          >
+                            מרכז תמונה ↺
+                          </button>
+                        </div>
+
+                        <div className="grid grid-cols-3 gap-2">
+                          <div className="space-y-1">
+                            <div className="flex justify-between text-[10px] text-slate-400 font-bold">
+                              <span>מיקום X:</span>
+                              <span className="font-mono text-pink-400">{bgPosX}%</span>
+                            </div>
+                            <input
+                              type="range"
+                              min="-100"
+                              max="100"
+                              value={bgPosX}
+                              onChange={(e) => setBgPosX(parseInt(e.target.value))}
+                              className="w-full h-1.5 bg-slate-800 rounded appearance-none cursor-pointer accent-pink-500"
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                            <div className="flex justify-between text-[10px] text-slate-400 font-bold">
+                              <span>מיקום Y:</span>
+                              <span className="font-mono text-pink-400">{bgPosY}%</span>
+                            </div>
+                            <input
+                              type="range"
+                              min="-100"
+                              max="100"
+                              value={bgPosY}
+                              onChange={(e) => setBgPosY(parseInt(e.target.value))}
+                              className="w-full h-1.5 bg-slate-800 rounded appearance-none cursor-pointer accent-pink-500"
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                            <div className="flex justify-between text-[10px] text-slate-400 font-bold">
+                              <span>זום:</span>
+                              <span className="font-mono text-pink-400">{Math.round(bgScale * 100)}%</span>
+                            </div>
+                            <input
+                              type="range"
+                              min="0.5"
+                              max="3.0"
+                              step="0.05"
+                              value={bgScale}
+                              onChange={(e) => setBgScale(parseFloat(e.target.value))}
+                              className="w-full h-1.5 bg-slate-800 rounded appearance-none cursor-pointer accent-pink-500"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {/* 3. Typography Controls (טיפוגרפיה) */}
-                  <div className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 space-y-3">
-                    <span className="text-xs font-bold text-cyan-300 flex items-center gap-1.5">
-                      <span>🔤 סגנון גופן, עובי וצבעים:</span>
-                    </span>
+                  {selectedElementToStyle !== 'custom_image' && selectedElementToStyle !== 'bg_pan' && selectedElementToStyle !== 'poster' && (
+                    <div className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 space-y-3">
+                      <span className="text-xs font-bold text-cyan-300 flex items-center gap-1.5">
+                        <span>🔤 סגנון גופן, עובי וצבעים:</span>
+                      </span>
 
                     <div className="grid grid-cols-2 gap-2">
                       <div className="space-y-1">
@@ -4192,300 +4683,319 @@ export default function AudioEditorAudiogramStudio({
                       </div>
                     </div>
                   </div>
+                )}
 
                   {/* 4. Background & Border Controls (רקע ומסגרת) */}
-                  <div className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 space-y-3">
-                    <span className="text-xs font-bold text-purple-300 flex items-center gap-1.5">
-                      <span>🎨 רקע, מסגרת ופינות:</span>
-                    </span>
+                  {selectedElementToStyle !== 'custom_image' && selectedElementToStyle !== 'bg_pan' && selectedElementToStyle !== 'poster' && (
+                    <div className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 space-y-3">
+                      <span className="text-xs font-bold text-purple-300 flex items-center gap-1.5">
+                        <span>🎨 רקע, מסגרת ופינות:</span>
+                      </span>
 
-                    <div className="grid grid-cols-2 gap-2">
-                      {/* Background Color & Opacity */}
-                      <div className="space-y-1">
-                        <div className="flex justify-between text-[10px] text-slate-400 font-bold">
-                          <span>צבע ושקיפות רקע:</span>
-                          <span className="font-mono text-purple-400">{getCurrentElementStyle().backgroundOpacity ?? 95}%</span>
+                      <div className="grid grid-cols-2 gap-2">
+                        {/* Background Color & Opacity */}
+                        <div className="space-y-1">
+                          <div className="flex justify-between text-[10px] text-slate-400 font-bold">
+                            <span>צבע ושקיפות רקע:</span>
+                            <span className="font-mono text-purple-400">{getCurrentElementStyle().backgroundOpacity ?? 95}%</span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <input
+                              type="color"
+                              value={getCurrentElementStyle().backgroundColor || '#030712'}
+                              onChange={(e) => updateCurrentElementStyle({ backgroundColor: e.target.value })}
+                              className="w-7 h-7 rounded-lg cursor-pointer bg-transparent border-0 shrink-0"
+                            />
+                            <input
+                              type="range"
+                              min="0"
+                              max="100"
+                              value={getCurrentElementStyle().backgroundOpacity ?? 95}
+                              onChange={(e) => updateCurrentElementStyle({ backgroundOpacity: parseInt(e.target.value) })}
+                              className="w-full h-1.5 bg-slate-800 rounded appearance-none cursor-pointer accent-purple-500"
+                            />
+                          </div>
                         </div>
-                        <div className="flex items-center gap-1.5">
-                          <input
-                            type="color"
-                            value={getCurrentElementStyle().backgroundColor || '#030712'}
-                            onChange={(e) => updateCurrentElementStyle({ backgroundColor: e.target.value })}
-                            className="w-7 h-7 rounded-lg cursor-pointer bg-transparent border-0 shrink-0"
-                          />
-                          <input
-                            type="range"
-                            min="0"
-                            max="100"
-                            value={getCurrentElementStyle().backgroundOpacity ?? 95}
-                            onChange={(e) => updateCurrentElementStyle({ backgroundOpacity: parseInt(e.target.value) })}
-                            className="w-full h-1.5 bg-slate-800 rounded appearance-none cursor-pointer accent-purple-500"
-                          />
+
+                        {/* Border Width & Color */}
+                        <div className="space-y-1">
+                          <div className="flex justify-between text-[10px] text-slate-400 font-bold">
+                            <span>עובי מסגרת:</span>
+                            <span className="font-mono text-purple-400">{getCurrentElementStyle().borderWidth ?? 1.5}px</span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <input
+                              type="color"
+                              value={getCurrentElementStyle().borderColor || '#06b6d4'}
+                              onChange={(e) => updateCurrentElementStyle({ borderColor: e.target.value })}
+                              className="w-7 h-7 rounded-lg cursor-pointer bg-transparent border-0 shrink-0"
+                            />
+                            <input
+                              type="range"
+                              min="0"
+                              max="6"
+                              step="0.5"
+                              value={getCurrentElementStyle().borderWidth ?? 1.5}
+                              onChange={(e) => updateCurrentElementStyle({ borderWidth: parseFloat(e.target.value) })}
+                              className="w-full h-1.5 bg-slate-800 rounded appearance-none cursor-pointer accent-purple-500"
+                            />
+                          </div>
                         </div>
                       </div>
 
-                      {/* Border Width & Color */}
-                      <div className="space-y-1">
-                        <div className="flex justify-between text-[10px] text-slate-400 font-bold">
-                          <span>עובי מסגרת:</span>
-                          <span className="font-mono text-purple-400">{getCurrentElementStyle().borderWidth ?? 1.5}px</span>
+                      {/* Corner Radius & Glow Intensity */}
+                      <div className="grid grid-cols-2 gap-2 pt-1 border-t border-slate-800">
+                        <div className="space-y-1">
+                          <div className="flex justify-between text-[10px] text-slate-400 font-bold">
+                            <span>עיגול פינות (Radius):</span>
+                            <span className="font-mono text-purple-400">
+                              {(getCurrentElementStyle().borderRadius ?? 16) > 50 ? 'גלולה (Pill)' : `${getCurrentElementStyle().borderRadius ?? 16}px`}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <input
+                              type="range"
+                              min="0"
+                              max="36"
+                              value={Math.min(36, getCurrentElementStyle().borderRadius ?? 16)}
+                              onChange={(e) => updateCurrentElementStyle({ borderRadius: parseInt(e.target.value) })}
+                              className="w-full h-1.5 bg-slate-800 rounded appearance-none cursor-pointer accent-purple-500"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => updateCurrentElementStyle({ borderRadius: 9999 })}
+                              className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-slate-800 text-purple-300 shrink-0 hover:bg-slate-700"
+                            >
+                              גלולה
+                            </button>
+                          </div>
                         </div>
-                        <div className="flex items-center gap-1.5">
-                          <input
-                            type="color"
-                            value={getCurrentElementStyle().borderColor || '#06b6d4'}
-                            onChange={(e) => updateCurrentElementStyle({ borderColor: e.target.value })}
-                            className="w-7 h-7 rounded-lg cursor-pointer bg-transparent border-0 shrink-0"
-                          />
-                          <input
-                            type="range"
-                            min="0"
-                            max="6"
-                            step="0.5"
-                            value={getCurrentElementStyle().borderWidth ?? 1.5}
-                            onChange={(e) => updateCurrentElementStyle({ borderWidth: parseFloat(e.target.value) })}
-                            className="w-full h-1.5 bg-slate-800 rounded appearance-none cursor-pointer accent-purple-500"
-                          />
+
+                        {/* Glow & Shadow */}
+                        <div className="space-y-1">
+                          <div className="flex justify-between text-[10px] text-slate-400 font-bold">
+                            <span>זוהר ניאון / צל:</span>
+                            <span className="font-mono text-purple-400">{getCurrentElementStyle().glowBlur || 0}px</span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <input
+                              type="color"
+                              value={getCurrentElementStyle().glowColor || '#06b6d4'}
+                              onChange={(e) => updateCurrentElementStyle({ glowColor: e.target.value })}
+                              className="w-7 h-7 rounded-lg cursor-pointer bg-transparent border-0 shrink-0"
+                            />
+                            <input
+                              type="range"
+                              min="0"
+                              max="25"
+                              value={getCurrentElementStyle().glowBlur || 0}
+                              onChange={(e) => updateCurrentElementStyle({ glowBlur: parseInt(e.target.value) })}
+                              className="w-full h-1.5 bg-slate-800 rounded appearance-none cursor-pointer accent-purple-500"
+                            />
+                          </div>
                         </div>
                       </div>
                     </div>
-
-                    {/* Corner Radius & Glow Intensity */}
-                    <div className="grid grid-cols-2 gap-2 pt-1 border-t border-slate-800">
-                      <div className="space-y-1">
-                        <div className="flex justify-between text-[10px] text-slate-400 font-bold">
-                          <span>עיגול פינות (Radius):</span>
-                          <span className="font-mono text-purple-400">
-                            {(getCurrentElementStyle().borderRadius ?? 16) > 50 ? 'גלולה (Pill)' : `${getCurrentElementStyle().borderRadius ?? 16}px`}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-1">
-                          <input
-                            type="range"
-                            min="0"
-                            max="36"
-                            value={Math.min(36, getCurrentElementStyle().borderRadius ?? 16)}
-                            onChange={(e) => updateCurrentElementStyle({ borderRadius: parseInt(e.target.value) })}
-                            className="w-full h-1.5 bg-slate-800 rounded appearance-none cursor-pointer accent-purple-500"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => updateCurrentElementStyle({ borderRadius: 9999 })}
-                            className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-slate-800 text-purple-300 shrink-0 hover:bg-slate-700"
-                          >
-                            גלולה
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* Glow & Shadow */}
-                      <div className="space-y-1">
-                        <div className="flex justify-between text-[10px] text-slate-400 font-bold">
-                          <span>זוהר ניאון / צל:</span>
-                          <span className="font-mono text-purple-400">{getCurrentElementStyle().glowBlur || 0}px</span>
-                        </div>
-                        <div className="flex items-center gap-1.5">
-                          <input
-                            type="color"
-                            value={getCurrentElementStyle().glowColor || '#06b6d4'}
-                            onChange={(e) => updateCurrentElementStyle({ glowColor: e.target.value })}
-                            className="w-7 h-7 rounded-lg cursor-pointer bg-transparent border-0 shrink-0"
-                          />
-                          <input
-                            type="range"
-                            min="0"
-                            max="25"
-                            value={getCurrentElementStyle().glowBlur || 0}
-                            onChange={(e) => updateCurrentElementStyle({ glowBlur: parseInt(e.target.value) })}
-                            className="w-full h-1.5 bg-slate-800 rounded appearance-none cursor-pointer accent-purple-500"
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  </div>
+                  )}
 
                   {/* 5. Position, Scale & Transform Direct Numeric Controls */}
-                  <div className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 space-y-2.5">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
-                        <span>📐 מיקום וקנה מידה בפריים:</span>
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (selectedElementToStyle === 'host') setHostTransform({ x: 70, y: 15, scale: 1.0 });
-                          else if (selectedElementToStyle === 'fact') setFactTransform({ x: 5, y: 8, scale: 1.0 });
-                          else if (selectedElementToStyle === 'quote') setQuoteTransform({ x: 25, y: 65, scale: 1.0 });
-                          else if (selectedElementToStyle === 'banner') setBannerTransform({ x: 65, y: 78, scale: 1.0 });
-                          else if (selectedElementToStyle === 'rating') setRatingTransform({ x: 20, y: 75, scale: 1.0 });
-                          else if (selectedElementToStyle === 'spoiler') setSpoilerTransform({ x: 25, y: 15, scale: 1.0 });
-                          else if (selectedElementToStyle === 'poster') setPosterTransform({ x: 5, y: 45, scale: 1.0 });
-                          else if (selectedElementToStyle === 'subtitles') setSubtitleTransform({ x: 15, y: 78, scale: 1.0 });
-                        }}
-                        className="text-[10px] text-amber-400 font-bold hover:underline"
-                      >
-                        איפוס מיקום ↺
-                      </button>
-                    </div>
-
-                    <div className="grid grid-cols-3 gap-2 text-[10px]">
-                      <div className="space-y-1">
-                        <span className="text-slate-400 block font-bold">ציר X (אופקי):</span>
-                        <input
-                          type="range"
-                          min="0"
-                          max="85"
-                          value={
-                            selectedElementToStyle === 'host' ? hostTransform.x :
-                            selectedElementToStyle === 'fact' ? factTransform.x :
-                            selectedElementToStyle === 'quote' ? quoteTransform.x :
-                            selectedElementToStyle === 'banner' ? bannerTransform.x :
-                            selectedElementToStyle === 'rating' ? ratingTransform.x :
-                            selectedElementToStyle === 'spoiler' ? spoilerTransform.x :
-                            selectedElementToStyle === 'poster' ? posterTransform.x :
-                            subtitleTransform.x
-                          }
-                          onChange={(e) => {
-                            const val = parseFloat(e.target.value);
-                            if (selectedElementToStyle === 'host') setHostTransform(prev => ({ ...prev, x: val }));
-                            else if (selectedElementToStyle === 'fact') setFactTransform(prev => ({ ...prev, x: val }));
-                            else if (selectedElementToStyle === 'quote') setQuoteTransform(prev => ({ ...prev, x: val }));
-                            else if (selectedElementToStyle === 'banner') setBannerTransform(prev => ({ ...prev, x: val }));
-                            else if (selectedElementToStyle === 'rating') setRatingTransform(prev => ({ ...prev, x: val }));
-                            else if (selectedElementToStyle === 'spoiler') setSpoilerTransform(prev => ({ ...prev, x: val }));
-                            else if (selectedElementToStyle === 'poster') setPosterTransform(prev => ({ ...prev, x: val }));
-                            else if (selectedElementToStyle === 'subtitles') setSubtitleTransform(prev => ({ ...prev, x: val }));
-                          }}
-                          className="w-full h-1.5 bg-slate-800 rounded appearance-none cursor-pointer accent-amber-500"
-                        />
-                      </div>
-
-                      <div className="space-y-1">
-                        <span className="text-slate-400 block font-bold">ציר Y (אנכי):</span>
-                        <input
-                          type="range"
-                          min="0"
-                          max="85"
-                          value={
-                            selectedElementToStyle === 'host' ? hostTransform.y :
-                            selectedElementToStyle === 'fact' ? factTransform.y :
-                            selectedElementToStyle === 'quote' ? quoteTransform.y :
-                            selectedElementToStyle === 'banner' ? bannerTransform.y :
-                            selectedElementToStyle === 'rating' ? ratingTransform.y :
-                            selectedElementToStyle === 'spoiler' ? spoilerTransform.y :
-                            selectedElementToStyle === 'poster' ? posterTransform.y :
-                            subtitleTransform.y
-                          }
-                          onChange={(e) => {
-                            const val = parseFloat(e.target.value);
-                            if (selectedElementToStyle === 'host') setHostTransform(prev => ({ ...prev, y: val }));
-                            else if (selectedElementToStyle === 'fact') setFactTransform(prev => ({ ...prev, y: val }));
-                            else if (selectedElementToStyle === 'quote') setQuoteTransform(prev => ({ ...prev, y: val }));
-                            else if (selectedElementToStyle === 'banner') setBannerTransform(prev => ({ ...prev, y: val }));
-                            else if (selectedElementToStyle === 'rating') setRatingTransform(prev => ({ ...prev, y: val }));
-                            else if (selectedElementToStyle === 'spoiler') setSpoilerTransform(prev => ({ ...prev, y: val }));
-                            else if (selectedElementToStyle === 'poster') setPosterTransform(prev => ({ ...prev, y: val }));
-                            else if (selectedElementToStyle === 'subtitles') setSubtitleTransform(prev => ({ ...prev, y: val }));
-                          }}
-                          className="w-full h-1.5 bg-slate-800 rounded appearance-none cursor-pointer accent-amber-500"
-                        />
-                      </div>
-
-                      <div className="space-y-1">
-                        <div className="flex justify-between text-slate-400 font-bold">
-                          <span>קנה מידה:</span>
-                          <span className="font-mono text-amber-400 font-black">
-                            {Math.round((
-                              selectedElementToStyle === 'host' ? hostTransform.scale :
-                              selectedElementToStyle === 'fact' ? factTransform.scale :
-                              selectedElementToStyle === 'quote' ? quoteTransform.scale :
-                              selectedElementToStyle === 'banner' ? bannerTransform.scale :
-                              selectedElementToStyle === 'rating' ? ratingTransform.scale :
-                              selectedElementToStyle === 'spoiler' ? spoilerTransform.scale :
-                              selectedElementToStyle === 'poster' ? posterTransform.scale :
-                              subtitleTransform.scale
-                            ) * 100)}%
+                  {selectedElementToStyle !== 'bg_pan' && (() => {
+                    const activeImg = movableImages.find(i => i.id === selectedImageId) || movableImages[0];
+                    return (
+                      <div className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 space-y-2.5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
+                            <span>📐 מיקום וקנה מידה בפריים:</span>
                           </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (selectedElementToStyle === 'host') setHostTransform({ x: 70, y: 15, scale: 1.0 });
+                              else if (selectedElementToStyle === 'fact') setFactTransform({ x: 5, y: 8, scale: 1.0 });
+                              else if (selectedElementToStyle === 'quote') setQuoteTransform({ x: 25, y: 65, scale: 1.0 });
+                              else if (selectedElementToStyle === 'banner') setBannerTransform({ x: 65, y: 78, scale: 1.0 });
+                              else if (selectedElementToStyle === 'rating') setRatingTransform({ x: 20, y: 75, scale: 1.0 });
+                              else if (selectedElementToStyle === 'spoiler') setSpoilerTransform({ x: 25, y: 15, scale: 1.0 });
+                              else if (selectedElementToStyle === 'poster') setPosterTransform({ x: 5, y: 45, scale: 1.0 });
+                              else if (selectedElementToStyle === 'custom_image' && activeImg) handleUpdateMovableImage(activeImg.id, { transform: { x: 30, y: 30, scale: 1.0 } });
+                              else if (selectedElementToStyle === 'subtitles') setSubtitleTransform({ x: 15, y: 78, scale: 1.0 });
+                            }}
+                            className="text-[10px] text-amber-400 font-bold hover:underline"
+                          >
+                            איפוס מיקום ↺
+                          </button>
                         </div>
-                        <input
-                          type="range"
-                          min="0.4"
-                          max="3.5"
-                          step="0.05"
-                          value={
-                            selectedElementToStyle === 'host' ? hostTransform.scale :
-                            selectedElementToStyle === 'fact' ? factTransform.scale :
-                            selectedElementToStyle === 'quote' ? quoteTransform.scale :
-                            selectedElementToStyle === 'banner' ? bannerTransform.scale :
-                            selectedElementToStyle === 'rating' ? ratingTransform.scale :
-                            selectedElementToStyle === 'spoiler' ? spoilerTransform.scale :
-                            selectedElementToStyle === 'poster' ? posterTransform.scale :
-                            subtitleTransform.scale
-                          }
-                          onChange={(e) => {
-                            const val = parseFloat(e.target.value);
-                            if (selectedElementToStyle === 'host') setHostTransform(prev => ({ ...prev, scale: val }));
-                            else if (selectedElementToStyle === 'fact') setFactTransform(prev => ({ ...prev, scale: val }));
-                            else if (selectedElementToStyle === 'quote') setQuoteTransform(prev => ({ ...prev, scale: val }));
-                            else if (selectedElementToStyle === 'banner') setBannerTransform(prev => ({ ...prev, scale: val }));
-                            else if (selectedElementToStyle === 'rating') setRatingTransform(prev => ({ ...prev, scale: val }));
-                            else if (selectedElementToStyle === 'spoiler') setSpoilerTransform(prev => ({ ...prev, scale: val }));
-                            else if (selectedElementToStyle === 'poster') setPosterTransform(prev => ({ ...prev, scale: val }));
-                            else if (selectedElementToStyle === 'subtitles') setSubtitleTransform(prev => ({ ...prev, scale: val }));
-                          }}
-                          className="w-full h-1.5 bg-slate-800 rounded appearance-none cursor-pointer accent-amber-500"
-                        />
-                      </div>
-                    </div>
 
-                    {/* Quick Scale Presets */}
-                    <div className="space-y-1.5 pt-2 border-t border-slate-800">
-                      <span className="text-[10px] font-bold text-slate-400 block">קנה מידה מהיר בלחיצה:</span>
-                      <div className="grid grid-cols-6 gap-1 text-[10px]">
-                        {[
-                          { scale: 0.8, label: '0.8x' },
-                          { scale: 1.0, label: '1.0x' },
-                          { scale: 1.3, label: '1.3x' },
-                          { scale: 1.6, label: '1.6x' },
-                          { scale: 2.0, label: '2.0x' },
-                          { scale: 2.5, label: '2.5x' },
-                        ].map(s => {
-                          const curScale = selectedElementToStyle === 'host' ? hostTransform.scale :
-                            selectedElementToStyle === 'fact' ? factTransform.scale :
-                            selectedElementToStyle === 'quote' ? quoteTransform.scale :
-                            selectedElementToStyle === 'banner' ? bannerTransform.scale :
-                            selectedElementToStyle === 'rating' ? ratingTransform.scale :
-                            selectedElementToStyle === 'spoiler' ? spoilerTransform.scale :
-                            selectedElementToStyle === 'poster' ? posterTransform.scale :
-                            subtitleTransform.scale;
-                          const isActive = Math.abs(curScale - s.scale) < 0.05;
-                          return (
-                            <button
-                              key={s.scale}
-                              type="button"
-                              onClick={() => {
-                                if (selectedElementToStyle === 'host') setHostTransform(prev => ({ ...prev, scale: s.scale }));
-                                else if (selectedElementToStyle === 'fact') setFactTransform(prev => ({ ...prev, scale: s.scale }));
-                                else if (selectedElementToStyle === 'quote') setQuoteTransform(prev => ({ ...prev, scale: s.scale }));
-                                else if (selectedElementToStyle === 'banner') setBannerTransform(prev => ({ ...prev, scale: s.scale }));
-                                else if (selectedElementToStyle === 'rating') setRatingTransform(prev => ({ ...prev, scale: s.scale }));
-                                else if (selectedElementToStyle === 'spoiler') setSpoilerTransform(prev => ({ ...prev, scale: s.scale }));
-                                else if (selectedElementToStyle === 'poster') setPosterTransform(prev => ({ ...prev, scale: s.scale }));
-                                else if (selectedElementToStyle === 'subtitles') setSubtitleTransform(prev => ({ ...prev, scale: s.scale }));
+                        <div className="grid grid-cols-3 gap-2 text-[10px]">
+                          <div className="space-y-1">
+                            <span className="text-slate-400 block font-bold">ציר X (אופקי):</span>
+                            <input
+                              type="range"
+                              min="0"
+                              max="85"
+                              value={
+                                selectedElementToStyle === 'host' ? hostTransform.x :
+                                selectedElementToStyle === 'fact' ? factTransform.x :
+                                selectedElementToStyle === 'quote' ? quoteTransform.x :
+                                selectedElementToStyle === 'banner' ? bannerTransform.x :
+                                selectedElementToStyle === 'rating' ? ratingTransform.x :
+                                selectedElementToStyle === 'spoiler' ? spoilerTransform.x :
+                                selectedElementToStyle === 'poster' ? posterTransform.x :
+                                selectedElementToStyle === 'custom_image' ? (activeImg?.transform.x ?? 30) :
+                                subtitleTransform.x
+                              }
+                              onChange={(e) => {
+                                const val = parseFloat(e.target.value);
+                                if (selectedElementToStyle === 'host') setHostTransform(prev => ({ ...prev, x: val }));
+                                else if (selectedElementToStyle === 'fact') setFactTransform(prev => ({ ...prev, x: val }));
+                                else if (selectedElementToStyle === 'quote') setQuoteTransform(prev => ({ ...prev, x: val }));
+                                else if (selectedElementToStyle === 'banner') setBannerTransform(prev => ({ ...prev, x: val }));
+                                else if (selectedElementToStyle === 'rating') setRatingTransform(prev => ({ ...prev, x: val }));
+                                else if (selectedElementToStyle === 'spoiler') setSpoilerTransform(prev => ({ ...prev, x: val }));
+                                else if (selectedElementToStyle === 'poster') setPosterTransform(prev => ({ ...prev, x: val }));
+                                else if (selectedElementToStyle === 'custom_image' && activeImg) handleUpdateMovableImage(activeImg.id, { transform: { ...activeImg.transform, x: val } });
+                                else if (selectedElementToStyle === 'subtitles') setSubtitleTransform(prev => ({ ...prev, x: val }));
                               }}
-                              className={`py-1 rounded font-bold border transition-all text-center ${
-                                isActive
-                                  ? 'bg-amber-500 text-black border-amber-400 shadow font-black'
-                                  : 'bg-slate-950 text-slate-300 border-slate-800 hover:border-amber-500/50'
-                              }`}
-                            >
-                              {s.label}
-                            </button>
-                          );
-                        })}
+                              className="w-full h-1.5 bg-slate-800 rounded appearance-none cursor-pointer accent-amber-500"
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                            <span className="text-slate-400 block font-bold">ציר Y (אנכי):</span>
+                            <input
+                              type="range"
+                              min="0"
+                              max="85"
+                              value={
+                                selectedElementToStyle === 'host' ? hostTransform.y :
+                                selectedElementToStyle === 'fact' ? factTransform.y :
+                                selectedElementToStyle === 'quote' ? quoteTransform.y :
+                                selectedElementToStyle === 'banner' ? bannerTransform.y :
+                                selectedElementToStyle === 'rating' ? ratingTransform.y :
+                                selectedElementToStyle === 'spoiler' ? spoilerTransform.y :
+                                selectedElementToStyle === 'poster' ? posterTransform.y :
+                                selectedElementToStyle === 'custom_image' ? (activeImg?.transform.y ?? 30) :
+                                subtitleTransform.y
+                              }
+                              onChange={(e) => {
+                                const val = parseFloat(e.target.value);
+                                if (selectedElementToStyle === 'host') setHostTransform(prev => ({ ...prev, y: val }));
+                                else if (selectedElementToStyle === 'fact') setFactTransform(prev => ({ ...prev, y: val }));
+                                else if (selectedElementToStyle === 'quote') setQuoteTransform(prev => ({ ...prev, y: val }));
+                                else if (selectedElementToStyle === 'banner') setBannerTransform(prev => ({ ...prev, y: val }));
+                                else if (selectedElementToStyle === 'rating') setRatingTransform(prev => ({ ...prev, x: val }));
+                                else if (selectedElementToStyle === 'spoiler') setSpoilerTransform(prev => ({ ...prev, y: val }));
+                                else if (selectedElementToStyle === 'poster') setPosterTransform(prev => ({ ...prev, y: val }));
+                                else if (selectedElementToStyle === 'custom_image' && activeImg) handleUpdateMovableImage(activeImg.id, { transform: { ...activeImg.transform, y: val } });
+                                else if (selectedElementToStyle === 'subtitles') setSubtitleTransform(prev => ({ ...prev, y: val }));
+                              }}
+                              className="w-full h-1.5 bg-slate-800 rounded appearance-none cursor-pointer accent-amber-500"
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                            <div className="flex justify-between text-slate-400 font-bold">
+                              <span>קנה מידה:</span>
+                              <span className="font-mono text-amber-400 font-black">
+                                {Math.round((
+                                  selectedElementToStyle === 'host' ? hostTransform.scale :
+                                  selectedElementToStyle === 'fact' ? factTransform.scale :
+                                  selectedElementToStyle === 'quote' ? quoteTransform.scale :
+                                  selectedElementToStyle === 'banner' ? bannerTransform.scale :
+                                  selectedElementToStyle === 'rating' ? ratingTransform.scale :
+                                  selectedElementToStyle === 'spoiler' ? spoilerTransform.scale :
+                                  selectedElementToStyle === 'poster' ? posterTransform.scale :
+                                  selectedElementToStyle === 'custom_image' ? (activeImg?.transform.scale ?? 1.0) :
+                                  subtitleTransform.scale
+                                ) * 100)}%
+                              </span>
+                            </div>
+                            <input
+                              type="range"
+                              min="0.4"
+                              max="3.5"
+                              step="0.05"
+                              value={
+                                selectedElementToStyle === 'host' ? hostTransform.scale :
+                                selectedElementToStyle === 'fact' ? factTransform.scale :
+                                selectedElementToStyle === 'quote' ? quoteTransform.scale :
+                                selectedElementToStyle === 'banner' ? bannerTransform.scale :
+                                selectedElementToStyle === 'rating' ? ratingTransform.scale :
+                                selectedElementToStyle === 'spoiler' ? spoilerTransform.scale :
+                                selectedElementToStyle === 'poster' ? posterTransform.scale :
+                                selectedElementToStyle === 'custom_image' ? (activeImg?.transform.scale ?? 1.0) :
+                                subtitleTransform.scale
+                              }
+                              onChange={(e) => {
+                                const val = parseFloat(e.target.value);
+                                if (selectedElementToStyle === 'host') setHostTransform(prev => ({ ...prev, scale: val }));
+                                else if (selectedElementToStyle === 'fact') setFactTransform(prev => ({ ...prev, scale: val }));
+                                else if (selectedElementToStyle === 'quote') setQuoteTransform(prev => ({ ...prev, scale: val }));
+                                else if (selectedElementToStyle === 'banner') setBannerTransform(prev => ({ ...prev, scale: val }));
+                                else if (selectedElementToStyle === 'rating') setRatingTransform(prev => ({ ...prev, scale: val }));
+                                else if (selectedElementToStyle === 'spoiler') setSpoilerTransform(prev => ({ ...prev, scale: val }));
+                                else if (selectedElementToStyle === 'poster') setPosterTransform(prev => ({ ...prev, scale: val }));
+                                else if (selectedElementToStyle === 'custom_image' && activeImg) handleUpdateMovableImage(activeImg.id, { transform: { ...activeImg.transform, scale: val } });
+                                else if (selectedElementToStyle === 'subtitles') setSubtitleTransform(prev => ({ ...prev, scale: val }));
+                              }}
+                              className="w-full h-1.5 bg-slate-800 rounded appearance-none cursor-pointer accent-amber-500"
+                            />
+                          </div>
+                        </div>
+
+                        {/* Quick Scale Presets */}
+                        <div className="space-y-1.5 pt-2 border-t border-slate-800">
+                          <span className="text-[10px] font-bold text-slate-400 block">קנה מידה מהיר בלחיצה:</span>
+                          <div className="grid grid-cols-6 gap-1 text-[10px]">
+                            {[
+                              { scale: 0.8, label: '0.8x' },
+                              { scale: 1.0, label: '1.0x' },
+                              { scale: 1.3, label: '1.3x' },
+                              { scale: 1.6, label: '1.6x' },
+                              { scale: 2.0, label: '2.0x' },
+                              { scale: 2.5, label: '2.5x' },
+                            ].map(s => {
+                              const curScale = selectedElementToStyle === 'host' ? hostTransform.scale :
+                                selectedElementToStyle === 'fact' ? factTransform.scale :
+                                selectedElementToStyle === 'quote' ? quoteTransform.scale :
+                                selectedElementToStyle === 'banner' ? bannerTransform.scale :
+                                selectedElementToStyle === 'rating' ? ratingTransform.scale :
+                                selectedElementToStyle === 'spoiler' ? spoilerTransform.scale :
+                                selectedElementToStyle === 'poster' ? posterTransform.scale :
+                                selectedElementToStyle === 'custom_image' ? (activeImg?.transform.scale ?? 1.0) :
+                                subtitleTransform.scale;
+                              const isActive = Math.abs(curScale - s.scale) < 0.05;
+
+                              return (
+                                <button
+                                  key={s.label}
+                                  type="button"
+                                  onClick={() => {
+                                    if (selectedElementToStyle === 'host') setHostTransform(prev => ({ ...prev, scale: s.scale }));
+                                    else if (selectedElementToStyle === 'fact') setFactTransform(prev => ({ ...prev, scale: s.scale }));
+                                    else if (selectedElementToStyle === 'quote') setQuoteTransform(prev => ({ ...prev, scale: s.scale }));
+                                    else if (selectedElementToStyle === 'banner') setBannerTransform(prev => ({ ...prev, scale: s.scale }));
+                                    else if (selectedElementToStyle === 'rating') setRatingTransform(prev => ({ ...prev, scale: s.scale }));
+                                    else if (selectedElementToStyle === 'spoiler') setSpoilerTransform(prev => ({ ...prev, scale: s.scale }));
+                                    else if (selectedElementToStyle === 'poster') setPosterTransform(prev => ({ ...prev, scale: s.scale }));
+                                    else if (selectedElementToStyle === 'custom_image' && activeImg) handleUpdateMovableImage(activeImg.id, { transform: { ...activeImg.transform, scale: s.scale } });
+                                    else if (selectedElementToStyle === 'subtitles') setSubtitleTransform(prev => ({ ...prev, scale: s.scale }));
+                                  }}
+                                  className={`py-1 rounded font-bold border transition-all text-center ${
+                                    isActive
+                                      ? 'bg-amber-500 text-black border-amber-400 shadow font-black'
+                                      : 'bg-slate-950 text-slate-300 border-slate-800 hover:border-amber-500/50'
+                                  }`}
+                                >
+                                  {s.label}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                  </div>
+                    );
+                  })()}
                 </div>
               )}
 
@@ -4586,6 +5096,15 @@ export default function AudioEditorAudiogramStudio({
                         reader.readAsDataURL(file);
                       }
                     }}
+                  />
+
+                  {/* Hidden Movable Overlay Image File Input */}
+                  <input
+                    ref={movableImageFileInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={handleUploadMovableImageFile}
                   />
 
                   {/* Mode Selector */}
@@ -4727,6 +5246,75 @@ export default function AudioEditorAudiogramStudio({
                           />
                         </div>
                       </div>
+
+                      {/* Pan & Zoom Controls for Background Image */}
+                      <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800 space-y-2.5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-bold text-slate-300 flex items-center gap-1.5">
+                            <Move className="w-3.5 h-3.5 text-pink-400" />
+                            <span>הזזה ותקריב תמונת רקע (Pan & Zoom):</span>
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setBgPosX(0);
+                              setBgPosY(0);
+                              setBgScale(1.0);
+                            }}
+                            className="text-[10px] text-pink-400 font-bold hover:underline"
+                          >
+                            מרכז תמונה ↺
+                          </button>
+                        </div>
+
+                        <div className="grid grid-cols-3 gap-2">
+                          <div className="space-y-1">
+                            <div className="flex justify-between text-[10px] text-slate-400 font-bold">
+                              <span>מיקום X:</span>
+                              <span className="font-mono text-pink-400">{bgPosX}%</span>
+                            </div>
+                            <input
+                              type="range"
+                              min="-100"
+                              max="100"
+                              value={bgPosX}
+                              onChange={(e) => setBgPosX(parseInt(e.target.value))}
+                              className="w-full h-1.5 bg-slate-800 rounded appearance-none cursor-pointer accent-pink-500"
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                            <div className="flex justify-between text-[10px] text-slate-400 font-bold">
+                              <span>מיקום Y:</span>
+                              <span className="font-mono text-pink-400">{bgPosY}%</span>
+                            </div>
+                            <input
+                              type="range"
+                              min="-100"
+                              max="100"
+                              value={bgPosY}
+                              onChange={(e) => setBgPosY(parseInt(e.target.value))}
+                              className="w-full h-1.5 bg-slate-800 rounded appearance-none cursor-pointer accent-pink-500"
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                            <div className="flex justify-between text-[10px] text-slate-400 font-bold">
+                              <span>זום:</span>
+                              <span className="font-mono text-pink-400">{Math.round(bgScale * 100)}%</span>
+                            </div>
+                            <input
+                              type="range"
+                              min="0.5"
+                              max="3.0"
+                              step="0.05"
+                              value={bgScale}
+                              onChange={(e) => setBgScale(parseFloat(e.target.value))}
+                              className="w-full h-1.5 bg-slate-800 rounded appearance-none cursor-pointer accent-pink-500"
+                            />
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   )}
 
@@ -4786,6 +5374,266 @@ export default function AudioEditorAudiogramStudio({
                     >
                       {ambientVignette ? 'פעיל ✓' : 'כבוי'}
                     </button>
+                  </div>
+
+                  {/* 4. MOVABLE BACKGROUND IMAGES & STICKERS (תמונות ומדבקות נעות ברקע) */}
+                  <div className="p-3.5 rounded-2xl bg-gradient-to-r from-slate-900 via-indigo-950/30 to-purple-950/30 border border-indigo-500/40 space-y-3 shadow-lg">
+                    <div className="flex items-center justify-between">
+                      <div className="space-y-0.5">
+                        <span className="text-xs font-black text-white flex items-center gap-1.5">
+                          <Layers className="w-4 h-4 text-indigo-400" />
+                          <span>תמונות ומדבקות נעות ברקע ({movableImages.length})</span>
+                        </span>
+                        <span className="text-[10px] text-slate-400 block">
+                          הוסף צילומים, לוגואים או מדבקות שניתן להזיז בחופשיות ברקע (מתחת לגלים) או בקדמת הפריים
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Add Buttons */}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => movableImageFileInputRef.current?.click()}
+                        className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold flex items-center gap-1.5 shadow transition-all"
+                      >
+                        <Upload className="w-3.5 h-3.5" />
+                        <span>העלאת תמונה מהמחשב</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setStockPickerTarget('movable_image');
+                          setIsStockModalOpen(true);
+                        }}
+                        className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-indigo-300 text-xs font-bold flex items-center gap-1.5 border border-indigo-500/30 transition-all"
+                      >
+                        <FolderOpen className="w-3.5 h-3.5" />
+                        <span>מאגר תמונות & סמלים</span>
+                      </button>
+                    </div>
+
+                    {/* Quick Add via URL */}
+                    <div className="flex items-center gap-1.5 pt-1">
+                      <input
+                        type="text"
+                        value={newImageUrlInput}
+                        onChange={(e) => setNewImageUrlInput(e.target.value)}
+                        placeholder="או הדבק כאן כתובת URL לתמונה / PNG שקוף..."
+                        className="flex-1 px-2.5 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500"
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && newImageUrlInput.trim()) {
+                            handleAddMovableImage(newImageUrlInput.trim());
+                            setNewImageUrlInput('');
+                          }
+                        }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (newImageUrlInput.trim()) {
+                            handleAddMovableImage(newImageUrlInput.trim());
+                            setNewImageUrlInput('');
+                          }
+                        }}
+                        className="px-3 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold shrink-0 transition-all"
+                      >
+                        הוסף
+                      </button>
+                    </div>
+
+                    {/* Movable Images List */}
+                    {movableImages.length === 0 ? (
+                      <div className="text-center py-3.5 px-3 rounded-xl bg-slate-950/60 border border-dashed border-slate-800 text-slate-500 text-[11px]">
+                        עדיין לא נוספו תמונות נעות. לחץ על "העלאת תמונה מהמחשב" או הוסף כתובת URL כדי להתחיל!
+                      </div>
+                    ) : (
+                      <div className="space-y-2.5 pt-1">
+                        {movableImages.map((img, idx) => {
+                          const isSelected = selectedImageId === img.id;
+                          return (
+                            <div
+                              key={img.id}
+                              className={`p-2.5 rounded-xl border transition-all ${
+                                isSelected
+                                  ? 'bg-slate-900/90 border-indigo-500 ring-1 ring-indigo-500/50 shadow-md'
+                                  : 'bg-slate-950/60 border-slate-800 hover:border-slate-700'
+                              }`}
+                            >
+                              {/* Item Header */}
+                              <div className="flex items-center justify-between gap-2">
+                                <div
+                                  className="flex items-center gap-2.5 cursor-pointer flex-1 min-w-0"
+                                  onClick={() => {
+                                    setSelectedImageId(isSelected ? null : img.id);
+                                    setSelectedElementToStyle('custom_image');
+                                  }}
+                                >
+                                  <img
+                                    src={img.url}
+                                    alt={img.name || `תמונה ${idx + 1}`}
+                                    className="w-10 h-10 rounded-lg object-contain bg-black/50 border border-slate-700 shrink-0"
+                                  />
+                                  <div className="min-w-0 flex-1">
+                                    <span className="text-xs font-bold text-white block truncate">
+                                      {img.name || `תמונה ${idx + 1}`}
+                                    </span>
+                                    <div className="flex items-center gap-1.5 text-[10px] text-slate-400 mt-0.5">
+                                      <span className={`px-1.5 py-0.5 rounded font-bold ${
+                                        img.layer === 'background' ? 'bg-indigo-950 text-indigo-300 border border-indigo-800' : 'bg-pink-950 text-pink-300 border border-pink-800'
+                                      }`}>
+                                        {img.layer === 'background' ? 'שכבת רקע (מתחת לגלים)' : 'שכבה קדמית (מעל הגלים)'}
+                                      </span>
+                                      <span>• {Math.round(img.opacity * 100)}%</span>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center gap-1 shrink-0">
+                                  {/* Toggle Layer (Background vs Foreground) */}
+                                  <button
+                                    type="button"
+                                    onClick={() => handleUpdateMovableImage(img.id, { layer: img.layer === 'background' ? 'foreground' : 'background' })}
+                                    className="p-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors"
+                                    title={img.layer === 'background' ? 'העבר לשכבה קדמית (מעל הגלים)' : 'העבר לשכבת רקע (מתחת לגלים)'}
+                                  >
+                                    <Layers className="w-3.5 h-3.5" />
+                                  </button>
+
+                                  {/* Toggle Visibility */}
+                                  <button
+                                    type="button"
+                                    onClick={() => handleUpdateMovableImage(img.id, { visible: !img.visible })}
+                                    className={`p-1 rounded-lg transition-colors ${
+                                      img.visible ? 'bg-slate-800 text-emerald-400 hover:bg-slate-700' : 'bg-slate-800 text-slate-500 hover:bg-slate-700'
+                                    }`}
+                                    title={img.visible ? 'הסתר תמונה' : 'הצג תמונה'}
+                                  >
+                                    {img.visible ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                                  </button>
+
+                                  {/* Delete */}
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteMovableImage(img.id)}
+                                    className="p-1 rounded-lg bg-slate-800 hover:bg-rose-900/60 text-slate-400 hover:text-rose-400 transition-colors"
+                                    title="מחק תמונה"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </div>
+
+                              {/* Expanded Item Styling Controls */}
+                              {isSelected && (
+                                <div className="mt-3 pt-2.5 border-t border-slate-800 space-y-2.5 animate-in fade-in text-[10px]">
+                                  {/* Shape Selector */}
+                                  <div className="space-y-1">
+                                    <span className="text-slate-400 font-bold block">צורת חיתוך:</span>
+                                    <div className="grid grid-cols-3 gap-1">
+                                      {[
+                                        { id: 'rounded', label: 'פינות מעוגלות' },
+                                        { id: 'circle', label: 'עיגול מלא' },
+                                        { id: 'rectangle', label: 'ישר / מלבני' }
+                                      ].map(s => (
+                                        <button
+                                          key={s.id}
+                                          type="button"
+                                          onClick={() => handleUpdateMovableImage(img.id, { shape: s.id as any })}
+                                          className={`py-1 rounded-lg font-bold border transition-all ${
+                                            img.shape === s.id
+                                              ? 'bg-indigo-600 border-indigo-400 text-white'
+                                              : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
+                                          }`}
+                                        >
+                                          {s.label}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </div>
+
+                                  {/* Opacity & Border Width */}
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <div className="space-y-1">
+                                      <div className="flex justify-between text-slate-400 font-bold">
+                                        <span>שקיפות:</span>
+                                        <span className="font-mono text-indigo-400">{Math.round(img.opacity * 100)}%</span>
+                                      </div>
+                                      <input
+                                        type="range"
+                                        min="0.1"
+                                        max="1.0"
+                                        step="0.05"
+                                        value={img.opacity}
+                                        onChange={(e) => handleUpdateMovableImage(img.id, { opacity: parseFloat(e.target.value) })}
+                                        className="w-full h-1.5 bg-slate-800 rounded appearance-none cursor-pointer accent-indigo-500"
+                                      />
+                                    </div>
+
+                                    <div className="space-y-1">
+                                      <div className="flex justify-between text-slate-400 font-bold">
+                                        <span>עובי מסגרת:</span>
+                                        <span className="font-mono text-indigo-400">{img.borderWidth || 0}px</span>
+                                      </div>
+                                      <div className="flex items-center gap-1">
+                                        <input
+                                          type="color"
+                                          value={img.borderColor || '#6366f1'}
+                                          onChange={(e) => handleUpdateMovableImage(img.id, { borderColor: e.target.value })}
+                                          className="w-5 h-5 rounded cursor-pointer bg-transparent border-0 shrink-0"
+                                        />
+                                        <input
+                                          type="range"
+                                          min="0"
+                                          max="8"
+                                          step="1"
+                                          value={img.borderWidth || 0}
+                                          onChange={(e) => handleUpdateMovableImage(img.id, { borderWidth: parseInt(e.target.value) })}
+                                          className="w-full h-1.5 bg-slate-800 rounded appearance-none cursor-pointer accent-indigo-500"
+                                        />
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  {/* Glow Effect */}
+                                  <div className="space-y-1">
+                                    <div className="flex justify-between text-slate-400 font-bold">
+                                      <span>אפקט זוהר היקפי (Glow):</span>
+                                      <span className="font-mono text-indigo-400">{img.glowBlur || 0}px</span>
+                                    </div>
+                                    <div className="flex items-center gap-1.5">
+                                      <input
+                                        type="color"
+                                        value={img.glowColor || '#6366f1'}
+                                        onChange={(e) => handleUpdateMovableImage(img.id, { glowColor: e.target.value })}
+                                        className="w-5 h-5 rounded cursor-pointer bg-transparent border-0 shrink-0"
+                                      />
+                                      <input
+                                        type="range"
+                                        min="0"
+                                        max="30"
+                                        value={img.glowBlur || 0}
+                                        onChange={(e) => handleUpdateMovableImage(img.id, { glowBlur: parseInt(e.target.value) })}
+                                        className="w-full h-1.5 bg-slate-800 rounded appearance-none cursor-pointer accent-indigo-500"
+                                      />
+                                      <button
+                                        type="button"
+                                        onClick={() => handleUpdateMovableImage(img.id, { transform: { x: 30, y: 30, scale: 1.0 } })}
+                                        className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold shrink-0"
+                                        title="אפס מיקום וגודל של תמונה זו"
+                                      >
+                                        איפוס מיקום ↺
+                                      </button>
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -5885,7 +6733,9 @@ export default function AudioEditorAudiogramStudio({
           initialTarget={stockPickerTarget}
           onClose={() => setIsStockModalOpen(false)}
           onSelectImage={(url) => {
-            if (stockPickerTarget === 'poster') {
+            if (stockPickerTarget === 'movable_image') {
+              handleAddMovableImage(url);
+            } else if (stockPickerTarget === 'poster') {
               setPosterUrl(url);
               setShowPosterPip(true);
             } else if (stockPickerTarget === 'logo') {

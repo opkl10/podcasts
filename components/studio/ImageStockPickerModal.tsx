@@ -183,7 +183,7 @@ interface ImageStockPickerModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSelectImage: (imageUrl: string, title?: string) => void;
-  initialTarget?: 'background' | 'poster' | 'logo';
+  initialTarget?: 'background' | 'poster' | 'logo' | 'movable_image';
 }
 
 export default function ImageStockPickerModal({

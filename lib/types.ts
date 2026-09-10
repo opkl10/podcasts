@@ -273,6 +273,22 @@ export interface LiveOverlayState {
   };
 }
 
+export interface MovableImageOverlay {
+  id: string;
+  url: string;
+  name?: string;
+  transform: ElementTransform;
+  opacity: number;
+  borderRadius?: number;
+  shape: 'rounded' | 'circle' | 'rectangle';
+  layer: 'background' | 'foreground';
+  borderColor?: string;
+  borderWidth?: number;
+  glowBlur?: number;
+  glowColor?: string;
+  visible: boolean;
+}
+
 export interface AudiogramStudioConfig {
   aspectRatio: '16:9' | '9:16' | '1:1';
   bgType: 'preset' | 'image' | 'solid';
@@ -281,6 +297,14 @@ export interface AudiogramStudioConfig {
   bgDim: number;
   solidColor: string;
   ambientVignette: boolean;
+
+  // Background Pan & Zoom
+  bgPosX?: number;
+  bgPosY?: number;
+  bgScale?: number;
+
+  // Additional Draggable Background / Foreground Images
+  movableImages?: MovableImageOverlay[];
 
   waveformStyle: string;
   waveformColorMode: 'gradient' | 'single';
