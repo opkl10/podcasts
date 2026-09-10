@@ -103,6 +103,7 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
   // Facecam Visual Styling & Layout Engine
   const [facecamLayout, setFacecamLayout] = useState<'solo_game' | 'pip_br' | 'pip_bl' | 'pip_tr' | 'pip_tl' | 'solo_cam' | 'split'>('pip_br');
   const [facecamShape, setFacecamShape] = useState<'rounded' | 'circle' | 'rectangle'>('rounded');
+  const [facecamAspect, setFacecamAspect] = useState<'auto' | '16:9' | '4:3' | '1:1' | '9:16'>('auto');
   const [facecamSize, setFacecamSize] = useState<'small' | 'medium' | 'large'>('medium');
   const [facecamGlowColor, setFacecamGlowColor] = useState<string>('#06b6d4');
   const [facecamGlowBlur, setFacecamGlowBlur] = useState<number>(15);
@@ -787,13 +788,40 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
       if (hasFacecam) {
         ctx.save();
 
+        const shouldDrawRemoteImage = isUsingRemoteCam && isRemoteImgReady && (!isVideoReady || !remoteStream);
+        const camSource: HTMLVideoElement | HTMLImageElement | null = shouldDrawRemoteImage ? remoteImg : (isVideoReady ? faceVideo : null);
+
+        const camNatW = camSource ? ('videoWidth' in camSource ? (camSource as HTMLVideoElement).videoWidth : (camSource as HTMLImageElement).naturalWidth) : 0;
+        const camNatH = camSource ? ('videoHeight' in camSource ? (camSource as HTMLVideoElement).videoHeight : (camSource as HTMLImageElement).naturalHeight) : 0;
+        const nativeAspect = (camNatW > 0 && camNatH > 0) ? (camNatW / camNatH) : (16 / 9);
+
         let fw = 460 * scale;
-        let fh = 260 * scale;
-        if (facecamSize === 'small') { fw = 360 * scale; fh = 202 * scale; }
-        else if (facecamSize === 'large') { fw = 560 * scale; fh = 315 * scale; }
+        if (facecamSize === 'small') { fw = 360 * scale; }
+        else if (facecamSize === 'large') { fw = 560 * scale; }
+
+        let targetAspect = 16 / 9;
+        if (facecamAspect === 'auto') {
+          targetAspect = nativeAspect;
+        } else if (facecamAspect === '4:3') {
+          targetAspect = 4 / 3;
+        } else if (facecamAspect === '1:1') {
+          targetAspect = 1.0;
+        } else if (facecamAspect === '9:16') {
+          targetAspect = 9 / 16;
+        } else {
+          targetAspect = 16 / 9;
+        }
+
+        let fh = fw / targetAspect;
 
         if (facecamShape === 'circle') {
-          fh = fw; // 1:1 aspect for circle
+          fh = fw; // 1:1 for perfect circle geometry
+        } else if (facecamLayout.startsWith('pip')) {
+          // Prevent oversized vertical PiP overflowing the canvas
+          if (fh > H * 0.65) {
+            fh = H * 0.65;
+            fw = fh * targetAspect;
+          }
         }
 
         const margin = 40 * scale;
@@ -839,23 +867,38 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
         ctx.save();
         ctx.clip();
         
-        const shouldDrawRemoteImage = isUsingRemoteCam && isRemoteImgReady && (!isVideoReady || !remoteStream);
-        
-        if (isMirrored && !isUsingRemoteCam) {
-          ctx.translate(fx + fw, fy);
-          ctx.scale(-1, 1);
-          if (shouldDrawRemoteImage && remoteImg) {
-            ctx.drawImage(remoteImg, 0, 0, fw, fh);
-          } else if (faceVideo && isVideoReady) {
-            ctx.drawImage(faceVideo, 0, 0, fw, fh);
+        // Zero-distortion cover algorithm: Preserves exact proportions of human face
+        if (camSource) {
+          const sw = camNatW || fw;
+          const sh = camNatH || fh;
+          const srcRatio = sw / sh;
+          const dstRatio = fw / fh;
+
+          let sWidth = sw;
+          let sHeight = sh;
+          let sx = 0;
+          let sy = 0;
+
+          if (srcRatio > dstRatio) {
+            // Source is wider than destination -> crop sides (center horizontally)
+            sWidth = sh * dstRatio;
+            sx = (sw - sWidth) / 2;
+          } else {
+            // Source is taller than destination -> crop top/bottom (center vertically)
+            sHeight = sw / dstRatio;
+            sy = (sh - sHeight) / 2;
           }
-        } else {
-          if (shouldDrawRemoteImage && remoteImg) {
-            ctx.drawImage(remoteImg, fx, fy, fw, fh);
-          } else if (faceVideo && isVideoReady) {
-            ctx.drawImage(faceVideo, fx, fy, fw, fh);
+
+          const isMirroredCam = isMirrored && !isUsingRemoteCam;
+          if (isMirroredCam) {
+            ctx.translate(fx + fw, fy);
+            ctx.scale(-1, 1);
+            ctx.drawImage(camSource, sx, sy, sWidth, sHeight, 0, 0, fw, fh);
+          } else {
+            ctx.drawImage(camSource, sx, sy, sWidth, sHeight, fx, fy, fw, fh);
           }
         }
+
         ctx.restore();
 
         // Neon Glow Border
@@ -950,6 +993,7 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
     captureCardStream,
     facecamLayout,
     facecamShape,
+    facecamAspect,
     facecamSize,
     facecamGlowColor,
     facecamGlowBlur,
@@ -1190,15 +1234,13 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
 
   return (
     <div ref={containerRef} className="space-y-5 animate-in fade-in duration-300 font-sans" dir="rtl">
-      {/* Off-screen high-performance video decoders (ensures native 4K 60FPS buffer allocation without throttling) */}
+      {/* Off-screen high-performance video decoders (ensures native buffer allocation without throttling) */}
       <video
         ref={facecamVideoRef}
         playsInline
         autoPlay
         muted
-        width={1920}
-        height={1080}
-        style={{ position: 'fixed', top: -9999, left: -9999, width: 1920, height: 1080, opacity: 0, pointerEvents: 'none' }}
+        style={{ position: 'fixed', top: -9999, left: -9999, opacity: 0, pointerEvents: 'none' }}
       />
       <video
         ref={gameplayVideoRef}
@@ -2069,6 +2111,35 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
                     </button>
                   ))}
                 </div>
+              </div>
+            </div>
+
+            {/* Facecam Aspect Ratio & Natural Proportions */}
+            <div className="space-y-1.5 pt-1 border-t border-slate-800/80">
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] font-bold text-slate-400">פרופורציות מצלמה (יחס תמונה):</label>
+                <span className="text-[10px] text-emerald-400 font-medium">✨ ללא מריחה או מעיכה</span>
+              </div>
+              <div className="grid grid-cols-5 gap-1 bg-slate-900 p-1 rounded-xl border border-slate-800">
+                {[
+                  { id: 'auto', label: 'טבעי ✨', desc: 'אוטומטי' },
+                  { id: '16:9', label: '16:9', desc: 'רחב' },
+                  { id: '4:3', label: '4:3', desc: 'קלאסי' },
+                  { id: '1:1', label: '1:1', desc: 'ריבוע' },
+                  { id: '9:16', label: '9:16', desc: 'אנכי' },
+                ].map(a => (
+                  <button
+                    key={a.id}
+                    type="button"
+                    onClick={() => setFacecamAspect(a.id as any)}
+                    className={`py-1 text-center rounded-lg transition-colors ${
+                      facecamAspect === a.id ? 'bg-indigo-600 text-white font-bold shadow' : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <div className="text-[10px] font-bold leading-tight">{a.label}</div>
+                    <div className="text-[8px] opacity-75">{a.desc}</div>
+                  </button>
+                ))}
               </div>
             </div>
 

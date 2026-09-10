@@ -145,6 +145,7 @@ export function getVideoConstraints(resolution: VideoResolution = '1080p', devic
         ...base,
         width: { ideal: 3840, min: 1920 },
         height: { ideal: 2160, min: 1080 },
+        aspectRatio: { ideal: 1.7777777778 },
         frameRate: { ideal: 60 }
       };
     case '1080p':
@@ -152,6 +153,7 @@ export function getVideoConstraints(resolution: VideoResolution = '1080p', devic
         ...base,
         width: { ideal: 1920 },
         height: { ideal: 1080 },
+        aspectRatio: { ideal: 1.7777777778 },
         frameRate: { ideal: 60 }
       };
     case '720p':
@@ -160,6 +162,7 @@ export function getVideoConstraints(resolution: VideoResolution = '1080p', devic
         ...base,
         width: { ideal: 1280 },
         height: { ideal: 720 },
+        aspectRatio: { ideal: 1.7777777778 },
         frameRate: { ideal: 60 }
       };
   }
