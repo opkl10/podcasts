@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { Episode, TimestampMarker, AudioInputDevice, VideoInputDevice, TopicItem, LiveOverlayState, SubtitleItem, MovieFactCard } from '@/lib/types';
-import { getMediaDevices, StudioAudioProcessor, getVideoConstraints, VideoResolution } from '@/lib/mediaManager';
+import { getMediaDevices, StudioAudioProcessor, getVideoConstraints, VideoResolution, getScreenCaptureStream, GamingAudioMixer } from '@/lib/mediaManager';
 import { StudioWebRTCReceiver } from '@/lib/webrtcClient';
 import { saveMediaBlob, getMediaBlob, deleteMediaBlob, saveEpisode, formatTime, getPermanentLogo, getAudioStageConfig, saveAudioStageConfig, AudioStageConfig } from '@/lib/storage';
 import RemoteCamModal from './RemoteCamModal';
@@ -58,7 +58,15 @@ import {
   Film,
   Radio,
   Activity,
-  Palette
+  Palette,
+  Gamepad2,
+  Monitor,
+  MonitorPlay,
+  Cast,
+  Crosshair,
+  SplitSquareVertical,
+  LayoutGrid,
+  VolumeX
 } from 'lucide-react';
 
 interface RecordingStudioProps {
@@ -171,8 +179,41 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
   const [prompterTab, setPrompterTab] = useState<'topics' | 'facts'>('topics');
   const processedStreamRef = useRef<MediaStream | null>(null);
 
+  // Studio Mode: Podcast vs Gaming & Creator Multi-Cam
+  const [studioMode, setStudioMode] = useState<'podcast' | 'gaming'>(
+    episode.mediaType === 'gaming_creator' ? 'gaming' : 'podcast'
+  );
+
+  // Gaming Gameplay Sources (Screen Capture / Window / Elgato Capture Card)
+  const [gameplaySourceType, setGameplaySourceType] = useState<'screen' | 'capture_card' | 'none'>('screen');
+  const [screenStream, setScreenStream] = useState<MediaStream | null>(null);
+  const [isScreenCapturing, setIsScreenCapturing] = useState<boolean>(false);
+  const [selectedCaptureCardId, setSelectedCaptureCardId] = useState<string>('');
+  const [captureCardStream, setCaptureCardStream] = useState<MediaStream | null>(null);
+
+  // Facecam Multi-Cam & Styling Configuration
+  const [facecamLayout, setFacecamLayout] = useState<'pip_br' | 'pip_bl' | 'pip_tr' | 'pip_tl' | 'split' | 'solo_game' | 'solo_cam'>('pip_br');
+  const [facecamShape, setFacecamShape] = useState<'circle' | 'rounded' | 'rectangle'>('circle');
+  const [facecamSize, setFacecamSize] = useState<'small' | 'medium' | 'large'>('medium');
+  const [facecamGlowColor, setFacecamGlowColor] = useState<string>('#06b6d4'); // Neon Cyan default
+  const [facecamGlowBlur, setFacecamGlowBlur] = useState<number>(14);
+  const [facecamBorderWidth, setFacecamBorderWidth] = useState<number>(3);
+  const [gamerTag, setGamerTag] = useState<string>(episode.hostName || 'Streamer');
+  const [showGamerHud, setShowGamerHud] = useState<boolean>(true);
+
+  // Dual Audio Mixer (Mic + Game/System Audio)
+  const [gameAudioVolume, setGameAudioVolume] = useState<number>(1.0);
+  const [gameAudioLevel, setGameAudioLevel] = useState<number>(0);
+  const gamingMixerRef = useRef<GamingAudioMixer | null>(null);
+
+  // 60FPS Gaming Compositor Canvas & Streams
+  const gamingCompositorCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const gameplayVideoRef = useRef<HTMLVideoElement | null>(null);
+  const facecamVideoRef = useRef<HTMLVideoElement | null>(null);
+  const gamingCompositeStreamRef = useRef<MediaStream | null>(null);
+
   // Audio-Only & Multi-Screen States
-  const isAudioOnly = episode.mediaType === 'audio_only';
+  const isAudioOnly = studioMode !== 'gaming' && episode.mediaType === 'audio_only';
   const [secondScreenAvailable, setSecondScreenAvailable] = useState(false);
   const [secondScreenAutoLaunched, setSecondScreenAutoLaunched] = useState(false);
   const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState(false);
@@ -692,6 +733,370 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
     }
   };
 
+  // --- GAMING & CREATOR STUDIO LOGIC ---
+
+  // 1. Screen & Gameplay Capture Handlers
+  const handleStartScreenCapture = async () => {
+    try {
+      const stream = await getScreenCaptureStream({ frameRate: 60, audio: true });
+      setScreenStream(stream);
+      setIsScreenCapturing(true);
+      setGameplaySourceType('screen');
+
+      if (gameplayVideoRef.current) {
+        gameplayVideoRef.current.srcObject = stream;
+        gameplayVideoRef.current.play().catch(() => {});
+      }
+
+      stream.getVideoTracks()[0].onended = () => {
+        handleStopScreenCapture();
+      };
+    } catch (err) {
+      console.warn('Screen capture cancelled or failed:', err);
+    }
+  };
+
+  const handleStopScreenCapture = () => {
+    if (screenStream) {
+      screenStream.getTracks().forEach(t => t.stop());
+      setScreenStream(null);
+    }
+    if (gameplayVideoRef.current && gameplaySourceType === 'screen') {
+      gameplayVideoRef.current.srcObject = null;
+    }
+    setIsScreenCapturing(false);
+  };
+
+  // 2. Hardware Capture Card (Elgato / Cam Link) Selection
+  const handleSelectCaptureCard = async (deviceId: string) => {
+    setSelectedCaptureCardId(deviceId);
+    if (!deviceId) {
+      if (captureCardStream) {
+        captureCardStream.getTracks().forEach(t => t.stop());
+        setCaptureCardStream(null);
+      }
+      if (gameplayVideoRef.current && gameplaySourceType === 'capture_card') {
+        gameplayVideoRef.current.srcObject = null;
+      }
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { deviceId: { exact: deviceId }, width: { ideal: 1920 }, frameRate: { ideal: 60 } },
+        audio: true
+      });
+      setCaptureCardStream(stream);
+      setGameplaySourceType('capture_card');
+
+      if (gameplayVideoRef.current) {
+        gameplayVideoRef.current.srcObject = stream;
+        gameplayVideoRef.current.play().catch(() => {});
+      }
+    } catch (err) {
+      console.error('Failed to open capture card stream:', err);
+    }
+  };
+
+  // Sync Video Elements with streams
+  useEffect(() => {
+    const activeGameStream = screenStream || captureCardStream;
+    if (gameplayVideoRef.current) {
+      gameplayVideoRef.current.srcObject = activeGameStream || null;
+      if (activeGameStream) gameplayVideoRef.current.play().catch(() => {});
+    }
+  }, [screenStream, captureCardStream]);
+
+  useEffect(() => {
+    const faceStream = remoteStream || currentStream;
+    if (facecamVideoRef.current) {
+      facecamVideoRef.current.srcObject = faceStream || null;
+      if (faceStream) facecamVideoRef.current.play().catch(() => {});
+    }
+  }, [remoteStream, currentStream]);
+
+  // 3. Gaming Audio Mixer: Mic Audio + Game/System Audio
+  useEffect(() => {
+    if (studioMode !== 'gaming') {
+      if (gamingMixerRef.current) {
+        gamingMixerRef.current.stop();
+        gamingMixerRef.current = null;
+      }
+      return;
+    }
+
+    if (!gamingMixerRef.current) {
+      gamingMixerRef.current = new GamingAudioMixer((micLvl, gameLvl) => {
+        setAudioLevel(micLvl);
+        setGameAudioLevel(gameLvl);
+      });
+    }
+
+    const activeGameStream = screenStream || captureCardStream;
+    gamingMixerRef.current.setup(currentStream, activeGameStream);
+    gamingMixerRef.current.setMicVolume(micGain);
+    gamingMixerRef.current.setGameVolume(gameAudioVolume);
+  }, [studioMode, currentStream, screenStream, captureCardStream]);
+
+  useEffect(() => {
+    if (gamingMixerRef.current) {
+      gamingMixerRef.current.setMicVolume(micGain);
+    }
+  }, [micGain]);
+
+  useEffect(() => {
+    if (gamingMixerRef.current) {
+      gamingMixerRef.current.setGameVolume(gameAudioVolume);
+    }
+  }, [gameAudioVolume]);
+
+  // 4. Live Hotkeys: [1] Solo Game, [2] Corner PiP, [3] Solo Streamer, [4] Split 50/50
+  useEffect(() => {
+    if (studioMode !== 'gaming') return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(tag)) return;
+
+      if (e.key === '1') {
+        setFacecamLayout('solo_game');
+      } else if (e.key === '2') {
+        setFacecamLayout('pip_br');
+      } else if (e.key === '3') {
+        setFacecamLayout('solo_cam');
+      } else if (e.key === '4') {
+        setFacecamLayout('split');
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [studioMode]);
+
+  // 5. 60FPS Gaming Compositor Canvas Loop
+  useEffect(() => {
+    if (studioMode !== 'gaming') return;
+
+    let animId: number;
+    const canvas = gamingCompositorCanvasRef.current;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    canvas.width = 1920;
+    canvas.height = 1080;
+
+    const renderGamingStage = () => {
+      const W = canvas.width;
+      const H = canvas.height;
+
+      // A. Gameplay Layer
+      const gameVideo = gameplayVideoRef.current;
+      const hasGameFeed = gameVideo && gameVideo.readyState >= 2;
+
+      if (hasGameFeed) {
+        ctx.drawImage(gameVideo, 0, 0, W, H);
+      } else {
+        // Futuristic Cyber Gaming Backdrop
+        const grad = ctx.createLinearGradient(0, 0, W, H);
+        grad.addColorStop(0, '#090d16');
+        grad.addColorStop(0.5, '#0e1526');
+        grad.addColorStop(1, '#05070d');
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, W, H);
+
+        // Cyber Grid Lines
+        ctx.strokeStyle = 'rgba(99, 102, 241, 0.08)';
+        ctx.lineWidth = 1.5;
+        const step = 60;
+        for (let x = 0; x < W; x += step) {
+          ctx.beginPath();
+          ctx.moveTo(x, 0);
+          ctx.lineTo(x, H);
+          ctx.stroke();
+        }
+        for (let y = 0; y < H; y += step) {
+          ctx.beginPath();
+          ctx.moveTo(0, y);
+          ctx.lineTo(W, y);
+          ctx.stroke();
+        }
+
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+        ctx.font = 'bold 36px Rubik, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('🎮 בחר מקור גיימפליי: לכידת מסך 60FPS או כרטיס אלגטו', W / 2, H / 2 - 20);
+
+        ctx.fillStyle = 'rgba(148, 163, 184, 0.6)';
+        ctx.font = '500 20px Rubik, sans-serif';
+        ctx.fillText('הסאונד של המשחק והמיקרופון ממוקססים במיקסר כפול בלייב', W / 2, H / 2 + 25);
+      }
+
+      // B. Facecam Layer (Webcam / iPhone / Cam Link)
+      const faceVideo = facecamVideoRef.current;
+      const hasFacecam = faceVideo && faceVideo.readyState >= 2 && facecamLayout !== 'solo_game';
+
+      if (hasFacecam) {
+        ctx.save();
+
+        let fw = 460;
+        let fh = 260;
+        if (facecamSize === 'small') { fw = 360; fh = 202; }
+        else if (facecamSize === 'large') { fw = 560; fh = 315; }
+
+        if (facecamShape === 'circle') {
+          fh = fw; // 1:1 circle
+        }
+
+        let fx = W - fw - 40;
+        let fy = H - fh - 40;
+
+        if (facecamLayout === 'pip_bl') {
+          fx = 40;
+          fy = H - fh - 40;
+        } else if (facecamLayout === 'pip_tr') {
+          fx = W - fw - 40;
+          fy = 40;
+        } else if (facecamLayout === 'pip_tl') {
+          fx = 40;
+          fy = 40;
+        } else if (facecamLayout === 'split') {
+          fx = W / 2 + 20;
+          fy = (H - (H * 0.85)) / 2;
+          fw = W / 2 - 40;
+          fh = H * 0.85;
+        } else if (facecamLayout === 'solo_cam') {
+          fx = 0;
+          fy = 0;
+          fw = W;
+          fh = H;
+        }
+
+        // Clip to shape
+        ctx.beginPath();
+        if (facecamLayout === 'solo_cam') {
+          ctx.rect(0, 0, W, H);
+        } else if (facecamShape === 'circle') {
+          const cx = fx + fw / 2;
+          const cy = fy + fh / 2;
+          ctx.arc(cx, cy, fw / 2, 0, Math.PI * 2);
+        } else if (facecamShape === 'rounded') {
+          if (ctx.roundRect) ctx.roundRect(fx, fy, fw, fh, 24);
+          else ctx.rect(fx, fy, fw, fh);
+        } else {
+          ctx.rect(fx, fy, fw, fh);
+        }
+
+        ctx.save();
+        ctx.clip();
+        if (isMirrored && !isUsingRemoteCam) {
+          ctx.translate(fx + fw, fy);
+          ctx.scale(-1, 1);
+          ctx.drawImage(faceVideo, 0, 0, fw, fh);
+        } else {
+          ctx.drawImage(faceVideo, fx, fy, fw, fh);
+        }
+        ctx.restore();
+
+        // Neon Glow Border
+        if (facecamLayout !== 'solo_cam') {
+          ctx.save();
+          ctx.strokeStyle = facecamGlowColor || '#06b6d4';
+          ctx.lineWidth = facecamBorderWidth || 3;
+          if (facecamGlowBlur > 0) {
+            ctx.shadowColor = facecamGlowColor || '#06b6d4';
+            ctx.shadowBlur = facecamGlowBlur;
+          }
+
+          ctx.beginPath();
+          if (facecamShape === 'circle') {
+            const cx = fx + fw / 2;
+            const cy = fy + fh / 2;
+            ctx.arc(cx, cy, fw / 2, 0, Math.PI * 2);
+          } else if (facecamShape === 'rounded') {
+            if (ctx.roundRect) ctx.roundRect(fx, fy, fw, fh, 24);
+            else ctx.rect(fx, fy, fw, fh);
+          } else {
+            ctx.rect(fx, fy, fw, fh);
+          }
+          ctx.stroke();
+          ctx.restore();
+        }
+
+        ctx.restore();
+      }
+
+      // C. Streamer Gamer HUD / Overlays
+      if (showGamerHud) {
+        ctx.save();
+        const badgeX = 30;
+        const badgeY = 30;
+        ctx.fillStyle = 'rgba(5, 8, 16, 0.85)';
+        if (ctx.roundRect) ctx.roundRect(badgeX, badgeY, 270, 50, 14);
+        else ctx.rect(badgeX, badgeY, 270, 50);
+        ctx.fill();
+        ctx.strokeStyle = facecamGlowColor || '#06b6d4';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+
+        // Pulsing Live Indicator
+        ctx.beginPath();
+        ctx.fillStyle = isRecording ? '#ef4444' : '#10b981';
+        ctx.arc(badgeX + 24, badgeY + 25, 7, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 17px Rubik, sans-serif';
+        ctx.textAlign = 'right';
+        ctx.fillText(gamerTag || 'סטרימר', badgeX + 250, badgeY + 31);
+
+        // FPS & Resolution Badge
+        ctx.fillStyle = 'rgba(5, 8, 16, 0.85)';
+        if (ctx.roundRect) ctx.roundRect(W - 200, 30, 170, 40, 12);
+        else ctx.rect(W - 200, 30, 170, 40);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        ctx.fillStyle = '#38bdf8';
+        ctx.font = 'bold 13px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('60 FPS • 1080p FHD', W - 115, 55);
+
+        ctx.restore();
+      }
+
+      animId = requestAnimationFrame(renderGamingStage);
+    };
+
+    animId = requestAnimationFrame(renderGamingStage);
+
+    try {
+      gamingCompositeStreamRef.current = canvas.captureStream(60);
+    } catch (e) {}
+
+    return () => {
+      cancelAnimationFrame(animId);
+    };
+  }, [
+    studioMode,
+    screenStream,
+    captureCardStream,
+    facecamLayout,
+    facecamShape,
+    facecamSize,
+    facecamGlowColor,
+    facecamGlowBlur,
+    facecamBorderWidth,
+    gamerTag,
+    showGamerHud,
+    isMirrored,
+    isUsingRemoteCam,
+    isRecording
+  ]);
+
   // 4. Timer Handling
   useEffect(() => {
     if (isRecording && !isPaused) {
@@ -971,7 +1376,21 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
         ? 8000000 
         : 3000000;
 
-      const recordStream = processedStreamRef.current || currentStream;
+      let recordStream = processedStreamRef.current || currentStream;
+
+      if (studioMode === 'gaming') {
+        const compositeVideoTrack = gamingCompositeStreamRef.current?.getVideoTracks()[0];
+        const activeGameStream = screenStream || captureCardStream;
+        const mixedAudioStream = gamingMixerRef.current?.setup(currentStream, activeGameStream);
+        const mixedAudioTrack = mixedAudioStream?.getAudioTracks()[0] || (processedStreamRef.current || currentStream)?.getAudioTracks()[0];
+
+        if (compositeVideoTrack) {
+          const combined = new MediaStream([compositeVideoTrack]);
+          if (mixedAudioTrack) combined.addTrack(mixedAudioTrack);
+          recordStream = combined;
+        }
+      }
+
       if (!recordStream) return;
 
       // Main Video Recorder
@@ -1057,6 +1476,7 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
         // Update Episode in Database with real captured subtitles and duration
         const updatedEpisode: Episode = {
           ...currentEpisodeRef.current,
+          mediaType: studioMode === 'gaming' ? 'gaming_creator' : currentEpisodeRef.current.mediaType,
           status: 'recorded',
           subtitles: liveSpokenSubtitlesRef.current.length > 0 
             ? liveSpokenSubtitlesRef.current 
@@ -1266,10 +1686,34 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
           </Link>
 
           <div>
-            <div className="flex items-center gap-2">
-              <span className="px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-400 text-[11px] font-bold">
-                אולפן הקלטות חי
-              </span>
+            <div className="flex items-center gap-2 flex-wrap">
+              {/* Studio Mode Switcher: Podcast vs Gaming & Creator */}
+              <div className="flex items-center p-0.5 rounded-xl bg-slate-900 border border-slate-800 text-[11px] font-bold shadow-inner">
+                <button
+                  onClick={() => setStudioMode('podcast')}
+                  className={`flex items-center gap-1.5 px-3 py-1 rounded-lg transition-all ${
+                    studioMode === 'podcast'
+                      ? 'bg-indigo-600 text-white shadow-md'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                  title="מצב פודקאסט קלאסי (שמע / וידאו עם אורחים, נושאים ופרומפטר)"
+                >
+                  <Mic className="w-3 h-3" />
+                  <span>🎙️ פודקאסט</span>
+                </button>
+                <button
+                  onClick={() => setStudioMode('gaming')}
+                  className={`flex items-center gap-1.5 px-3 py-1 rounded-lg transition-all ${
+                    studioMode === 'gaming'
+                      ? 'bg-purple-600 text-white shadow-md'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                  title="מצב גיימינג ווידאו (לכידת משחק 60FPS / אלגטו, שילוב מצלמות רשת ואייפון)"
+                >
+                  <Gamepad2 className="w-3 h-3" />
+                  <span>🎮 גיימינג ווידאו</span>
+                </button>
+              </div>
               <span className="text-xs text-slate-400 font-medium">עונה {episode.season} • פרק {episode.episodeNumber}</span>
             </div>
             <h1 className="text-base sm:text-lg font-black text-white truncate max-w-md">{episode.title}</h1>
@@ -1399,8 +1843,83 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
         <div className="lg:col-span-8 space-y-4">
           {/* Main Video Box with Overlays */}
           <div className="relative aspect-video rounded-3xl bg-black border border-slate-800 overflow-hidden shadow-2xl group/video flex items-center justify-center">
-            {/* Audio Only Videocast Stage with Custom Background (Image / Color / Gradient) */}
-            {isAudioOnly ? (
+            {/* 1. Gaming & Creator 60FPS Compositor Stage */}
+            {studioMode === 'gaming' ? (
+              <div className="w-full h-full relative flex items-center justify-center bg-black overflow-hidden">
+                <canvas
+                  ref={gamingCompositorCanvasRef}
+                  className="w-full h-full object-contain"
+                />
+
+                {/* Hidden videos serving as feed sources for canvas */}
+                <video
+                  ref={gameplayVideoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className="hidden"
+                />
+                <video
+                  ref={facecamVideoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className="hidden"
+                />
+
+                {/* Floating On-Canvas Gaming Cockpit Controls */}
+                <div className="absolute top-3 left-3 z-30 flex items-center gap-1.5 p-1 rounded-2xl bg-black/80 backdrop-blur-md border border-white/15 shadow-xl">
+                  <span className="text-[10px] font-bold text-purple-300 px-2 py-0.5 border-r border-slate-700">
+                    🎮 פריסה (1-4):
+                  </span>
+                  {[
+                    { id: 'solo_game', label: '1 משחק', icon: Monitor },
+                    { id: 'pip_br', label: '2 פינה', icon: LayoutGrid },
+                    { id: 'solo_cam', label: '3 מצלמה', icon: Video },
+                    { id: 'split', label: '4 מפוצל', icon: SplitSquareVertical }
+                  ].map(b => (
+                    <button
+                      key={b.id}
+                      type="button"
+                      onClick={() => setFacecamLayout(b.id as any)}
+                      className={`flex items-center gap-1 px-2 py-1 rounded-xl text-[10px] font-bold transition-all ${
+                        facecamLayout === b.id
+                          ? 'bg-purple-600 text-white shadow-md'
+                          : 'text-slate-400 hover:text-white bg-slate-900/60'
+                      }`}
+                    >
+                      <b.icon className="w-3 h-3" />
+                      <span>{b.label}</span>
+                    </button>
+                  ))}
+                </div>
+
+                {/* Floating Screen Capture Quick Button if not active */}
+                {!isScreenCapturing && !captureCardStream && (
+                  <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/65 backdrop-blur-xs p-4 text-center space-y-3">
+                    <div className="p-3.5 rounded-2xl bg-purple-600/20 border border-purple-500/40 text-purple-300 shadow-xl shadow-purple-950/40">
+                      <Gamepad2 className="w-10 h-10 animate-pulse" />
+                    </div>
+                    <div>
+                      <h3 className="text-base font-bold text-white">סטודיו גיימינג ווידאו מוכן לפעולה</h3>
+                      <p className="text-xs text-slate-300 mt-1 max-w-sm">
+                        חבר את המשחק באמצעות שיתוף מסך / חלון ב-60FPS או בחר כרטיס לכידה של Elgato
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={handleStartScreenCapture}
+                        className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 via-indigo-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white text-xs font-bold shadow-lg shadow-purple-950/60 transition-all active:scale-95"
+                      >
+                        <MonitorPlay className="w-4 h-4" />
+                        <span>🖥️ התחל לכידת משחק / מסך (60FPS)</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : isAudioOnly ? (
               <div 
                 className="w-full h-full flex flex-col items-center justify-center p-6 text-center relative overflow-hidden transition-all duration-500"
                 style={
@@ -1901,288 +2420,782 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
             </div>
           </div>
 
-          {/* Audio & Video DSP Studio Controls - Clean Balanced Broadcast Layout */}
-          <div className="p-4 sm:p-5 rounded-3xl bg-[#121620]/95 border border-slate-800/90 shadow-2xl space-y-4">
-            {/* Top Row: Two Symmetrical Cards (Video & Camera on Right, Mic & Sound on Left) */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              
-              {/* CARD 1: Video & Camera Controls */}
-              <div className="p-4 rounded-2xl bg-slate-950/70 border border-slate-800/90 space-y-3 flex flex-col justify-between">
-                {/* Header */}
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <div className="p-1.5 rounded-lg bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
-                      <Video className="w-4 h-4" />
-                    </div>
-                    <div>
-                      <h4 className="text-xs font-bold text-white">מצלמת שידור ווידאו</h4>
-                      <p className="text-[10px] font-mono text-slate-400">
-                        {videoResolution === '4k' ? '3840×2160 (35 Mbps 4K)' : videoResolution === '1080p' ? '1920×1080 (8 Mbps FHD)' : '1280×720 (3 Mbps HD)'}
-                      </p>
-                    </div>
+          {/* Audio & Video DSP Studio Controls: Conditional between Gaming Deck and Podcast Controls */}
+          {studioMode === 'gaming' ? (
+            /* GAMING & CREATOR STUDIO CONTROL DECK */
+            <div className="p-4 sm:p-5 rounded-3xl bg-gradient-to-b from-[#141226]/95 via-[#0e1222]/95 to-[#0b0e18]/95 border border-purple-500/30 shadow-2xl space-y-4">
+              {/* Header Banner */}
+              <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-purple-500/20">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 rounded-2xl bg-gradient-to-tr from-purple-600 to-indigo-600 text-white shadow-lg shadow-purple-950/60">
+                    <Gamepad2 className="w-5 h-5" />
                   </div>
-
-                  <div className="flex items-center gap-1.5">
-                    <button
-                      onClick={async () => {
-                        const { audioInputs, videoInputs } = await getMediaDevices();
-                        setAudioDevices(audioInputs);
-                        setVideoDevices(videoInputs);
-                      }}
-                      className="text-[10px] font-medium text-slate-400 hover:text-white flex items-center gap-1 bg-slate-900 px-2 py-1 rounded-lg border border-slate-800 transition-colors"
-                      title="רענן רשימת התקנים"
-                    >
-                      <RotateCw className="w-3 h-3" />
-                      <span>רענן</span>
-                    </button>
-
-                    <button
-                      onClick={() => setIsRemoteModalOpen(true)}
-                      className="text-[10px] font-bold text-indigo-400 hover:text-indigo-300 flex items-center gap-1 bg-indigo-500/10 px-2 py-1 rounded-lg border border-indigo-500/30 transition-all hover:bg-indigo-500/20"
-                    >
-                      <Smartphone className="w-3 h-3" />
-                      <span>חיבור iPhone</span>
-                    </button>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-sm font-black text-white">קונסולת גיימינג וסטרימינג ב-60FPS</h3>
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                        60 FPS Master
+                      </span>
+                      {isScreenCapturing && (
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 animate-pulse">
+                          🟢 מסך משחק פעיל
+                        </span>
+                      )}
+                      {captureCardStream && (
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 animate-pulse">
+                          🎮 כרטיס אלגטו מחובר
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-slate-400">
+                      לכידת משחק ב-60FPS, מצלמת פנים רב-ערוצית (Webcam / iPhone / Cam Link) ומיקסר אודיו כפול
+                    </p>
                   </div>
                 </div>
 
-                {/* Camera Dropdown & Toggle */}
                 <div className="flex items-center gap-2">
-                  <select
-                    value={isUsingRemoteCam ? 'remote-iphone' : selectedVideoId}
-                    onChange={(e) => {
-                      if (e.target.value === 'remote-iphone') {
-                        setIsUsingRemoteCam(true);
-                      } else {
-                        setIsUsingRemoteCam(false);
-                        setSelectedVideoId(e.target.value);
-                      }
+                  <button
+                    onClick={async () => {
+                      const { audioInputs, videoInputs } = await getMediaDevices();
+                      setAudioDevices(audioInputs);
+                      setVideoDevices(videoInputs);
                     }}
-                    className="flex-1 px-3 py-2 rounded-xl bg-slate-900 border border-slate-700/80 text-xs text-white focus:outline-none focus:border-indigo-500 transition-colors"
+                    className="text-xs font-medium text-slate-300 hover:text-white flex items-center gap-1.5 bg-slate-900/80 px-3 py-1.5 rounded-xl border border-slate-700/80 transition-all hover:bg-slate-800"
+                    title="רענן התקנים"
                   >
-                    {remoteStream && (
-                      <option value="remote-iphone">📱 iPhone Remote Camera (מחובר בשידור חי)</option>
-                    )}
-                    {videoDevices.map(v => (
-                      <option key={v.deviceId} value={v.deviceId}>
-                        {v.isIPhone || v.isContinuity ? `📱 ${v.label} (iPhone HD)` : v.label}
-                      </option>
-                    ))}
-                  </select>
-
-                  <button
-                    onClick={toggleCam}
-                    className={`p-2.5 rounded-xl border transition-all ${isVideoMuted ? 'bg-rose-600 border-rose-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-300 hover:text-white'}`}
-                    title={isVideoMuted ? 'הפעל מצלמה' : 'כבה מצלמה'}
-                  >
-                    {isVideoMuted ? <VideoOff className="w-4 h-4" /> : <Video className="w-4 h-4" />}
-                  </button>
-                </div>
-
-                {/* Sub-row: Resolution Switcher + Cinematic Bokeh Toggle */}
-                <div className="grid grid-cols-4 gap-1.5 pt-1">
-                  <button
-                    type="button"
-                    onClick={() => setVideoResolution('4k')}
-                    className={`py-1.5 px-1 rounded-lg text-[11px] font-bold transition-all text-center ${
-                      videoResolution === '4k'
-                        ? 'bg-gradient-to-r from-amber-500 to-yellow-600 text-slate-950 font-black shadow'
-                        : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    4K UHD 🌟
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setVideoResolution('1080p')}
-                    className={`py-1.5 px-1 rounded-lg text-[11px] font-bold transition-all text-center ${
-                      videoResolution === '1080p'
-                        ? 'bg-indigo-600 text-white shadow'
-                        : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    FHD 1080p 🎬
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setVideoResolution('720p')}
-                    className={`py-1.5 px-1 rounded-lg text-[11px] font-bold transition-all text-center ${
-                      videoResolution === '720p'
-                        ? 'bg-slate-700 text-white shadow'
-                        : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    HD 720p
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setDepthOfField(!depthOfField)}
-                    className={`py-1.5 px-1 rounded-lg text-[11px] font-bold transition-all flex items-center justify-center gap-1 border ${
-                      depthOfField
-                        ? 'bg-purple-600 border-purple-500 text-white shadow'
-                        : 'bg-slate-900 border-slate-800 text-purple-300/80 hover:text-purple-200'
-                    }`}
-                    title="טשטוש רקע קולנועי (Depth of Field Bokeh)"
-                  >
-                    <Focus className="w-3 h-3" />
-                    <span>בוקה</span>
+                    <RotateCw className="w-3.5 h-3.5" />
+                    <span>רענן חומרה</span>
                   </button>
                 </div>
               </div>
 
-              {/* CARD 2: Microphone & Audio DSP Controls */}
-              <div className="p-4 rounded-2xl bg-slate-950/70 border border-slate-800/90 space-y-3 flex flex-col justify-between">
-                {/* Header */}
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <div className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                      <Mic className="w-4 h-4" />
+              {/* Three Main Gaming Studio Cards */}
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                
+                {/* CARD 1: Gameplay & Screen Source */}
+                <div className="p-4 rounded-2xl bg-slate-950/80 border border-purple-900/40 space-y-3.5 flex flex-col justify-between">
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div className="p-1.5 rounded-lg bg-purple-500/10 text-purple-400 border border-purple-500/20">
+                          <MonitorPlay className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <h4 className="text-xs font-bold text-white">מקור גיימפליי ומסך</h4>
+                          <p className="text-[10px] text-slate-400">חלון / מסך מלא / Elgato</p>
+                        </div>
+                      </div>
+                      {isScreenCapturing && (
+                        <span className="text-[9px] font-mono text-emerald-400 bg-emerald-950/50 px-2 py-0.5 rounded border border-emerald-500/30">
+                          60 FPS Live
+                        </span>
+                      )}
                     </div>
-                    <div>
-                      <h4 className="text-xs font-bold text-white">מיקרופון ראשי וסאונד</h4>
-                      <p className="text-[10px] font-mono text-slate-400">
-                        {audioChannelMode === 'stereo' ? 'Stereo (2-Channel 48kHz)' : 'Mono (1-Channel 48kHz)'}
+
+                    {/* Screen Capture Action Button */}
+                    <div className="space-y-1.5">
+                      <label className="text-[11px] font-bold text-slate-300 block">לכידת משחק / מסך ב-60FPS:</label>
+                      {isScreenCapturing ? (
+                        <button
+                          type="button"
+                          onClick={handleStopScreenCapture}
+                          className="w-full flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl bg-rose-600/90 hover:bg-rose-500 text-white text-xs font-bold transition-all shadow-md active:scale-95"
+                        >
+                          <Square className="w-3.5 h-3.5" />
+                          <span>⏹️ עצור לכידת מסך</span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={handleStartScreenCapture}
+                          className="w-full flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-bold transition-all shadow-lg shadow-purple-950/50 active:scale-95 border border-purple-400/30"
+                        >
+                          <MonitorPlay className="w-3.5 h-3.5 text-purple-200" />
+                          <span>🖥️ בחר מסך משחק (60FPS)</span>
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Hardware Capture Card (Elgato / Cam Link) */}
+                    <div className="space-y-1.5 pt-2 border-t border-slate-800/80">
+                      <div className="flex items-center justify-between">
+                        <label className="text-[11px] font-bold text-slate-300 flex items-center gap-1.5">
+                          <Cast className="w-3.5 h-3.5 text-cyan-400" />
+                          <span>לוכד מסך / אלגטו (Elgato):</span>
+                        </label>
+                        {videoDevices.some(d => d.isCaptureCard) && (
+                          <span className="text-[9px] font-bold text-cyan-400 bg-cyan-950/60 px-1.5 py-0.5 rounded border border-cyan-800">
+                            זוהה אלגטו ✓
+                          </span>
+                        )}
+                      </div>
+
+                      <select
+                        value={selectedCaptureCardId}
+                        onChange={(e) => handleSelectCaptureCard(e.target.value)}
+                        className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-700/80 text-xs text-white focus:outline-none focus:border-cyan-500 transition-colors"
+                      >
+                        <option value="">-- ללא כרטיס לכידה (השתמש במסך) --</option>
+                        {videoDevices.map(d => (
+                          <option key={d.deviceId} value={d.deviceId}>
+                            {d.isCaptureCard ? `🎮 ${d.label} (לוכד אלגטו/HDMI)` : d.label}
+                          </option>
+                        ))}
+                      </select>
+                      <p className="text-[10px] text-slate-400">
+                        תומך ב-Elgato HD60 X/S+, Cam Link 4K, AVerMedia, וכרטיסי לכידה USB/HDMI.
                       </p>
                     </div>
                   </div>
 
-                  {/* Audio Channel Mode Segment (Stereo vs Mono) */}
-                  <div className="flex items-center gap-1 bg-slate-900 p-0.5 rounded-xl border border-slate-800">
+                  {/* Info footer */}
+                  <div className="p-2.5 rounded-xl bg-purple-950/30 border border-purple-900/40 text-[10px] text-purple-200/80 flex items-center gap-2">
+                    <Zap className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+                    <span>הקלטת הווידאו מתבצעת ברקע ב-60 פריימים לשנייה מלאים.</span>
+                  </div>
+                </div>
+
+                {/* CARD 2: Facecam Multi-Cam & Styling */}
+                <div className="p-4 rounded-2xl bg-slate-950/80 border border-indigo-900/40 space-y-3.5 flex flex-col justify-between">
+                  <div className="space-y-3">
+                    {/* Header */}
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div className="p-1.5 rounded-lg bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                          <Video className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <h4 className="text-xs font-bold text-white">מצלמת פנים (Facecam)</h4>
+                          <p className="text-[10px] text-slate-400">Webcam / iPhone / Multi-Cam</p>
+                        </div>
+                      </div>
+
+                      <button
+                        onClick={() => setIsRemoteModalOpen(true)}
+                        className="text-[10px] font-bold text-indigo-400 hover:text-indigo-300 flex items-center gap-1 bg-indigo-500/10 px-2 py-1 rounded-lg border border-indigo-500/30 transition-all hover:bg-indigo-500/20"
+                      >
+                        <Smartphone className="w-3 h-3" />
+                        <span>📱 אייפון</span>
+                      </button>
+                    </div>
+
+                    {/* Camera Selector Dropdown */}
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={isUsingRemoteCam ? 'remote-iphone' : selectedVideoId}
+                        onChange={(e) => {
+                          if (e.target.value === 'remote-iphone') {
+                            setIsUsingRemoteCam(true);
+                          } else {
+                            setIsUsingRemoteCam(false);
+                            setSelectedVideoId(e.target.value);
+                          }
+                        }}
+                        className="flex-1 px-3 py-2 rounded-xl bg-slate-900 border border-slate-700/80 text-xs text-white focus:outline-none focus:border-indigo-500 transition-colors"
+                      >
+                        {remoteStream && (
+                          <option value="remote-iphone">📱 iPhone Remote Camera (חיבור WebRTC אלחוטי)</option>
+                        )}
+                        {videoDevices
+                          .filter(v => v.deviceId !== selectedCaptureCardId)
+                          .map(v => (
+                            <option key={v.deviceId} value={v.deviceId}>
+                              {v.isIPhone || v.isContinuity ? `📱 ${v.label} (iPhone HD)` : v.label}
+                            </option>
+                          ))}
+                      </select>
+
+                      <button
+                        onClick={toggleCam}
+                        className={`p-2.5 rounded-xl border transition-all ${
+                          isVideoMuted ? 'bg-rose-600 border-rose-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-300 hover:text-white'
+                        }`}
+                        title={isVideoMuted ? 'הפעל מצלמה' : 'הסתר מצלמת פנים'}
+                      >
+                        {isVideoMuted ? <VideoOff className="w-4 h-4" /> : <Video className="w-4 h-4" />}
+                      </button>
+                    </div>
+
+                    {/* Layout Selector Quick Bar */}
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between text-[11px] font-bold text-slate-300">
+                        <span>פריסת מצלמה (מקשים 1-4):</span>
+                        <span className="text-[10px] text-indigo-400 font-mono">
+                          {facecamLayout === 'solo_game' ? 'משחק בלבד' : facecamLayout === 'pip_br' ? 'פינה ימין' : facecamLayout === 'pip_bl' ? 'פינה שמאל' : facecamLayout === 'solo_cam' ? 'מצלמה מלאה' : 'מסך מפוצל'}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-4 gap-1.5">
+                        {[
+                          { id: 'solo_game', label: '1 משחק', icon: Monitor },
+                          { id: 'pip_br', label: '2 פינה ימין', icon: LayoutGrid },
+                          { id: 'solo_cam', label: '3 מצלמה', icon: Video },
+                          { id: 'split', label: '4 חצי-חצי', icon: SplitSquareVertical },
+                        ].map(b => (
+                          <button
+                            key={b.id}
+                            type="button"
+                            onClick={() => setFacecamLayout(b.id as any)}
+                            className={`py-1.5 px-1 rounded-lg text-[10px] font-bold transition-all text-center flex flex-col items-center gap-1 ${
+                              facecamLayout === b.id
+                                ? 'bg-indigo-600 text-white shadow-md'
+                                : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-white'
+                            }`}
+                          >
+                            <b.icon className="w-3 h-3" />
+                            <span>{b.label}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Facecam Shape & Size */}
+                    <div className="grid grid-cols-2 gap-2 pt-1 border-t border-slate-800/80">
+                      {/* Shape */}
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-slate-400">צורת מסגרת:</label>
+                        <div className="flex gap-1 bg-slate-900 p-0.5 rounded-lg border border-slate-800">
+                          {[
+                            { id: 'circle', label: 'עיגול' },
+                            { id: 'rounded', label: 'מעוגל' },
+                            { id: 'rectangle', label: 'מלבן' }
+                          ].map(s => (
+                            <button
+                              key={s.id}
+                              type="button"
+                              onClick={() => setFacecamShape(s.id as any)}
+                              className={`flex-1 py-1 text-[10px] font-bold rounded transition-colors ${
+                                facecamShape === s.id ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
+                              }`}
+                            >
+                              {s.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Size */}
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-slate-400">גודל חלונית:</label>
+                        <div className="flex gap-1 bg-slate-900 p-0.5 rounded-lg border border-slate-800">
+                          {[
+                            { id: 'small', label: 'קטן' },
+                            { id: 'medium', label: 'בינוני' },
+                            { id: 'large', label: 'גדול' }
+                          ].map(s => (
+                            <button
+                              key={s.id}
+                              type="button"
+                              onClick={() => setFacecamSize(s.id as any)}
+                              className={`flex-1 py-1 text-[10px] font-bold rounded transition-colors ${
+                                facecamSize === s.id ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
+                              }`}
+                            >
+                              {s.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Gamer Glow Swatches */}
+                    <div className="space-y-1.5 pt-1">
+                      <div className="flex items-center justify-between text-[10px] font-bold text-slate-400">
+                        <span>תאורת זוהר ניאון (Gamer Glow):</span>
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="range"
+                            min="0"
+                            max="30"
+                            value={facecamGlowBlur}
+                            onChange={(e) => setFacecamGlowBlur(parseInt(e.target.value, 10))}
+                            className="w-16 accent-purple-500 cursor-pointer h-1 bg-slate-800 rounded"
+                            title="עוצמת הזוהר"
+                          />
+                          <span className="font-mono text-purple-400 text-[10px]">{facecamGlowBlur}px</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {[
+                          { color: '#06b6d4', name: 'ציאן' },
+                          { color: '#a855f7', name: 'סגול' },
+                          { color: '#ec4899', name: 'ורוד' },
+                          { color: '#10b981', name: 'ירוק' },
+                          { color: '#f59e0b', name: 'זהב' },
+                          { color: '#ef4444', name: 'אדום' },
+                          { color: 'transparent', name: 'ללא' }
+                        ].map(c => (
+                          <button
+                            key={c.color}
+                            type="button"
+                            onClick={() => setFacecamGlowColor(c.color)}
+                            className={`w-5 h-5 rounded-full border-2 transition-transform ${
+                              facecamGlowColor === c.color ? 'scale-125 border-white shadow-lg' : 'border-slate-700 hover:scale-110'
+                            }`}
+                            style={{ backgroundColor: c.color === 'transparent' ? '#1e293b' : c.color }}
+                            title={c.name}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Streamer GamerTag Input */}
+                  <div className="pt-2 border-t border-slate-800/80 flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={gamerTag}
+                      onChange={(e) => setGamerTag(e.target.value)}
+                      placeholder="כינוי סטרימר / GamerTag..."
+                      className="flex-1 px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-[11px] text-white focus:outline-none focus:border-purple-500"
+                    />
                     <button
                       type="button"
-                      onClick={() => setAudioChannelMode('stereo')}
-                      className={`px-2 py-0.5 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1 ${
-                        audioChannelMode === 'stereo'
-                          ? 'bg-cyan-600 text-white shadow'
-                          : 'text-slate-400 hover:text-white'
+                      onClick={() => setShowGamerHud(!showGamerHud)}
+                      className={`px-2 py-1.5 rounded-lg text-[10px] font-bold border transition-all ${
+                        showGamerHud
+                          ? 'bg-purple-600/30 border-purple-500/50 text-purple-300'
+                          : 'bg-slate-900 border-slate-800 text-slate-500'
                       }`}
                     >
-                      <Headphones className="w-2.5 h-2.5" />
-                      <span>סטריאו</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setAudioChannelMode('mono')}
-                      className={`px-2 py-0.5 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1 ${
-                        audioChannelMode === 'mono'
-                          ? 'bg-teal-600 text-white shadow'
-                          : 'text-slate-400 hover:text-white'
-                      }`}
-                    >
-                      <Mic className="w-2.5 h-2.5" />
-                      <span>מונו</span>
+                      {showGamerHud ? 'HUD דלוק' : 'HUD כבוי'}
                     </button>
                   </div>
                 </div>
 
-                {/* Mic Dropdown & Mute */}
-                <div className="flex items-center gap-2">
-                  <select
-                    value={selectedAudioId}
-                    onChange={(e) => setSelectedAudioId(e.target.value)}
-                    className="flex-1 px-3 py-2 rounded-xl bg-slate-900 border border-slate-700/80 text-xs text-white focus:outline-none focus:border-indigo-500 transition-colors"
-                  >
-                    {audioDevices.map(a => (
-                      <option key={a.deviceId} value={a.deviceId}>
-                        {a.label}
-                      </option>
-                    ))}
-                  </select>
+                {/* CARD 3: Dual Audio Mixer */}
+                <div className="p-4 rounded-2xl bg-slate-950/80 border border-teal-900/40 space-y-3.5 flex flex-col justify-between">
+                  <div className="space-y-3">
+                    {/* Header */}
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div className="p-1.5 rounded-lg bg-teal-500/10 text-teal-400 border border-teal-500/20">
+                          <Sliders className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <h4 className="text-xs font-bold text-white">מיקסר אודיו כפול (Dual Mixer)</h4>
+                          <p className="text-[10px] text-slate-400">ערוץ מיקרופון + ערוץ משחק</p>
+                        </div>
+                      </div>
+                      <span className="text-[10px] font-mono font-bold text-teal-400 bg-teal-950/60 px-2 py-0.5 rounded border border-teal-800">
+                        Live WebAudio
+                      </span>
+                    </div>
 
-                  <button
-                    onClick={toggleMic}
-                    className={`p-2.5 rounded-xl border transition-all ${isAudioMuted ? 'bg-rose-600 border-rose-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-300 hover:text-white'}`}
-                    title={isAudioMuted ? 'בטל השתקה' : 'השתק מיקרופון'}
-                  >
-                    {isAudioMuted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-                  </button>
+                    {/* Track 1: Mic Audio */}
+                    <div className="p-2.5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5 text-[11px] font-bold text-white">
+                          <Mic className="w-3.5 h-3.5 text-indigo-400" />
+                          <span>מיקרופון סטרימר:</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] font-mono text-indigo-400">{Math.round(micGain * 100)}%</span>
+                          <button
+                            onClick={toggleMic}
+                            className={`p-1 rounded-md border text-[10px] ${
+                              isAudioMuted ? 'bg-rose-600 border-rose-500 text-white' : 'bg-slate-800 border-slate-700 text-slate-300'
+                            }`}
+                            title={isAudioMuted ? 'בטל השתקה' : 'השתק מיקרופון'}
+                          >
+                            {isAudioMuted ? <MicOff className="w-3 h-3" /> : <Mic className="w-3 h-3" />}
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Mic Level VU Bar */}
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="range"
+                          min="0"
+                          max="2"
+                          step="0.05"
+                          value={micGain}
+                          onChange={(e) => handleGainChange(parseFloat(e.target.value))}
+                          className="flex-1 accent-indigo-500 cursor-pointer h-1.5 bg-slate-800 rounded-lg"
+                        />
+                        <div className="w-16 h-2 rounded-full bg-slate-950 overflow-hidden border border-slate-700">
+                          <div
+                            className="h-full bg-gradient-to-r from-indigo-500 to-cyan-400 transition-all duration-75"
+                            style={{ width: `${Math.min(100, audioLevel)}%` }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Track 2: Game Audio */}
+                    <div className="p-2.5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5 text-[11px] font-bold text-white">
+                          <Gamepad2 className="w-3.5 h-3.5 text-purple-400" />
+                          <span>סאונד משחק ומחשב:</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] font-mono text-purple-400">{Math.round(gameAudioVolume * 100)}%</span>
+                          <button
+                            onClick={() => setGameAudioVolume(prev => prev > 0 ? 0 : 1.0)}
+                            className={`p-1 rounded-md border text-[10px] ${
+                              gameAudioVolume === 0 ? 'bg-rose-600 border-rose-500 text-white' : 'bg-slate-800 border-slate-700 text-slate-300'
+                            }`}
+                            title={gameAudioVolume === 0 ? 'הפעל סאונד משחק' : 'השתק סאונד משחק'}
+                          >
+                            {gameAudioVolume === 0 ? <VolumeX className="w-3 h-3" /> : <Volume2 className="w-3 h-3" />}
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Game Audio Slider + Level VU */}
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="range"
+                          min="0"
+                          max="2"
+                          step="0.05"
+                          value={gameAudioVolume}
+                          onChange={(e) => setGameAudioVolume(parseFloat(e.target.value))}
+                          className="flex-1 accent-purple-500 cursor-pointer h-1.5 bg-slate-800 rounded-lg"
+                        />
+                        <div className="w-16 h-2 rounded-full bg-slate-950 overflow-hidden border border-slate-700">
+                          <div
+                            className="h-full bg-gradient-to-r from-purple-500 to-pink-500 transition-all duration-75"
+                            style={{ width: `${Math.min(100, gameAudioLevel)}%` }}
+                          />
+                        </div>
+                      </div>
+                      <p className="text-[9px] text-slate-400">
+                        נקלט אוטומטית משיתוף המסך (כרטיסיית משחק) או מכרטיס Elgato.
+                      </p>
+                    </div>
+
+                    {/* Noise filter */}
+                    <button
+                      type="button"
+                      onClick={handleToggleNoiseSuppression}
+                      className={`w-full p-2 rounded-xl border text-[11px] font-bold flex items-center justify-between transition-all ${
+                        noiseSuppression
+                          ? 'bg-emerald-950/60 border-emerald-500/40 text-emerald-300'
+                          : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <Wand2 className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>סינון רעשי רקע ומאווררים (DSP)</span>
+                      </div>
+                      <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold ${
+                        noiseSuppression ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-400'
+                      }`}>
+                        {noiseSuppression ? 'פעיל ✓' : 'כבוי'}
+                      </span>
+                    </button>
+                  </div>
+
+                  {/* Master Output VU Meter */}
+                  <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1 text-[10px] font-bold text-slate-400 shrink-0">
+                      <Activity className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>מאסטר:</span>
+                    </div>
+                    <div className="flex-1 h-2.5 rounded-full bg-slate-900 overflow-hidden border border-slate-800">
+                      <div
+                        className={`h-full transition-all duration-75 ${
+                          Math.max(audioLevel, gameAudioLevel) > 85
+                            ? 'bg-gradient-to-r from-emerald-500 via-amber-400 to-rose-500'
+                            : 'bg-gradient-to-r from-cyan-500 to-indigo-500'
+                        }`}
+                        style={{ width: `${Math.min(100, Math.max(audioLevel, gameAudioLevel))}%` }}
+                      />
+                    </div>
+                    <span className="text-[10px] font-mono text-cyan-400">
+                      {Math.max(audioLevel, gameAudioLevel)}%
+                    </span>
+                  </div>
                 </div>
 
-                {/* Sub-row: Gain Slider + DSP Noise Filter Toggle */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
-                  {/* Gain Slider */}
-                  <div className="p-2 rounded-xl bg-slate-900 border border-slate-800 flex items-center gap-2">
-                    <div className="flex items-center gap-1 text-[11px] font-bold text-slate-300 shrink-0">
-                      <Volume2 className="w-3.5 h-3.5 text-indigo-400" />
-                      <span>Gain:</span>
-                      <span className="font-mono text-indigo-400">{Math.round(micGain * 100)}%</span>
+              </div>
+            </div>
+          ) : (
+            /* Audio & Video DSP Studio Controls - Clean Balanced Broadcast Layout */
+            <div className="p-4 sm:p-5 rounded-3xl bg-[#121620]/95 border border-slate-800/90 shadow-2xl space-y-4">
+              {/* Top Row: Two Symmetrical Cards (Video & Camera on Right, Mic & Sound on Left) */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                
+                {/* CARD 1: Video & Camera Controls */}
+                <div className="p-4 rounded-2xl bg-slate-950/70 border border-slate-800/90 space-y-3 flex flex-col justify-between">
+                  {/* Header */}
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1.5 rounded-lg bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                        <Video className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-bold text-white">מצלמת שידור ווידאו</h4>
+                        <p className="text-[10px] font-mono text-slate-400">
+                          {videoResolution === '4k' ? '3840×2160 (35 Mbps 4K)' : videoResolution === '1080p' ? '1920×1080 (8 Mbps FHD)' : '1280×720 (3 Mbps HD)'}
+                        </p>
+                      </div>
                     </div>
-                    <input
-                      type="range"
-                      min="0"
-                      max="2"
-                      step="0.05"
-                      value={micGain}
-                      onChange={(e) => handleGainChange(parseFloat(e.target.value))}
-                      className="w-full accent-indigo-500 cursor-pointer h-1.5 bg-slate-800 rounded-lg"
+
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={async () => {
+                          const { audioInputs, videoInputs } = await getMediaDevices();
+                          setAudioDevices(audioInputs);
+                          setVideoDevices(videoInputs);
+                        }}
+                        className="text-[10px] font-medium text-slate-400 hover:text-white flex items-center gap-1 bg-slate-900 px-2 py-1 rounded-lg border border-slate-800 transition-colors"
+                        title="רענן רשימת התקנים"
+                      >
+                        <RotateCw className="w-3 h-3" />
+                        <span>רענן</span>
+                      </button>
+
+                      <button
+                        onClick={() => setIsRemoteModalOpen(true)}
+                        className="text-[10px] font-bold text-indigo-400 hover:text-indigo-300 flex items-center gap-1 bg-indigo-500/10 px-2 py-1 rounded-lg border border-indigo-500/30 transition-all hover:bg-indigo-500/20"
+                      >
+                        <Smartphone className="w-3 h-3" />
+                        <span>חיבור iPhone</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Camera Dropdown & Toggle */}
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={isUsingRemoteCam ? 'remote-iphone' : selectedVideoId}
+                      onChange={(e) => {
+                        if (e.target.value === 'remote-iphone') {
+                          setIsUsingRemoteCam(true);
+                        } else {
+                          setIsUsingRemoteCam(false);
+                          setSelectedVideoId(e.target.value);
+                        }
+                      }}
+                      className="flex-1 px-3 py-2 rounded-xl bg-slate-900 border border-slate-700/80 text-xs text-white focus:outline-none focus:border-indigo-500 transition-colors"
+                    >
+                      {remoteStream && (
+                        <option value="remote-iphone">📱 iPhone Remote Camera (מחובר בשידור חי)</option>
+                      )}
+                      {videoDevices.map(v => (
+                        <option key={v.deviceId} value={v.deviceId}>
+                          {v.isIPhone || v.isContinuity ? `📱 ${v.label} (iPhone HD)` : v.label}
+                        </option>
+                      ))}
+                    </select>
+
+                    <button
+                      onClick={toggleCam}
+                      className={`p-2.5 rounded-xl border transition-all ${isVideoMuted ? 'bg-rose-600 border-rose-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-300 hover:text-white'}`}
+                      title={isVideoMuted ? 'הפעל מצלמה' : 'כבה מצלמה'}
+                    >
+                      {isVideoMuted ? <VideoOff className="w-4 h-4" /> : <Video className="w-4 h-4" />}
+                    </button>
+                  </div>
+
+                  {/* Sub-row: Resolution Switcher + Cinematic Bokeh Toggle */}
+                  <div className="grid grid-cols-4 gap-1.5 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setVideoResolution('4k')}
+                      className={`py-1.5 px-1 rounded-lg text-[11px] font-bold transition-all text-center ${
+                        videoResolution === '4k'
+                          ? 'bg-gradient-to-r from-amber-500 to-yellow-600 text-slate-950 font-black shadow'
+                          : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      4K UHD 🌟
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setVideoResolution('1080p')}
+                      className={`py-1.5 px-1 rounded-lg text-[11px] font-bold transition-all text-center ${
+                        videoResolution === '1080p'
+                          ? 'bg-indigo-600 text-white shadow'
+                          : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      FHD 1080p 🎬
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setVideoResolution('720p')}
+                      className={`py-1.5 px-1 rounded-lg text-[11px] font-bold transition-all text-center ${
+                        videoResolution === '720p'
+                          ? 'bg-slate-700 text-white shadow'
+                          : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      HD 720p
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setDepthOfField(!depthOfField)}
+                      className={`py-1.5 px-1 rounded-lg text-[11px] font-bold transition-all flex items-center justify-center gap-1 border ${
+                        depthOfField
+                          ? 'bg-purple-600 border-purple-500 text-white shadow'
+                          : 'bg-slate-900 border-slate-800 text-purple-300/80 hover:text-purple-200'
+                      }`}
+                      title="טשטוש רקע קולנועי (Depth of Field Bokeh)"
+                    >
+                      <Focus className="w-3 h-3" />
+                      <span>בוקה</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* CARD 2: Microphone & Audio DSP Controls */}
+                <div className="p-4 rounded-2xl bg-slate-950/70 border border-slate-800/90 space-y-3 flex flex-col justify-between">
+                  {/* Header */}
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                        <Mic className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-bold text-white">מיקרופון ראשי וסאונד</h4>
+                        <p className="text-[10px] font-mono text-slate-400">
+                          {audioChannelMode === 'stereo' ? 'Stereo (2-Channel 48kHz)' : 'Mono (1-Channel 48kHz)'}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Audio Channel Mode Segment (Stereo vs Mono) */}
+                    <div className="flex items-center gap-1 bg-slate-900 p-0.5 rounded-xl border border-slate-800">
+                      <button
+                        type="button"
+                        onClick={() => setAudioChannelMode('stereo')}
+                        className={`px-2 py-0.5 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1 ${
+                          audioChannelMode === 'stereo'
+                            ? 'bg-cyan-600 text-white shadow'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        <Headphones className="w-2.5 h-2.5" />
+                        <span>סטריאו</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setAudioChannelMode('mono')}
+                        className={`px-2 py-0.5 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1 ${
+                          audioChannelMode === 'mono'
+                            ? 'bg-teal-600 text-white shadow'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        <Mic className="w-2.5 h-2.5" />
+                        <span>מונו</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Mic Dropdown & Mute */}
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={selectedAudioId}
+                      onChange={(e) => setSelectedAudioId(e.target.value)}
+                      className="flex-1 px-3 py-2 rounded-xl bg-slate-900 border border-slate-700/80 text-xs text-white focus:outline-none focus:border-indigo-500 transition-colors"
+                    >
+                      {audioDevices.map(a => (
+                        <option key={a.deviceId} value={a.deviceId}>
+                          {a.label}
+                        </option>
+                      ))}
+                    </select>
+
+                    <button
+                      onClick={toggleMic}
+                      className={`p-2.5 rounded-xl border transition-all ${isAudioMuted ? 'bg-rose-600 border-rose-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-300 hover:text-white'}`}
+                      title={isAudioMuted ? 'בטל השתקה' : 'השתק מיקרופון'}
+                    >
+                      {isAudioMuted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                    </button>
+                  </div>
+
+                  {/* Sub-row: Gain Slider + DSP Noise Filter Toggle */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                    {/* Gain Slider */}
+                    <div className="p-2 rounded-xl bg-slate-900 border border-slate-800 flex items-center gap-2">
+                      <div className="flex items-center gap-1 text-[11px] font-bold text-slate-300 shrink-0">
+                        <Volume2 className="w-3.5 h-3.5 text-indigo-400" />
+                        <span>Gain:</span>
+                        <span className="font-mono text-indigo-400">{Math.round(micGain * 100)}%</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0"
+                        max="2"
+                        step="0.05"
+                        value={micGain}
+                        onChange={(e) => handleGainChange(parseFloat(e.target.value))}
+                        className="w-full accent-indigo-500 cursor-pointer h-1.5 bg-slate-800 rounded-lg"
+                      />
+                    </div>
+
+                    {/* Noise Filter Toggle */}
+                    <button
+                      type="button"
+                      onClick={handleToggleNoiseSuppression}
+                      className={`p-2 rounded-xl border text-[11px] font-bold flex items-center justify-between transition-all ${
+                        noiseSuppression
+                          ? 'bg-emerald-950/60 border-emerald-500/40 text-emerald-300 shadow'
+                          : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <Wand2 className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>ניקוי רעשים DSP</span>
+                      </div>
+                      <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold ${
+                        noiseSuppression ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-400'
+                      }`}>
+                        {noiseSuppression ? 'פעיל ✓' : 'כבוי'}
+                      </span>
+                    </button>
+                  </div>
+                </div>
+
+              </div>
+
+              {/* Bottom Strip: Real-Time Broadcast Audio Level VU Meter */}
+              <div className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800 flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-3 flex-1 min-w-[240px]">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-slate-300 shrink-0">
+                    <Activity className="w-4 h-4 text-cyan-400" />
+                    <span>עוצמת שידור חיה (VU Meter):</span>
+                    <span className="font-mono text-cyan-400 font-bold text-xs">{audioLevel}%</span>
+                  </div>
+
+                  {/* Gradient VU Meter Bar */}
+                  <div className="flex-1 h-3 rounded-full bg-slate-900 overflow-hidden p-0.5 border border-slate-800">
+                    <div
+                      className={`h-full rounded-full transition-all duration-75 ${
+                        isClipping
+                          ? 'bg-gradient-to-r from-rose-500 to-rose-600'
+                          : audioLevel > 70
+                          ? 'bg-gradient-to-r from-emerald-500 via-amber-400 to-rose-500'
+                          : 'bg-gradient-to-r from-indigo-500 to-cyan-400'
+                      }`}
+                      style={{ width: `${Math.min(100, audioLevel)}%` }}
                     />
                   </div>
 
-                  {/* Noise Filter Toggle */}
-                  <button
-                    type="button"
-                    onClick={handleToggleNoiseSuppression}
-                    className={`p-2 rounded-xl border text-[11px] font-bold flex items-center justify-between transition-all ${
-                      noiseSuppression
-                        ? 'bg-emerald-950/60 border-emerald-500/40 text-emerald-300 shadow'
-                        : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    <div className="flex items-center gap-1.5">
-                      <Wand2 className="w-3.5 h-3.5 text-emerald-400" />
-                      <span>ניקוי רעשים DSP</span>
-                    </div>
-                    <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold ${
-                      noiseSuppression ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-400'
-                    }`}>
-                      {noiseSuppression ? 'פעיל ✓' : 'כבוי'}
+                  {/* Clipping alert badge */}
+                  {isClipping && (
+                    <span className="text-[10px] font-bold text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded-full border border-rose-500/30 shrink-0 animate-pulse">
+                      ⚠️ Clipping / חזק מדי
                     </span>
-                  </button>
-                </div>
-              </div>
-
-            </div>
-
-            {/* Bottom Strip: Real-Time Broadcast Audio Level VU Meter */}
-            <div className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800 flex flex-wrap items-center justify-between gap-3">
-              <div className="flex items-center gap-3 flex-1 min-w-[240px]">
-                <div className="flex items-center gap-1.5 text-xs font-bold text-slate-300 shrink-0">
-                  <Activity className="w-4 h-4 text-cyan-400" />
-                  <span>עוצמת שידור חיה (VU Meter):</span>
-                  <span className="font-mono text-cyan-400 font-bold text-xs">{audioLevel}%</span>
+                  )}
                 </div>
 
-                {/* Gradient VU Meter Bar */}
-                <div className="flex-1 h-3 rounded-full bg-slate-900 overflow-hidden p-0.5 border border-slate-800">
-                  <div
-                    className={`h-full rounded-full transition-all duration-75 ${
-                      isClipping
-                        ? 'bg-gradient-to-r from-rose-500 to-rose-600'
-                        : audioLevel > 70
-                        ? 'bg-gradient-to-r from-emerald-500 via-amber-400 to-rose-500'
-                        : 'bg-gradient-to-r from-indigo-500 to-cyan-400'
-                    }`}
-                    style={{ width: `${Math.min(100, audioLevel)}%` }}
-                  />
+                {/* Live Mini Oscilloscope Waveform Canvas */}
+                <div className="shrink-0 bg-slate-900 rounded-xl p-1 border border-slate-800">
+                  <canvas ref={canvasRef} width={120} height={22} className="rounded" />
                 </div>
-
-                {/* Clipping alert badge */}
-                {isClipping && (
-                  <span className="text-[10px] font-bold text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded-full border border-rose-500/30 shrink-0 animate-pulse">
-                    ⚠️ Clipping / חזק מדי
-                  </span>
-                )}
-              </div>
-
-              {/* Live Mini Oscilloscope Waveform Canvas */}
-              <div className="shrink-0 bg-slate-900 rounded-xl p-1 border border-slate-800">
-                <canvas ref={canvasRef} width={120} height={22} className="rounded" />
               </div>
             </div>
-          </div>
+          )}
 
           {/* Live Broadcast Graphic Deck Overlay Controls */}
           <LiveBroadcastDeck

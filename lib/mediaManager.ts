@@ -34,12 +34,14 @@ export async function getMediaDevices(): Promise<{
         const labelLower = device.label.toLowerCase();
         const isIPhone = labelLower.includes('iphone') || labelLower.includes('continuity') || labelLower.includes('desk view') || labelLower.includes('center stage');
         const isContinuity = labelLower.includes('continuity') || labelLower.includes('iphone');
+        const isCaptureCard = labelLower.includes('elgato') || labelLower.includes('cam link') || labelLower.includes('capture') || labelLower.includes('hdmi') || labelLower.includes('usb video') || labelLower.includes('game');
 
         videoInputs.push({
           deviceId: device.deviceId,
-          label: device.label || `מצלמה (${videoInputs.length + 1})`,
+          label: device.label || (isCaptureCard ? `לוכד מסך / Elgato (${videoInputs.length + 1})` : `מצלמה (${videoInputs.length + 1})`),
           isIPhone,
-          isContinuity
+          isContinuity,
+          isCaptureCard
         });
       }
     });
@@ -294,5 +296,157 @@ export class AudioMeter {
 
   public stop() {
     this.processor.stop();
+  }
+}
+
+// High-FPS Screen & Game Capture Stream Helper
+export async function getScreenCaptureStream(options: { frameRate?: number; audio?: boolean } = {}): Promise<MediaStream> {
+  if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getDisplayMedia) {
+    throw new Error('Screen capture is not supported in this browser environment');
+  }
+
+  const { frameRate = 60, audio = true } = options;
+
+  return await navigator.mediaDevices.getDisplayMedia({
+    video: {
+      frameRate: { ideal: frameRate, max: 60 },
+      displaySurface: 'window',
+      cursor: 'always'
+    } as any,
+    audio: audio ? {
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: false,
+      channelCount: 2
+    } : false
+  });
+}
+
+// Dual Audio Mixer: Mic Audio + Game/System Audio with Live VU Metering
+export class GamingAudioMixer {
+  private audioCtx: AudioContext | null = null;
+  private micSource: MediaStreamAudioSourceNode | null = null;
+  private gameSource: MediaStreamAudioSourceNode | null = null;
+  private micGainNode: GainNode | null = null;
+  private gameGainNode: GainNode | null = null;
+  private destinationNode: MediaStreamAudioDestinationNode | null = null;
+  private micAnalyser: AnalyserNode | null = null;
+  private gameAnalyser: AnalyserNode | null = null;
+  private animId: number | null = null;
+
+  private onLevelsChange?: (micLevel: number, gameLevel: number) => void;
+
+  constructor(onLevelsChange?: (micLevel: number, gameLevel: number) => void) {
+    this.onLevelsChange = onLevelsChange;
+  }
+
+  public setup(micStream: MediaStream | null, gameStream: MediaStream | null): MediaStream | null {
+    this.stop();
+
+    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioContextClass) return null;
+
+    this.audioCtx = new AudioContextClass({ latencyHint: 'interactive' });
+    this.destinationNode = this.audioCtx.createMediaStreamDestination();
+
+    // 1. Mic Channel
+    if (micStream && micStream.getAudioTracks().length > 0) {
+      try {
+        this.micSource = this.audioCtx.createMediaStreamSource(micStream);
+        this.micGainNode = this.audioCtx.createGain();
+        this.micAnalyser = this.audioCtx.createAnalyser();
+        this.micAnalyser.fftSize = 64;
+
+        this.micSource.connect(this.micGainNode);
+        this.micGainNode.connect(this.micAnalyser);
+        this.micGainNode.connect(this.destinationNode);
+      } catch (err) {
+        console.warn('Could not connect mic track to mixer:', err);
+      }
+    }
+
+    // 2. Game Channel
+    if (gameStream && gameStream.getAudioTracks().length > 0) {
+      try {
+        this.gameSource = this.audioCtx.createMediaStreamSource(gameStream);
+        this.gameGainNode = this.audioCtx.createGain();
+        this.gameAnalyser = this.audioCtx.createAnalyser();
+        this.gameAnalyser.fftSize = 64;
+
+        this.gameSource.connect(this.gameGainNode);
+        this.gameGainNode.connect(this.gameAnalyser);
+        this.gameGainNode.connect(this.destinationNode);
+      } catch (err) {
+        console.warn('Could not connect game track to mixer:', err);
+      }
+    }
+
+    // Start Level Loop
+    this.startLevelLoop();
+
+    return this.destinationNode.stream;
+  }
+
+  public setMicVolume(volume: number) {
+    if (this.micGainNode && this.audioCtx) {
+      this.micGainNode.gain.setValueAtTime(Math.max(0, volume), this.audioCtx.currentTime);
+    }
+  }
+
+  public setGameVolume(volume: number) {
+    if (this.gameGainNode && this.audioCtx) {
+      this.gameGainNode.gain.setValueAtTime(Math.max(0, volume), this.audioCtx.currentTime);
+    }
+  }
+
+  private startLevelLoop() {
+    const micData = new Uint8Array(32);
+    const gameData = new Uint8Array(32);
+
+    const check = () => {
+      let micLevel = 0;
+      let gameLevel = 0;
+
+      if (this.micAnalyser) {
+        this.micAnalyser.getByteFrequencyData(micData);
+        let sum = 0;
+        for (let i = 0; i < micData.length; i++) sum += micData[i];
+        micLevel = Math.min(100, Math.round((sum / (micData.length * 255)) * 100 * 2.2));
+      }
+
+      if (this.gameAnalyser) {
+        this.gameAnalyser.getByteFrequencyData(gameData);
+        let sum = 0;
+        for (let i = 0; i < gameData.length; i++) sum += gameData[i];
+        gameLevel = Math.min(100, Math.round((sum / (gameData.length * 255)) * 100 * 2.2));
+      }
+
+      if (this.onLevelsChange) {
+        this.onLevelsChange(micLevel, gameLevel);
+      }
+
+      this.animId = requestAnimationFrame(check);
+    };
+
+    this.animId = requestAnimationFrame(check);
+  }
+
+  public stop() {
+    if (this.animId) {
+      cancelAnimationFrame(this.animId);
+      this.animId = null;
+    }
+    if (this.micSource) {
+      try { this.micSource.disconnect(); } catch {}
+      this.micSource = null;
+    }
+    if (this.gameSource) {
+      try { this.gameSource.disconnect(); } catch {}
+      this.gameSource = null;
+    }
+    if (this.audioCtx && this.audioCtx.state !== 'closed') {
+      try { this.audioCtx.close(); } catch {}
+      this.audioCtx = null;
+    }
   }
 }

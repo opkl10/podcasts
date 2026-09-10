@@ -25,7 +25,8 @@ import {
   Play,
   Subtitles,
   Languages,
-  Upload
+  Upload,
+  Gamepad2
 } from 'lucide-react';
 
 interface EpisodeDetailsHeaderProps {
@@ -55,7 +56,7 @@ export default function EpisodeDetailsHeader({
   const [isEditing, setIsEditing] = useState(false);
   const [title, setTitle] = useState(episode.title);
   const [podcastId, setPodcastId] = useState(episode.podcastId || 'pod-tech');
-  const [mediaType, setMediaType] = useState<'video' | 'audio_only'>(episode.mediaType || 'video');
+  const [mediaType, setMediaType] = useState<'video' | 'audio_only' | 'gaming_creator'>(episode.mediaType || 'video');
   const [description, setDescription] = useState(episode.description);
   const [season, setSeason] = useState(episode.season);
   const [episodeNumber, setEpisodeNumber] = useState(episode.episodeNumber);
@@ -401,7 +402,7 @@ export default function EpisodeDetailsHeader({
           {/* Format selection */}
           <div>
             <label className="block text-xs font-medium text-slate-400 mb-1">פורמט הפרק:</label>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               <button
                 type="button"
                 onClick={() => setMediaType('video')}
@@ -412,7 +413,7 @@ export default function EpisodeDetailsHeader({
                 }`}
               >
                 <Video className="w-3.5 h-3.5" />
-                <span>וידאו + אודיו (Video Podcast)</span>
+                <span>וידאו + אודיו</span>
               </button>
 
               <button
@@ -425,7 +426,20 @@ export default function EpisodeDetailsHeader({
                 }`}
               >
                 <Mic className="w-3.5 h-3.5" />
-                <span>אודיו בלבד (Audio / Radio)</span>
+                <span>אודיו בלבד</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setMediaType('gaming_creator')}
+                className={`py-2 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-2 transition-all ${
+                  mediaType === 'gaming_creator'
+                    ? 'bg-purple-600 text-white border-purple-500 font-black shadow'
+                    : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-white'
+                }`}
+              >
+                <Gamepad2 className="w-3.5 h-3.5" />
+                <span>גיימינג ווידאו</span>
               </button>
             </div>
           </div>
@@ -463,7 +477,12 @@ export default function EpisodeDetailsHeader({
                 </span>
 
                 {/* Media Format Badge */}
-                {episode.mediaType === 'audio_only' ? (
+                {episode.mediaType === 'gaming_creator' ? (
+                  <span className="px-2.5 py-0.5 rounded bg-purple-500/15 border border-purple-500/30 text-purple-300 text-xs font-bold flex items-center gap-1">
+                    <Gamepad2 className="w-3 h-3 text-purple-400" />
+                    <span>🎮 גיימינג ווידאו</span>
+                  </span>
+                ) : episode.mediaType === 'audio_only' ? (
                   <span className="px-2.5 py-0.5 rounded bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs font-bold flex items-center gap-1">
                     <Mic className="w-3 h-3 text-amber-400" />
                     <span>אודיו בלבד</span>

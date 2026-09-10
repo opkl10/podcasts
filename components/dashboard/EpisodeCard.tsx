@@ -17,7 +17,8 @@ import {
   AlertCircle,
   Radio,
   Subtitles,
-  Activity
+  Activity,
+  Gamepad2
 } from 'lucide-react';
 import { formatTime, getPodcastById } from '@/lib/storage';
 
@@ -92,10 +93,26 @@ export default function EpisodeCard({ episode, onDelete, onOpenAudiogram }: Epis
 
         {/* Header: Season/Ep + Status */}
         <div className="flex items-center justify-between gap-2 mb-3">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 flex-wrap">
             <span className="px-2.5 py-1 rounded-md bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 text-xs font-bold tracking-wide">
               עונה {episode.season} • פרק {episode.episodeNumber}
             </span>
+            {episode.mediaType === 'gaming_creator' ? (
+              <span className="px-2 py-0.5 rounded bg-purple-500/15 border border-purple-500/30 text-purple-300 text-[10px] font-bold flex items-center gap-1">
+                <Gamepad2 className="w-3 h-3 text-purple-400" />
+                גיימינג
+              </span>
+            ) : episode.mediaType === 'audio_only' ? (
+              <span className="px-2 py-0.5 rounded bg-amber-500/15 border border-amber-500/30 text-amber-300 text-[10px] font-bold flex items-center gap-1">
+                <Radio className="w-3 h-3 text-amber-400" />
+                אודיו
+              </span>
+            ) : (
+              <span className="px-2 py-0.5 rounded bg-blue-500/15 border border-blue-500/30 text-blue-300 text-[10px] font-bold flex items-center gap-1">
+                <Video className="w-3 h-3 text-blue-400" />
+                וידאו
+              </span>
+            )}
             {episode.recording?.duration ? (
               <span className="px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[11px] font-medium flex items-center gap-1">
                 <Video className="w-3 h-3" />

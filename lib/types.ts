@@ -129,7 +129,7 @@ export interface Episode {
   episodeNumber: number;
   season: number;
   status: EpisodeStatus;
-  mediaType?: 'video' | 'audio_only'; // תמיכה בפרק וידאו או אודיו בלבד
+  mediaType?: 'video' | 'audio_only' | 'gaming_creator'; // תמיכה בפרק וידאו, אודיו או גיימינג ומולטי-קאם
   description: string;
   hostName?: string; // שם המגיש / מנחה
   host?: { name: string; role?: string; avatar?: string };
@@ -158,6 +158,7 @@ export interface VideoInputDevice {
   label: string;
   isIPhone?: boolean;
   isContinuity?: boolean;
+  isCaptureCard?: boolean;
 }
 
 export type FactCategory = 
@@ -381,3 +382,20 @@ export interface AudiogramStudioTemplate {
   createdAt: string;
   config: Partial<AudiogramStudioConfig>;
 }
+
+export interface GamingStudioConfig {
+  gameplaySource: 'screen' | 'capture_card' | 'none';
+  selectedCaptureCardId?: string;
+  facecamSource: 'webcam' | 'continuity' | 'remote_cam' | 'custom';
+  facecamLayout: 'pip_br' | 'pip_bl' | 'pip_tr' | 'pip_tl' | 'split' | 'solo_game' | 'solo_cam' | 'dual_cam';
+  facecamShape: 'circle' | 'rounded' | 'rectangle';
+  facecamGlowColor: string;
+  facecamGlowBlur: number;
+  facecamBorderWidth: number;
+  facecamSize: 'small' | 'medium' | 'large';
+  gameAudioVolume: number; // 0 - 1.5
+  micVolume: number; // 0 - 2.0
+  showGamerHud?: boolean;
+  gamerTag?: string;
+}
+
