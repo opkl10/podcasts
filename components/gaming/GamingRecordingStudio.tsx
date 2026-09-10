@@ -1095,9 +1095,20 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
         const camNatH = camSource ? ('videoHeight' in camSource ? (camSource as HTMLVideoElement).videoHeight : (camSource as HTMLImageElement).naturalHeight) : 0;
         const nativeAspect = (camNatW > 0 && camNatH > 0) ? (camNatW / camNatH) : (16 / 9);
 
-        let fw = 460 * scale;
-        if (facecamSize === 'small') { fw = 360 * scale; }
-        else if (facecamSize === 'large') { fw = 560 * scale; }
+        let fw = 0;
+        let fh = 0;
+
+        if (camSize !== 'hidden') {
+          const sizeWidthMap: Record<CamSizeKey, number> = {
+            hidden: 0,
+            xs: 240,
+            sm: 340,
+            md: 460,
+            lg: 620,
+            xl: 800,
+          };
+          fw = (sizeWidthMap[camSize] || 460) * scale;
+        }
 
         let targetAspect = 16 / 9;
         if (facecamAspect === 'auto') {
@@ -1112,7 +1123,7 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
           targetAspect = 16 / 9;
         }
 
-        let fh = fw / targetAspect;
+        fh = fw / targetAspect;
 
         if (facecamShape === 'circle') {
           fh = fw; // 1:1 for perfect circle geometry
@@ -1128,7 +1139,22 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
         let fx = W - fw - margin;
         let fy = H - fh - margin;
 
-        if (facecamLayout === 'pip_bl') {
+        if (camFreePos !== null) {
+          // Free drag position (percent based on canvas width and height)
+          fx = (camFreePos.x / 100) * W;
+          fy = (camFreePos.y / 100) * H;
+        } else if (camAnchor) {
+          // 9-point anchor grid calculation
+          if (camAnchor === 'tl') { fx = margin; fy = margin; }
+          else if (camAnchor === 'tc') { fx = (W - fw) / 2; fy = margin; }
+          else if (camAnchor === 'tr') { fx = W - fw - margin; fy = margin; }
+          else if (camAnchor === 'ml') { fx = margin; fy = (H - fh) / 2; }
+          else if (camAnchor === 'mc') { fx = (W - fw) / 2; fy = (H - fh) / 2; }
+          else if (camAnchor === 'mr') { fx = W - fw - margin; fy = (H - fh) / 2; }
+          else if (camAnchor === 'bl') { fx = margin; fy = H - fh - margin; }
+          else if (camAnchor === 'bc') { fx = (W - fw) / 2; fy = H - fh - margin; }
+          else if (camAnchor === 'br') { fx = W - fw - margin; fy = H - fh - margin; }
+        } else if (facecamLayout === 'pip_bl') {
           fx = margin;
           fy = H - fh - margin;
         } else if (facecamLayout === 'pip_tr') {
@@ -1307,7 +1333,10 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
     gameFitMode,
     gameZoom,
     gameOffsetX,
-    gameOffsetY
+    gameOffsetY,
+    camSize,
+    camFreePos,
+    camAnchor
   ]);
 
   // 8. Recording Engine (High Bitrate 60FPS Single Video File + Isolated Stems)

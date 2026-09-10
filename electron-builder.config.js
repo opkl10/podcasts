@@ -32,7 +32,7 @@ const config = {
     entitlements: 'electron/entitlements.mac.plist',
     entitlementsInherit: 'electron/entitlements.mac.plist',
     target: [
-      { target: 'dmg', arch: ['arm64', 'x64'] },
+      { target: 'dmg', arch: ['arm64'] },
     ],
   },
   

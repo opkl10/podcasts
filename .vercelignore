@@ -1,0 +1,7 @@
+dist-electron
+electron
+public/icon.icns
+public/icon.iconset
+*.dmg
+node_modules
+.next
