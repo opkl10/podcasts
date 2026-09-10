@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import Link from "next/link";
-import { Mic, Radio, ListMusic, PlusCircle, Sparkles } from "lucide-react";
+import { Mic, Radio, ListMusic, PlusCircle, Sparkles, Gamepad2 } from "lucide-react";
 
 export const metadata: Metadata = {
   title: "CastFlow Studio | מערכת ניהול, מחקר ואולפן פודקאסטים",
@@ -44,13 +44,20 @@ export default function RootLayout({
             </div>
 
             {/* Navigation links */}
-            <nav className="hidden md:flex items-center gap-1">
+            <nav className="flex items-center gap-1 sm:gap-2">
               <Link
                 href="/"
-                className="flex items-center gap-2 px-3.5 py-2 text-sm font-medium text-slate-300 hover:text-white hover:bg-slate-800/60 rounded-lg transition-colors"
+                className="flex items-center gap-2 px-3 py-1.5 text-xs sm:text-sm font-medium text-slate-300 hover:text-white hover:bg-slate-800/60 rounded-lg transition-colors"
               >
                 <ListMusic className="w-4 h-4 text-indigo-400" />
-                כל הפרקים
+                <span>כל הפרקים</span>
+              </Link>
+              <Link
+                href="/gaming"
+                className="flex items-center gap-2 px-3 py-1.5 text-xs sm:text-sm font-bold text-purple-300 hover:text-white bg-purple-950/50 hover:bg-purple-900/60 border border-purple-500/30 rounded-lg transition-all shadow-sm"
+              >
+                <Gamepad2 className="w-4 h-4 text-purple-400" />
+                <span>🎮 אולפן גיימינג</span>
               </Link>
             </nav>
 

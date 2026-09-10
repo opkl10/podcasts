@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Episode } from '@/lib/types';
 import { getEpisodeById } from '@/lib/storage';
 import RecordingStudio from '@/components/studio/RecordingStudio';
+import GamingRecordingStudio from '@/components/gaming/GamingRecordingStudio';
 
 interface StudioPageProps {
   params: Promise<{ id: string }>;
@@ -48,6 +49,10 @@ export default function StudioPage({ params }: StudioPageProps) {
         </button>
       </div>
     );
+  }
+
+  if (episode.mediaType === 'gaming_creator') {
+    return <GamingRecordingStudio episode={episode} />;
   }
 
   return <RecordingStudio episode={episode} />;

@@ -34,7 +34,8 @@ import {
   Upload,
   FileJson,
   AlertCircle,
-  CheckCircle2
+  CheckCircle2,
+  Gamepad2
 } from 'lucide-react';
 
 export default function DashboardPage() {
@@ -283,13 +284,22 @@ export default function DashboardPage() {
               className="hidden"
             />
 
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <Link
                 href="/episodes/new"
                 className="flex-1 flex items-center justify-center gap-2 px-5 py-3.5 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold text-sm shadow-xl shadow-indigo-600/30 hover:scale-[1.02] active:scale-95 transition-all text-center whitespace-nowrap"
               >
                 <PlusCircle className="w-5 h-5" />
                 <span>יצירת פרק חדש</span>
+              </Link>
+
+              <Link
+                href="/gaming"
+                className="flex items-center justify-center gap-2 px-4 py-3.5 rounded-xl bg-gradient-to-r from-purple-600 via-fuchsia-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-black text-xs sm:text-sm shadow-xl shadow-purple-600/40 hover:scale-[1.02] active:scale-95 transition-all text-center whitespace-nowrap border border-purple-400/30"
+                title="כניסה ישירה לאולפן גיימינג ויוצרים ב-60FPS"
+              >
+                <Gamepad2 className="w-4 h-4 text-purple-200" />
+                <span>🎮 אולפן גיימינג ב-60FPS</span>
               </Link>
 
               <button

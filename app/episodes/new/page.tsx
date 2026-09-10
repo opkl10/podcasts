@@ -170,7 +170,11 @@ export default function NewEpisodePage() {
     };
 
     saveEpisode(newEpisode);
-    router.push(`/episodes/${newEpisode.id}`);
+    if (mediaType === 'gaming_creator') {
+      router.push(`/gaming?episodeId=${newEpisode.id}`);
+    } else {
+      router.push(`/episodes/${newEpisode.id}`);
+    }
   };
 
   return (
