@@ -276,6 +276,7 @@ export interface LiveOverlayState {
 export interface MovableImageOverlay {
   id: string;
   url: string;
+  originalUrl?: string;
   name?: string;
   transform: ElementTransform;
   opacity: number;

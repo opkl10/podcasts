@@ -49,10 +49,16 @@ import {
   Type,
   Mic,
   User,
-  Flame
+  Flame,
+  Wand2,
+  Eraser,
+  RefreshCw,
+  Loader2,
+  Pipette
 } from 'lucide-react';
 import ImageStockPickerModal from '../studio/ImageStockPickerModal';
 import DraggableOverlay from '../studio/DraggableOverlay';
+import { removeImageBackground } from '@/lib/imageBackgroundRemoval';
 
 interface AudioEditorAudiogramStudioProps {
   episode: Episode;
@@ -359,6 +365,233 @@ export default function AudioEditorAudiogramStudio({
 
   const handleUpdateMovableImage = (id: string, updates: Partial<MovableImageOverlay>) => {
     setMovableImages(prev => prev.map(img => img.id === id ? { ...img, ...updates } : img));
+  };
+
+  // Movable Image Background Removal State & Handlers
+  const [bgRemovalLoadingId, setBgRemovalLoadingId] = useState<string | null>(null);
+  const [bgRemovalTolerance, setBgRemovalTolerance] = useState<number>(28);
+  const [bgRemovalFeather, setBgRemovalFeather] = useState<number>(2);
+  const [bgRemovalCustomColor, setBgRemovalCustomColor] = useState<string>('#ffffff');
+  const [bgRemovalContiguousOnly, setBgRemovalContiguousOnly] = useState<boolean>(true);
+  const [bgRemovalError, setBgRemovalError] = useState<string | null>(null);
+
+  const handleApplyBackgroundRemoval = async (
+    imageId: string,
+    mode: 'auto' | 'white' | 'black' | 'green' | 'custom' = 'auto',
+    customTolerance?: number
+  ) => {
+    const targetImg = movableImages.find(i => i.id === imageId);
+    if (!targetImg) return;
+
+    setBgRemovalLoadingId(imageId);
+    setBgRemovalError(null);
+
+    try {
+      const sourceUrl = targetImg.originalUrl || targetImg.url;
+      const tol = customTolerance !== undefined ? customTolerance : bgRemovalTolerance;
+
+      const transparentDataUrl = await removeImageBackground(sourceUrl, {
+        mode,
+        targetColorHex: bgRemovalCustomColor,
+        tolerance: tol,
+        feather: bgRemovalFeather,
+        contiguousOnly: bgRemovalContiguousOnly,
+      });
+
+      setMovableImages(prev => prev.map(img => {
+        if (img.id === imageId) {
+          return {
+            ...img,
+            url: transparentDataUrl,
+            originalUrl: img.originalUrl || img.url,
+          };
+        }
+        return img;
+      }));
+    } catch (err: any) {
+      console.error('Background removal error:', err);
+      setBgRemovalError(err.message || 'שגיאה בהסרת הרקע מהתמונה');
+    } finally {
+      setBgRemovalLoadingId(null);
+    }
+  };
+
+  const handleRestoreOriginalImage = (imageId: string) => {
+    setMovableImages(prev => prev.map(img => {
+      if (img.id === imageId && img.originalUrl) {
+        return {
+          ...img,
+          url: img.originalUrl,
+          originalUrl: undefined,
+        };
+      }
+      return img;
+    }));
+  };
+
+  const renderImageBackgroundRemovalSection = (img: MovableImageOverlay) => {
+    const isLoading = bgRemovalLoadingId === img.id;
+    const hasRemovedBg = !!img.originalUrl;
+
+    return (
+      <div className="p-3 rounded-xl bg-slate-900/90 border border-slate-800 space-y-3 mt-1">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-1.5">
+            <Wand2 className="w-3.5 h-3.5 text-amber-400" />
+            <span className="text-xs font-bold text-white">הסרת רקע לסטיקר (חיתוך שקוף)</span>
+          </div>
+          {hasRemovedBg && (
+            <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-800 font-bold flex items-center gap-1">
+              <Check className="w-3 h-3" /> רקע הוסר
+            </span>
+          )}
+        </div>
+
+        <p className="text-[10px] text-slate-400 leading-relaxed">
+          מנקה את הרקע והופך אותו לשקוף לחלוטין כדי שהסטיקר ישתלב על הווידאו ללא ריבוע אטום מסביבו.
+        </p>
+
+        {/* Quick Action Preset Buttons */}
+        <div className="grid grid-cols-2 gap-1.5">
+          <button
+            type="button"
+            disabled={isLoading}
+            onClick={() => handleApplyBackgroundRemoval(img.id, 'auto')}
+            className="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-[11px] font-bold shadow transition-all"
+            title="מזהה אוטומטית את צבע הרקע בקצוות ומסיר אותו בטכנולוגיית Flood-Fill חכמה"
+          >
+            {isLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 text-amber-300" />}
+            <span>זיהוי אוטומטי מקצוות</span>
+          </button>
+
+          <button
+            type="button"
+            disabled={isLoading}
+            onClick={() => handleApplyBackgroundRemoval(img.id, 'white')}
+            className="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-200 text-[11px] font-bold transition-all border border-slate-700"
+          >
+            <span className="w-3 h-3 rounded-full bg-white border border-slate-300 inline-block shrink-0" />
+            <span>הסר רקע לבן</span>
+          </button>
+
+          <button
+            type="button"
+            disabled={isLoading}
+            onClick={() => handleApplyBackgroundRemoval(img.id, 'black')}
+            className="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-200 text-[11px] font-bold transition-all border border-slate-700"
+          >
+            <span className="w-3 h-3 rounded-full bg-black border border-slate-600 inline-block shrink-0" />
+            <span>הסר רקע שחור</span>
+          </button>
+
+          <button
+            type="button"
+            disabled={isLoading}
+            onClick={() => handleApplyBackgroundRemoval(img.id, 'green')}
+            className="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-200 text-[11px] font-bold transition-all border border-slate-700"
+          >
+            <span className="w-3 h-3 rounded-full bg-emerald-500 border border-emerald-400 inline-block shrink-0" />
+            <span>מסך ירוק (Chroma)</span>
+          </button>
+        </div>
+
+        {/* Custom Color Eyedropper & Trigger */}
+        <div className="flex items-center gap-2 p-2 rounded-lg bg-slate-950/70 border border-slate-800">
+          <label className="text-[10px] text-slate-400 font-bold shrink-0">צבע מותאם אישית:</label>
+          <div className="flex items-center gap-1.5 flex-1">
+            <input
+              type="color"
+              value={bgRemovalCustomColor}
+              onChange={(e) => setBgRemovalCustomColor(e.target.value)}
+              className="w-6 h-6 rounded cursor-pointer bg-transparent border-0 shrink-0"
+              title="בחר צבע להסרה"
+            />
+            <span className="font-mono text-[10px] text-slate-300">{bgRemovalCustomColor}</span>
+          </div>
+          <button
+            type="button"
+            disabled={isLoading}
+            onClick={() => handleApplyBackgroundRemoval(img.id, 'custom')}
+            className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-indigo-300 hover:text-white text-[10px] font-bold transition-colors shrink-0"
+          >
+            הסר צבע זה
+          </button>
+        </div>
+
+        {/* Advanced Fine Tuning: Tolerance & Feather Sliders */}
+        <div className="space-y-2 pt-1 border-t border-slate-800/80">
+          {/* Tolerance */}
+          <div className="space-y-1">
+            <div className="flex justify-between text-[10px] text-slate-400 font-bold">
+              <span>רגישות דיוק צבע (Tolerance):</span>
+              <span className="font-mono text-indigo-400">{bgRemovalTolerance}%</span>
+            </div>
+            <input
+              type="range"
+              min="5"
+              max="80"
+              step="1"
+              value={bgRemovalTolerance}
+              onChange={(e) => setBgRemovalTolerance(parseInt(e.target.value))}
+              className="w-full h-1.5 bg-slate-800 rounded appearance-none cursor-pointer accent-indigo-500"
+            />
+          </div>
+
+          {/* Feathering (Edge softening) */}
+          <div className="space-y-1">
+            <div className="flex justify-between text-[10px] text-slate-400 font-bold">
+              <span>ריכוך שוליים (Feather):</span>
+              <span className="font-mono text-indigo-400">{bgRemovalFeather}px</span>
+            </div>
+            <input
+              type="range"
+              min="0"
+              max="12"
+              step="1"
+              value={bgRemovalFeather}
+              onChange={(e) => setBgRemovalFeather(parseInt(e.target.value))}
+              className="w-full h-1.5 bg-slate-800 rounded appearance-none cursor-pointer accent-indigo-500"
+            />
+          </div>
+
+          {/* Contiguous Toggle (Edges vs Whole image) */}
+          <label className="flex items-center gap-2 cursor-pointer pt-0.5">
+            <input
+              type="checkbox"
+              checked={bgRemovalContiguousOnly}
+              onChange={(e) => setBgRemovalContiguousOnly(e.target.checked)}
+              className="rounded border-slate-700 bg-slate-900 text-indigo-600 focus:ring-indigo-500 h-3.5 w-3.5"
+            />
+            <span className="text-[10px] text-slate-300">
+              מחק מקצוות בלבד (שומר על פרטים פנימיים כמו בגדים או עיניים)
+            </span>
+          </label>
+        </div>
+
+        {/* Restore Button if modified */}
+        {hasRemovedBg && (
+          <div className="pt-1.5 border-t border-slate-800 flex items-center justify-between">
+            <span className="text-[10px] text-emerald-400 font-medium">התמונה המקורית נשמרת ברקע</span>
+            <button
+              type="button"
+              onClick={() => handleRestoreOriginalImage(img.id)}
+              className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-[10px] font-bold transition-colors"
+            >
+              <RotateCcw className="w-3 h-3" />
+              <span>שחזר תמונה מקורית ↺</span>
+            </button>
+          </div>
+        )}
+
+        {/* Error Message Display */}
+        {bgRemovalError && (
+          <div className="p-2 rounded-lg bg-rose-950/70 border border-rose-800 text-rose-300 text-[10px] flex items-center gap-1.5">
+            <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+            <span>{bgRemovalError}</span>
+          </div>
+        )}
+      </div>
+    );
   };
 
   // Permanent Logo State (loaded from storage)
@@ -1240,13 +1473,17 @@ export default function AudioEditorAudiogramStudio({
   // Preload Movable Images
   useEffect(() => {
     movableImages.forEach(imgData => {
-      if (imgData.url && !movableImageObjectsRef.current.has(imgData.id)) {
+      const existing = movableImageObjectsRef.current.get(imgData.id);
+      if (imgData.url && (!existing || existing.src !== imgData.url)) {
         const img = new Image();
         img.crossOrigin = 'anonymous';
         img.src = imgData.url;
         img.onload = () => {
           movableImageObjectsRef.current.set(imgData.id, img);
         };
+        if (img.complete) {
+          movableImageObjectsRef.current.set(imgData.id, img);
+        }
       }
     });
     // Remove deleted images from cache
@@ -4505,6 +4742,9 @@ export default function AudioEditorAudiogramStudio({
                                     />
                                   </div>
                                 </div>
+
+                                {/* Sticker Background Removal Tool */}
+                                {renderImageBackgroundRemovalSection(activeImg)}
                               </div>
                             );
                           })()
@@ -5476,9 +5716,16 @@ export default function AudioEditorAudiogramStudio({
                                     className="w-10 h-10 rounded-lg object-contain bg-black/50 border border-slate-700 shrink-0"
                                   />
                                   <div className="min-w-0 flex-1">
-                                    <span className="text-xs font-bold text-white block truncate">
-                                      {img.name || `תמונה ${idx + 1}`}
-                                    </span>
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="text-xs font-bold text-white block truncate">
+                                        {img.name || `תמונה ${idx + 1}`}
+                                      </span>
+                                      {img.originalUrl && (
+                                        <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-950/80 text-amber-300 border border-amber-800/80 font-bold shrink-0 flex items-center gap-0.5">
+                                          <Sparkles className="w-2.5 h-2.5" /> שקוף
+                                        </span>
+                                      )}
+                                    </div>
                                     <div className="flex items-center gap-1.5 text-[10px] text-slate-400 mt-0.5">
                                       <span className={`px-1.5 py-0.5 rounded font-bold ${
                                         img.layer === 'background' ? 'bg-indigo-950 text-indigo-300 border border-indigo-800' : 'bg-pink-950 text-pink-300 border border-pink-800'
@@ -5491,6 +5738,27 @@ export default function AudioEditorAudiogramStudio({
                                 </div>
 
                                 <div className="flex items-center gap-1 shrink-0">
+                                  {/* Quick Background Removal / Toggle */}
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setSelectedImageId(img.id);
+                                      setSelectedElementToStyle('custom_image');
+                                      if (!img.originalUrl) {
+                                        handleApplyBackgroundRemoval(img.id, 'auto');
+                                      }
+                                    }}
+                                    className={`p-1 rounded-lg transition-colors ${
+                                      img.originalUrl
+                                        ? 'bg-amber-950 text-amber-300 hover:bg-amber-900 border border-amber-800'
+                                        : 'bg-slate-800 hover:bg-indigo-950 text-slate-300 hover:text-indigo-300'
+                                    }`}
+                                    title={img.originalUrl ? 'רקע הוסר (לחץ להגדרות)' : 'הסר רקע אוטומטית (חיתוך שקוף)'}
+                                  >
+                                    <Wand2 className="w-3.5 h-3.5" />
+                                  </button>
+
                                   {/* Toggle Layer (Background vs Foreground) */}
                                   <button
                                     type="button"
@@ -5627,6 +5895,9 @@ export default function AudioEditorAudiogramStudio({
                                       </button>
                                     </div>
                                   </div>
+
+                                  {/* Sticker Background Removal Tool */}
+                                  {renderImageBackgroundRemovalSection(img)}
                                 </div>
                               )}
                             </div>
