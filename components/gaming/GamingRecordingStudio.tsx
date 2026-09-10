@@ -449,8 +449,8 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
     setIsScreenCapturing(false);
   };
 
-  // 5. Hardware Capture Card (Elgato / Cam Link) Controller with Multi-Tier 4K Negotiation
-  const handleSelectCaptureCard = async (deviceId: string, overrideRes?: VideoResolution) => {
+  // 5. Hardware Video Source / Capture Card (Elgato / Cam Link) Controller
+  const handleSelectCaptureCard = async (deviceId: string, targetRes?: VideoResolution) => {
     setSelectedCaptureCardId(deviceId);
     setCaptureCardError(null);
 
@@ -466,6 +466,7 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
       setCaptureQualityBadge('');
       setCaptureDetails(null);
       setCaptureCapabilities(null);
+      console.log('[Video Source] ⏹️ מקור הווידאו נותק.');
       return;
     }
 
@@ -478,101 +479,145 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
 
     setIsCaptureLoading(true);
 
+    const cardDev = videoDevices.find(v => v.deviceId === deviceId);
+    const cardLabel = cardDev?.label || `התקן וידאו (${deviceId.slice(0, 8)})`;
+    console.log(`%c[Video Source] 📹 התקן שנבחר: "${cardLabel}" (deviceId: ${deviceId})`, 'color: #38bdf8; font-weight: bold;');
+
+    const desiredRes = targetRes || '4k';
+    if (desiredRes !== videoResolution) {
+      setVideoResolution(desiredRes);
+    }
+
+    // Find any matching audio input for the capture card (e.g. "Elgato", "Cam Link", "Capture")
+    const cardLabelLower = cardLabel.toLowerCase();
+    const matchingAudio = audioDevices.find(a => {
+      const aLabel = (a.label || '').toLowerCase();
+      return (
+        (cardLabelLower.includes('elgato') && aLabel.includes('elgato')) ||
+        (cardLabelLower.includes('cam link') && (aLabel.includes('cam link') || aLabel.includes('elgato'))) ||
+        (cardLabelLower.includes('hd60') && (aLabel.includes('hd60') || aLabel.includes('elgato'))) ||
+        (cardLabelLower.includes('4k') && aLabel.includes('4k')) ||
+        (cardLabelLower.includes('hdmi') && aLabel.includes('hdmi')) ||
+        (cardLabelLower.includes('usb video') && (aLabel.includes('usb audio') || aLabel.includes('usb video')))
+      );
+    });
+
+    const requestUserMedia = async (videoConstraints: MediaTrackConstraints): Promise<MediaStream> => {
+      if (matchingAudio) {
+        try {
+          return await navigator.mediaDevices.getUserMedia({
+            video: videoConstraints,
+            audio: { deviceId: { exact: matchingAudio.deviceId } }
+          });
+        } catch (e) {}
+      }
+      try {
+        return await navigator.mediaDevices.getUserMedia({
+          video: videoConstraints,
+          audio: true
+        });
+      } catch (e) {
+        return await navigator.mediaDevices.getUserMedia({
+          video: videoConstraints,
+          audio: false
+        });
+      }
+    };
+
+    let stream: MediaStream | null = null;
+    let actualWidth = 0;
+    let actualHeight = 0;
+    let actualFps = 0;
+
     try {
-      const cardDev = videoDevices.find(v => v.deviceId === deviceId);
-      const cardLabel = (cardDev?.label || '').toLowerCase();
-      const is4KCard = cardLabel.includes('4k') || cardLabel.includes('cam link') || cardLabel.includes('camlink');
-      
-      // Auto-promote to 4K resolution if 4K capture card is used
-      const currentRes = overrideRes || (is4KCard ? '4k' : videoResolution);
-      if (currentRes !== videoResolution) {
-        setVideoResolution(currentRes);
+      // Step 1: Explicitly request 4K if desiredRes === '4k' (width: { ideal: 3840 }, height: { ideal: 2160 })
+      if (desiredRes === '4k') {
+        const constraints4K: MediaTrackConstraints = {
+          deviceId: { exact: deviceId },
+          width: { ideal: 3840 },
+          height: { ideal: 2160 },
+          frameRate: { ideal: 30, max: 60 }
+        };
+
+        console.log(`%c[Video Source] 🚀 ניסיון 1: דרישת רזולוציית 4K מפורשת (width: { ideal: 3840 }, height: { ideal: 2160 }) עבור "${cardLabel}"...`, 'color: #a855f7; font-weight: bold;');
+
+        try {
+          stream = await requestUserMedia(constraints4K);
+          const vt = stream.getVideoTracks()[0];
+          if (vt) {
+            const s = vt.getSettings();
+            actualWidth = s.width || 0;
+            actualHeight = s.height || 0;
+            actualFps = Math.round(s.frameRate || 0);
+            console.log(`%c[Video Source] 📊 תוצאת קריאת 4K: שם התקן: "${cardLabel}" | רזולוציה שהתקבלה בפועל מהדפדפן: ${actualWidth}×${actualHeight} @ ${actualFps}FPS`, 'color: #10b981; font-weight: bold;');
+
+            // Proactively try applyConstraints to enforce full 4K if macOS opened in low mode
+            if (actualWidth < 3840) {
+              try {
+                await vt.applyConstraints({ width: { ideal: 3840 }, height: { ideal: 2160 } });
+                const s2 = vt.getSettings();
+                actualWidth = s2.width || actualWidth;
+                actualHeight = s2.height || actualHeight;
+                actualFps = Math.round(s2.frameRate || actualFps);
+              } catch (e) {}
+            }
+          }
+        } catch (err4k: any) {
+          console.warn(`[Video Source] ⚠️ קריאת 4K נחסמה או נכשלה על ידי הדפדפן:`, err4k?.message || err4k);
+        }
       }
 
-      const constraintList = getCaptureCardConstraints(currentRes, deviceId);
+      // Step 2: Fallback mechanism - if 4K failed or browser gave SD (< 1280), pull 1080p automatically!
+      if (!stream || actualWidth < 1280) {
+        if (stream) {
+          console.warn(`%c[Video Source] ⚠️ הדפדפן החזיר רזולוציה נמוכה (${actualWidth}×${actualHeight}). מפעיל מנגנון Fallback אוטומטי ל-1080p כדי לא להיתקע על 640x480...`, 'color: #f59e0b; font-weight: bold;');
+          stream.getTracks().forEach(t => t.stop());
+          stream = null;
+        } else if (desiredRes === '4k') {
+          console.log(`%c[Video Source] 🔄 4K לא סופק. מפעיל מנגנון Fallback ל-1080p במקום להיתקע או להחזיר שגיאה...`, 'color: #38bdf8; font-weight: bold;');
+        }
 
-      let stream: MediaStream | null = null;
-      let selectedSettings: MediaTrackSettings | null = null;
+        const fallbackConstraints1080p: MediaTrackConstraints = {
+          deviceId: { exact: deviceId },
+          width: { ideal: 1920, min: 1280 },
+          height: { ideal: 1080, min: 720 },
+          frameRate: { ideal: 60, min: 30 }
+        };
 
-      // Find any matching audio input for the capture card (e.g. "Elgato", "Cam Link", "Capture")
-      const matchingAudio = audioDevices.find(a => {
-        const aLabel = (a.label || '').toLowerCase();
-        return (
-          (cardLabel.includes('elgato') && aLabel.includes('elgato')) ||
-          (cardLabel.includes('cam link') && (aLabel.includes('cam link') || aLabel.includes('elgato'))) ||
-          (cardLabel.includes('hd60') && (aLabel.includes('hd60') || aLabel.includes('elgato'))) ||
-          (cardLabel.includes('4k') && aLabel.includes('4k')) ||
-          (cardLabel.includes('hdmi') && aLabel.includes('hdmi')) ||
-          (cardLabel.includes('usb video') && (aLabel.includes('usb audio') || aLabel.includes('usb video')))
-        );
-      });
-
-      // Progressive multi-stage constraint negotiation
-      for (let i = 0; i < constraintList.length; i++) {
-        const videoConstraints = constraintList[i];
         try {
-          let testStream: MediaStream | null = null;
-
-          // Attempt 1: Video with explicit matching capture card audio
-          if (matchingAudio) {
-            try {
-              testStream = await navigator.mediaDevices.getUserMedia({
-                video: videoConstraints,
-                audio: { deviceId: { exact: matchingAudio.deviceId } }
-              });
-            } catch (audioErr) {
-              // Audio constraint failed, fall through to video-only
-            }
+          stream = await requestUserMedia(fallbackConstraints1080p);
+          const vt = stream.getVideoTracks()[0];
+          if (vt) {
+            const s = vt.getSettings();
+            actualWidth = s.width || 0;
+            actualHeight = s.height || 0;
+            actualFps = Math.round(s.frameRate || 0);
+            console.log(`%c[Video Source] ✅ Fallback ל-1080p הצליח! שם התקן: "${cardLabel}" | רזולוציה שהתקבלה בפועל: ${actualWidth}×${actualHeight} @ ${actualFps}FPS`, 'color: #10b981; font-weight: bold;');
           }
-
-          // Attempt 2: Video with generic audio: true
-          if (!testStream) {
-            try {
-              testStream = await navigator.mediaDevices.getUserMedia({
-                video: videoConstraints,
-                audio: true
-              });
-            } catch (audioTrueErr) {
-              // Fall through to video-only
-            }
-          }
-
-          // Attempt 3: Pure Video-only
-          if (!testStream) {
-            testStream = await navigator.mediaDevices.getUserMedia({
-              video: videoConstraints,
-              audio: false
+        } catch (err1080: any) {
+          console.warn(`[Video Source] ⚠️ Fallback עם min נכשל, מנסה 1080p ללא min...`, err1080?.message || err1080);
+          try {
+            stream = await requestUserMedia({
+              deviceId: { ideal: deviceId },
+              width: { ideal: 1920 },
+              height: { ideal: 1080 }
             });
-          }
-
-          if (testStream) {
-            const vt = testStream.getVideoTracks()[0];
-            const currentTrackWidth = vt?.getSettings().width || 0;
-            const isLastTier = i === constraintList.length - 1;
-
-            // If Chrome silently returned 640x480 on a fallback tier when user asked for 4K / 1080p,
-            // attempt active resolution application before accepting
-            if (currentTrackWidth <= 640 && (currentRes === '4k' || currentRes === '1080p') && !isLastTier) {
-              const forced = await applyCaptureCardResolution(vt, currentRes);
-              if (forced.width > 640) {
-                stream = testStream;
-                break;
-              }
-              // If still 640x480, continue to next constraint tier unless it's the last fallback
-              testStream.getTracks().forEach(t => t.stop());
-              continue;
+            const vt = stream.getVideoTracks()[0];
+            if (vt) {
+              const s = vt.getSettings();
+              actualWidth = s.width || 0;
+              actualHeight = s.height || 0;
+              actualFps = Math.round(s.frameRate || 0);
+              console.log(`%c[Video Source] 📺 1080p התקבל: שם התקן: "${cardLabel}" | רזולוציה: ${actualWidth}×${actualHeight} @ ${actualFps}FPS`, 'color: #10b981; font-weight: bold;');
             }
-
-            stream = testStream;
-            break;
+          } catch (errGeneral: any) {
+            console.error(`[Video Source] ❌ כל הניסיונות לפתיחת הווידאו נכשלו:`, errGeneral);
           }
-        } catch (tierErr) {
-          // Try next constraint tier
         }
       }
 
       if (!stream) {
-        setCaptureCardError('לא ניתן להתחבר לכרטיס הלכידה. וודא שהוא מחובר ואין תוכנה אחרת (כמו OBS) שנועלת אותו.');
+        setCaptureCardError(`לא ניתן לפתוח את מקור הווידאו "${cardLabel}". וודא שאין תוכנה אחרת (כמו OBS) שנועלת אותו.`);
         setIsCaptureLoading(false);
         return;
       }
@@ -584,32 +629,30 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
 
       const videoTrack = stream.getVideoTracks()[0];
       if (videoTrack) {
-        // Probe hardware capabilities
+        const finalSettings = videoTrack.getSettings();
+        const w = finalSettings.width || actualWidth;
+        const h = finalSettings.height || actualHeight;
+        const fps = Math.round(finalSettings.frameRate || actualFps);
+
         let caps: MediaTrackCapabilities | null = null;
         try {
           caps = videoTrack.getCapabilities ? videoTrack.getCapabilities() : null;
           setCaptureCapabilities(caps);
         } catch (e) {}
 
-        // Enforce resolution actively on the live track if still under target
-        const currentW = videoTrack.getSettings().width || 0;
-        const targetMin = currentRes === '4k' ? 2560 : currentRes === '1080p' ? 1920 : 1280;
-        if (currentW < targetMin) {
-          try {
-            await applyCaptureCardResolution(videoTrack, currentRes);
-          } catch (e) {
-            console.warn('Post-acquisition applyConstraints error:', e);
-          }
-        }
+        console.log(`%c[Video Source] 🎯 סיכום חיבור: שם התקן שנבחר: "${cardLabel}" | רזולוציה שהתקבלה בפועל מהדפדפן: ${w}×${h} @ ${fps}FPS`, 'color: #06b6d4; font-weight: bold;');
 
-        selectedSettings = videoTrack.getSettings();
-        const w = selectedSettings.width || 0;
-        const h = selectedSettings.height || 0;
-        const fps = Math.round(selectedSettings.frameRate || 0);
         setCaptureQualityBadge(`${w}×${h} @ ${fps}FPS`);
         setCaptureDetails({ width: w, height: h, fps });
 
+        if (w >= 3840) {
+          setVideoResolution('4k');
+        } else if (w >= 1920) {
+          setVideoResolution('1080p');
+        }
+
         videoTrack.onended = () => {
+          console.log(`[Video Source] 🔌 נותק שידור הווידאו של "${cardLabel}"`);
           handleSelectCaptureCard('');
           setCaptureDetails(null);
           setCaptureCapabilities(null);
@@ -624,7 +667,7 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
         gameplayVideoRef.current.play().catch(() => {});
       }
     } catch (err: any) {
-      console.error('Failed to open capture card stream:', err);
+      console.error(`[Video Source] ❌ שגיאה בחיבור להתקן "${cardLabel}":`, err);
       setCaptureCardError(`שגיאה בחיבור לכרטיס לכידה: ${err?.message || 'שגיאת חומרה'}`);
     } finally {
       setIsCaptureLoading(false);
@@ -648,6 +691,9 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
             setCaptureCapabilities(currentCaps);
           } catch (e) {}
 
+          const cardDev = videoDevices.find(v => v.deviceId === selectedCaptureCardId);
+          console.log(`[Video Source] ⚡ כפיית רזולוציה ${targetRes} על "${cardDev?.label || selectedCaptureCardId}": התקבל ${result.width}×${result.height} @ ${result.fps}FPS`);
+
           setCaptureQualityBadge(`${result.width}×${result.height} @ ${result.fps}FPS`);
           setCaptureDetails({ width: result.width, height: result.height, fps: result.fps });
 
@@ -657,10 +703,10 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
           }
         }
       }
-      // If live applyConstraints didn't upgrade the stream, perform full hardware renegotiation
+      // If live applyConstraints didn't upgrade the stream, perform full renegotiation with desired target
       await handleSelectCaptureCard(selectedCaptureCardId, targetRes);
     } catch (err: any) {
-      console.error('Error forcing capture resolution:', err);
+      console.error('[Video Source] Error forcing capture resolution:', err);
     } finally {
       setIsApplyingResolution(false);
     }
@@ -1882,37 +1928,42 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
               );
             })()}
 
-            {/* Capture Card Dropdown */}
+            {/* Video Source Dropdown (Elgato / HDMI / All Enumerate Devices) */}
             <div className="space-y-1.5">
-              <label className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
-                <Cast className="w-3.5 h-3.5 text-cyan-400" />
-                <span>בחירת מקור חומרה / כרטיס לכידה:</span>
-              </label>
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+                  <Cast className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>בחירת מקור וידאו / כרטיס Elgato (מתוך התקני המערכת):</span>
+                </label>
+                <button
+                  type="button"
+                  onClick={refreshDevices}
+                  className="text-[10px] text-cyan-400 hover:text-cyan-300 flex items-center gap-1 font-bold transition-colors"
+                  title="סרוק מחדש התקנים באמצעות navigator.mediaDevices.enumerateDevices()"
+                >
+                  <RefreshCw className="w-3 h-3" />
+                  <span>רענן רשימה</span>
+                </button>
+              </div>
 
               <select
                 value={selectedCaptureCardId}
                 onChange={(e) => handleSelectCaptureCard(e.target.value)}
                 disabled={isCaptureLoading}
-                className="w-full px-3 py-2.5 rounded-xl bg-slate-900 border border-slate-700/80 text-xs text-white focus:outline-none focus:border-cyan-500 transition-colors"
+                className="w-full px-3 py-2.5 rounded-xl bg-slate-900 border border-slate-700/80 text-xs text-white focus:outline-none focus:border-cyan-500 transition-colors cursor-pointer"
               >
-                <option value="">-- ללא כרטיס לכידה (השתמש בלכידת מסך רגילה) --</option>
-                {videoDevices.some(d => d.isCaptureCard) && (
-                  <optgroup label="🎮 כרטיסי לכידה מזוהים (Elgato / Cam Link / HDMI)">
-                    {videoDevices.filter(d => d.isCaptureCard).map(d => (
-                      <option key={d.deviceId} value={d.deviceId}>
-                        🎮 {d.label} {videoResolution === '4k' ? '(4K Ultra HD)' : ''}
-                      </option>
-                    ))}
-                  </optgroup>
-                )}
-                <optgroup label="📹 התקני וידאו נוספים">
-                  {videoDevices.filter(d => !d.isCaptureCard).map(d => (
-                    <option key={d.deviceId} value={d.deviceId}>
-                      {d.label}
-                    </option>
-                  ))}
-                </optgroup>
+                <option value="">-- בחר התקן וידאו / כרטיס Elgato מתוך הרשימה --</option>
+                {videoDevices.map((d) => (
+                  <option key={d.deviceId} value={d.deviceId}>
+                    {d.isCaptureCard ? '🎮 ' : '📹 '}
+                    {d.label || `התקן וידאו (${d.deviceId.slice(0, 10)}...)`}
+                    {d.deviceId === selectedCaptureCardId && captureDetails ? ` [פעיל: ${captureDetails.width}×${captureDetails.height}]` : ''}
+                  </option>
+                ))}
               </select>
+              <p className="text-[10px] text-slate-400 leading-tight">
+                כל ההתקנים נטענים ישירות מ-<code>navigator.mediaDevices.enumerateDevices()</code>. בחירה ברשימה מפעילה מיד דרישת 4K עם Fallback אוטומטי ל-1080p.
+              </p>
             </div>
 
             {/* Direct Hardware Force & Quality Controls */}
