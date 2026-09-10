@@ -109,30 +109,89 @@ export function getCaptureCardConstraints(resolution: VideoResolution = '1080p',
 
   if (resolution === '4k') {
     return [
-      // 1. Exact 4K 30FPS (Native standard for Cam Link 4K and USB 3.0 4K HDMI cards)
+      // 1. Exact 4K 30FPS (Native hardware standard for Cam Link 4K & USB 3.0 HDMI capture cards)
       { ...baseId, width: { exact: 3840 }, height: { exact: 2160 }, frameRate: { ideal: 30, max: 60 } },
       // 2. Exact 4K 60FPS (For Elgato 4K X / 4K60 Pro)
       { ...baseId, width: { exact: 3840 }, height: { exact: 2160 }, frameRate: { ideal: 60 } },
-      // 3. True 4K with min 2560 and ideal 30FPS (prevents Chrome rejecting due to 60fps limit)
+      // 3. True 4K with min 2560 and ideal 30FPS (prevents macOS dropping to 640x480)
       { ...baseId, width: { ideal: 3840, min: 2560 }, height: { ideal: 2160, min: 1440 }, frameRate: { ideal: 30 } },
-      // 4. Ideal 4K 60FPS
-      { ...baseId, width: { ideal: 3840 }, height: { ideal: 2160 }, frameRate: { ideal: 60 } },
-      // 5. 1440p Quad HD (2560x1440)
-      { ...baseId, width: { ideal: 2560 }, height: { ideal: 1440 }, frameRate: { ideal: 60 } },
-      // 6. High-Bitrate Full HD 60FPS fallback
-      { ...baseId, width: { ideal: 1920, min: 1280 }, height: { ideal: 1080, min: 720 }, frameRate: { ideal: 60 } },
-      // 7. Generic device fallback
+      // 4. Quad HD 1440p with min 1920
+      { ...baseId, width: { min: 2560, ideal: 2560 }, height: { min: 1440, ideal: 1440 }, frameRate: { ideal: 60, min: 30 } },
+      // 5. Full HD Exact 60FPS
+      { ...baseId, width: { exact: 1920 }, height: { exact: 1080 }, frameRate: { ideal: 60 } },
+      // 6. Full HD with STRICT min 1920 (ensures Chrome does not silently give 640x480)
+      { ...baseId, width: { min: 1920, ideal: 1920 }, height: { min: 1080, ideal: 1080 }, frameRate: { ideal: 60 } },
+      // 7. HD fallback with min 1280 (never accept 640x480 as long as HD is available)
+      { ...baseId, width: { min: 1280, ideal: 1920 }, height: { min: 720, ideal: 1080 }, frameRate: { ideal: 60 } },
+      // 8. Unconstrained fallback only if all strict constraints fail
       { ...idealId }
     ];
   }
 
   // 1080p
   return [
-    { ...baseId, width: { ideal: 1920, min: 1280 }, height: { ideal: 1080, min: 720 }, frameRate: { ideal: 60 } },
-    { ...baseId, width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 60 } },
-    { ...idealId, width: { ideal: 1920 }, height: { ideal: 1080 } },
+    { ...baseId, width: { exact: 1920 }, height: { exact: 1080 }, frameRate: { ideal: 60 } },
+    { ...baseId, width: { exact: 1920 }, height: { exact: 1080 }, frameRate: { ideal: 30 } },
+    { ...baseId, width: { min: 1920, ideal: 1920 }, height: { min: 1080, ideal: 1080 }, frameRate: { ideal: 60 } },
+    { ...baseId, width: { min: 1280, ideal: 1920 }, height: { min: 720, ideal: 1080 }, frameRate: { ideal: 60 } },
     { ...idealId }
   ];
+}
+
+/**
+ * Actively forces resolution constraints onto an existing capture card video track.
+ * On macOS / Chrome, UVC devices often start in a 640x480 fallback mode until forced via applyConstraints.
+ */
+export async function applyCaptureCardResolution(
+  track: MediaStreamTrack,
+  targetRes: VideoResolution
+): Promise<{ width: number; height: number; fps: number; applied: boolean }> {
+  const tryConstraintSets: MediaTrackConstraints[] = [];
+
+  if (targetRes === '4k') {
+    tryConstraintSets.push(
+      { width: { exact: 3840 }, height: { exact: 2160 }, frameRate: { ideal: 30 } },
+      { width: { exact: 3840 }, height: { exact: 2160 } },
+      { width: { min: 2560, ideal: 3840 }, height: { min: 1440, ideal: 2160 }, frameRate: { ideal: 30 } },
+      { width: { exact: 1920 }, height: { exact: 1080 }, frameRate: { ideal: 60 } },
+      { width: { min: 1920, ideal: 1920 }, height: { min: 1080, ideal: 1080 } }
+    );
+  } else if (targetRes === '1080p') {
+    tryConstraintSets.push(
+      { width: { exact: 1920 }, height: { exact: 1080 }, frameRate: { ideal: 60 } },
+      { width: { exact: 1920 }, height: { exact: 1080 } },
+      { width: { min: 1920, ideal: 1920 }, height: { min: 1080, ideal: 1080 } },
+      { width: { min: 1280, ideal: 1920 }, height: { min: 720, ideal: 1080 } }
+    );
+  } else {
+    tryConstraintSets.push(
+      { width: { exact: 1280 }, height: { exact: 720 } },
+      { width: { min: 1280, ideal: 1280 }, height: { min: 720, ideal: 720 } }
+    );
+  }
+
+  let applied = false;
+  for (const c of tryConstraintSets) {
+    try {
+      await track.applyConstraints(c);
+      const s = track.getSettings();
+      // If we escaped 640x480 or reached our target
+      if ((s.width || 0) > 640 || targetRes === '720p') {
+        applied = true;
+        break;
+      }
+    } catch (err) {
+      // Continue to next constraint tier
+    }
+  }
+
+  const finalSettings = track.getSettings();
+  return {
+    width: finalSettings.width || 0,
+    height: finalSettings.height || 0,
+    fps: Math.round(finalSettings.frameRate || 0),
+    applied
+  };
 }
 
 // High-Precision Video Resolution Constraints for Full HD & 4K Ultra HD

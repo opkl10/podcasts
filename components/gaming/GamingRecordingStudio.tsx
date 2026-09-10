@@ -46,7 +46,8 @@ import {
   Move,
   HelpCircle,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  AlertTriangle
 } from 'lucide-react';
 import { 
   getMediaDevices, 
@@ -55,7 +56,8 @@ import {
   VideoResolution, 
   getScreenCaptureStream, 
   GamingAudioMixer,
-  getCaptureCardConstraints
+  getCaptureCardConstraints,
+  applyCaptureCardResolution
 } from '@/lib/mediaManager';
 import { StudioWebRTCReceiver } from '@/lib/webrtcClient';
 import { Episode, TimestampMarker, AudioInputDevice, VideoInputDevice } from '@/lib/types';
@@ -149,6 +151,8 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
   // Hardware Capture & Device Status
   const [captureQualityBadge, setCaptureQualityBadge] = useState<string>('');
   const [captureDetails, setCaptureDetails] = useState<{ width: number; height: number; fps: number } | null>(null);
+  const [captureCapabilities, setCaptureCapabilities] = useState<MediaTrackCapabilities | null>(null);
+  const [isApplyingResolution, setIsApplyingResolution] = useState<boolean>(false);
   const [captureCardError, setCaptureCardError] = useState<string | null>(null);
   const [isCaptureLoading, setIsCaptureLoading] = useState<boolean>(false);
   const [remoteFrame, setRemoteFrame] = useState<string | null>(null);
@@ -460,6 +464,7 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
       setGameplaySourceType(null);
       setCaptureQualityBadge('');
       setCaptureDetails(null);
+      setCaptureCapabilities(null);
       return;
     }
 
@@ -502,38 +507,64 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
       });
 
       // Progressive multi-stage constraint negotiation
-      for (const videoConstraints of constraintList) {
+      for (let i = 0; i < constraintList.length; i++) {
+        const videoConstraints = constraintList[i];
         try {
+          let testStream: MediaStream | null = null;
+
           // Attempt 1: Video with explicit matching capture card audio
           if (matchingAudio) {
             try {
-              stream = await navigator.mediaDevices.getUserMedia({
+              testStream = await navigator.mediaDevices.getUserMedia({
                 video: videoConstraints,
                 audio: { deviceId: { exact: matchingAudio.deviceId } }
               });
-              break;
             } catch (audioErr) {
               // Audio constraint failed, fall through to video-only
             }
           }
 
           // Attempt 2: Video with generic audio: true
-          try {
-            stream = await navigator.mediaDevices.getUserMedia({
-              video: videoConstraints,
-              audio: true
-            });
-            break;
-          } catch (audioTrueErr) {
-            // Fall through to video-only
+          if (!testStream) {
+            try {
+              testStream = await navigator.mediaDevices.getUserMedia({
+                video: videoConstraints,
+                audio: true
+              });
+            } catch (audioTrueErr) {
+              // Fall through to video-only
+            }
           }
 
           // Attempt 3: Pure Video-only
-          stream = await navigator.mediaDevices.getUserMedia({
-            video: videoConstraints,
-            audio: false
-          });
-          break;
+          if (!testStream) {
+            testStream = await navigator.mediaDevices.getUserMedia({
+              video: videoConstraints,
+              audio: false
+            });
+          }
+
+          if (testStream) {
+            const vt = testStream.getVideoTracks()[0];
+            const currentTrackWidth = vt?.getSettings().width || 0;
+            const isLastTier = i === constraintList.length - 1;
+
+            // If Chrome silently returned 640x480 on a fallback tier when user asked for 4K / 1080p,
+            // attempt active resolution application before accepting
+            if (currentTrackWidth <= 640 && (currentRes === '4k' || currentRes === '1080p') && !isLastTier) {
+              const forced = await applyCaptureCardResolution(vt, currentRes);
+              if (forced.width > 640) {
+                stream = testStream;
+                break;
+              }
+              // If still 640x480, continue to next constraint tier unless it's the last fallback
+              testStream.getTracks().forEach(t => t.stop());
+              continue;
+            }
+
+            stream = testStream;
+            break;
+          }
         } catch (tierErr) {
           // Try next constraint tier
         }
@@ -552,6 +583,24 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
 
       const videoTrack = stream.getVideoTracks()[0];
       if (videoTrack) {
+        // Probe hardware capabilities
+        let caps: MediaTrackCapabilities | null = null;
+        try {
+          caps = videoTrack.getCapabilities ? videoTrack.getCapabilities() : null;
+          setCaptureCapabilities(caps);
+        } catch (e) {}
+
+        // Enforce resolution actively on the live track if still under target
+        const currentW = videoTrack.getSettings().width || 0;
+        const targetMin = currentRes === '4k' ? 2560 : currentRes === '1080p' ? 1920 : 1280;
+        if (currentW < targetMin) {
+          try {
+            await applyCaptureCardResolution(videoTrack, currentRes);
+          } catch (e) {
+            console.warn('Post-acquisition applyConstraints error:', e);
+          }
+        }
+
         selectedSettings = videoTrack.getSettings();
         const w = selectedSettings.width || 0;
         const h = selectedSettings.height || 0;
@@ -562,6 +611,7 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
         videoTrack.onended = () => {
           handleSelectCaptureCard('');
           setCaptureDetails(null);
+          setCaptureCapabilities(null);
         };
       }
 
@@ -580,11 +630,46 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
     }
   };
 
+  // 1-Click Forced Resolution Override for Elgato / HDMI capture card
+  const handleForceCaptureResolution = async (targetRes: VideoResolution) => {
+    if (!selectedCaptureCardId) return;
+    setIsApplyingResolution(true);
+    setVideoResolution(targetRes);
+
+    try {
+      if (captureCardStream) {
+        const vt = captureCardStream.getVideoTracks()[0];
+        if (vt && vt.readyState === 'live') {
+          const result = await applyCaptureCardResolution(vt, targetRes);
+          let currentCaps = captureCapabilities;
+          try {
+            currentCaps = vt.getCapabilities ? vt.getCapabilities() : captureCapabilities;
+            setCaptureCapabilities(currentCaps);
+          } catch (e) {}
+
+          setCaptureQualityBadge(`${result.width}×${result.height} @ ${result.fps}FPS`);
+          setCaptureDetails({ width: result.width, height: result.height, fps: result.fps });
+
+          if (result.applied && result.width > 640) {
+            setIsApplyingResolution(false);
+            return;
+          }
+        }
+      }
+      // If live applyConstraints didn't upgrade the stream, perform full hardware renegotiation
+      await handleSelectCaptureCard(selectedCaptureCardId, targetRes);
+    } catch (err: any) {
+      console.error('Error forcing capture resolution:', err);
+    } finally {
+      setIsApplyingResolution(false);
+    }
+  };
+
   // Switch resolution and immediately update active capture card if connected
   const handleResolutionChange = async (res: VideoResolution) => {
     setVideoResolution(res);
     if (selectedCaptureCardId && gameplaySourceType === 'capture_card') {
-      await handleSelectCaptureCard(selectedCaptureCardId, res);
+      await handleForceCaptureResolution(res);
     }
   };
 
@@ -1431,26 +1516,38 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
         {/* Floating Top-Right Live Hardware Capture Badge */}
         <div className="absolute top-4 right-4 z-20 flex items-center gap-2">
           {captureDetails ? (
-            <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-2xl backdrop-blur-md border text-xs font-bold shadow-2xl ${
+            <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-2xl backdrop-blur-md border text-xs font-bold shadow-2xl transition-all ${
               captureDetails.width >= 3840 
                 ? 'bg-emerald-950/90 border-emerald-500/50 text-emerald-300' 
-                : 'bg-amber-950/90 border-amber-500/50 text-amber-300'
+                : captureDetails.width >= 1920
+                  ? 'bg-indigo-950/90 border-indigo-500/50 text-indigo-300'
+                  : 'bg-amber-950/90 border-amber-500/50 text-amber-300'
             }`}>
-              <span className={`w-2 h-2 rounded-full ${captureDetails.width >= 3840 ? 'bg-emerald-400' : 'bg-amber-400'} animate-pulse`} />
+              <span className={`w-2 h-2 rounded-full ${
+                captureDetails.width >= 3840 
+                  ? 'bg-emerald-400' 
+                  : captureDetails.width >= 1920 
+                    ? 'bg-indigo-400' 
+                    : 'bg-amber-400'
+              } animate-pulse`} />
               <span>
                 {captureDetails.width >= 3840 
                   ? `🎮 אלגטו 4K: ${captureDetails.width}×${captureDetails.height} @ ${captureDetails.fps}FPS`
-                  : `⚠️ אלגטו: ${captureDetails.width}×${captureDetails.height} @ ${captureDetails.fps}FPS (לא 4K!)`
+                  : captureDetails.width >= 1920
+                    ? `🎮 אלגטו 1080p: ${captureDetails.width}×${captureDetails.height} @ ${captureDetails.fps}FPS`
+                    : `⚠️ אלגטו: ${captureDetails.width}×${captureDetails.height} @ ${captureDetails.fps}FPS (נעול על SD)`
                 }
               </span>
               {captureDetails.width < 3840 && (
                 <button
                   type="button"
-                  onClick={() => handleResolutionChange('4k')}
-                  className="px-2 py-0.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-[10px] font-black transition-all ml-1 active:scale-95"
+                  disabled={isApplyingResolution}
+                  onClick={() => handleForceCaptureResolution('4k')}
+                  className="px-2.5 py-0.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-[10px] font-black transition-all ml-1 active:scale-95 flex items-center gap-1 disabled:opacity-60"
                   title="כפה על אלגטו ועל הדפדפן לעבור ל-4K Ultra HD"
                 >
-                  כפה 4K עכשיו
+                  {isApplyingResolution ? <RefreshCw className="w-2.5 h-2.5 animate-spin" /> : null}
+                  <span>כפה 4K עכשיו</span>
                 </button>
               )}
             </div>
@@ -1816,6 +1913,102 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
                 </optgroup>
               </select>
             </div>
+
+            {/* Direct Hardware Force & Quality Controls */}
+            {selectedCaptureCardId && (
+              <div className="p-3 rounded-2xl bg-slate-900/90 border border-purple-500/20 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-slate-200">
+                    <Zap className="w-3.5 h-3.5 text-amber-400" />
+                    <span>שליטה ישירה ברזולוציית הלכידה:</span>
+                  </div>
+                  {captureDetails && (
+                    <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded border ${
+                      captureDetails.width >= 3840
+                        ? 'bg-emerald-950/80 text-emerald-300 border-emerald-500/40'
+                        : captureDetails.width >= 1920
+                          ? 'bg-indigo-950/80 text-indigo-300 border-indigo-500/40'
+                          : 'bg-amber-950/80 text-amber-300 border-amber-500/40'
+                    }`}>
+                      {captureDetails.width}×{captureDetails.height} @ {captureDetails.fps}FPS
+                    </span>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-3 gap-1.5">
+                  <button
+                    type="button"
+                    disabled={isApplyingResolution || isCaptureLoading}
+                    onClick={() => handleForceCaptureResolution('4k')}
+                    className={`py-2 px-2 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-1 border ${
+                      captureDetails?.width && captureDetails.width >= 3840
+                        ? 'bg-emerald-600 text-white border-emerald-400 shadow-md'
+                        : 'bg-slate-800 text-amber-300 hover:text-white hover:bg-slate-700 border-amber-500/30'
+                    } disabled:opacity-60`}
+                  >
+                    {isApplyingResolution && videoResolution === '4k' ? (
+                      <RefreshCw className="w-3 h-3 animate-spin" />
+                    ) : (
+                      <span>⚡ כפה 4K</span>
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={isApplyingResolution || isCaptureLoading}
+                    onClick={() => handleForceCaptureResolution('1080p')}
+                    className={`py-2 px-2 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-1 border ${
+                      captureDetails?.width && captureDetails.width >= 1920 && captureDetails.width < 3840
+                        ? 'bg-indigo-600 text-white border-indigo-400 shadow-md'
+                        : 'bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700 border-slate-700'
+                    } disabled:opacity-60`}
+                  >
+                    {isApplyingResolution && videoResolution === '1080p' ? (
+                      <RefreshCw className="w-3 h-3 animate-spin" />
+                    ) : (
+                      <span>📺 כפה 1080p</span>
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={isCaptureLoading || isApplyingResolution}
+                    onClick={() => handleSelectCaptureCard(selectedCaptureCardId, videoResolution)}
+                    className="py-2 px-2 rounded-xl text-xs font-bold bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700 border border-slate-700 transition-all flex items-center justify-center gap-1 disabled:opacity-60"
+                    title="אתחל מחדש את החיבור לכרטיס הלכידה"
+                  >
+                    <RefreshCw className={`w-3 h-3 ${isCaptureLoading ? 'animate-spin' : ''}`} />
+                    <span>אתחל צינור</span>
+                  </button>
+                </div>
+
+                {/* 640x480 Low Quality / Safe Mode Diagnostic Alert */}
+                {captureDetails && captureDetails.width <= 640 && (
+                  <div className="p-3 rounded-xl bg-amber-950/70 border border-amber-500/40 space-y-2 text-xs text-amber-200">
+                    <div className="flex items-start gap-2">
+                      <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                      <div className="space-y-1">
+                        <span className="font-bold text-amber-300">
+                          למה האלגטו ננעל על 640×480?
+                        </span>
+                        <p className="text-[11px] text-amber-200/90 leading-relaxed">
+                          {captureCapabilities?.width?.max && (captureCapabilities.width.max as number) < 1920 ? (
+                            <>
+                              <b>זוהה חיבור USB 2.0 איטי:</b> הכרטיס מדווח למערכת על מקסימום 640×480. הדבר קורה לרוב בעת שימוש בכבל טעינה רגיל (כמו כבל Type-C הלבן של Mac) שמעביר רק 480Mbps. להעברת 4K נדרש כבל <b>USB 3.0 / Thunderbolt SuperSpeed (5Gbps+)</b> ישירות למחשב.
+                            </>
+                          ) : (
+                            <>
+                              מערכת ההפעלה macOS ודפדפן Chrome פותחים התקני וידאו בברירת מחדל בסיסית (Safe Default). 
+                              לחץ על <b>&quot;כפה 4K&quot;</b> למעלה כדי לאלץ את צינור החומרה לשדר ב-3840×2160.
+                            </>
+                          )}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             {captureCardError && (
               <div className="p-2.5 rounded-xl bg-rose-950/60 border border-rose-800 text-rose-200 text-xs flex items-start gap-2">
