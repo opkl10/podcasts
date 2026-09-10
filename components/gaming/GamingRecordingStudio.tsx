@@ -39,7 +39,14 @@ import {
   Award,
   CircleDot,
   Info,
-  Headphones
+  Headphones,
+  Crop,
+  ZoomIn,
+  ZoomOut,
+  Move,
+  HelpCircle,
+  ChevronDown,
+  ChevronUp
 } from 'lucide-react';
 import { 
   getMediaDevices, 
@@ -140,9 +147,18 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
 
   // Hardware Capture & Device Status
   const [captureQualityBadge, setCaptureQualityBadge] = useState<string>('');
+  const [captureDetails, setCaptureDetails] = useState<{ width: number; height: number; fps: number } | null>(null);
   const [captureCardError, setCaptureCardError] = useState<string | null>(null);
   const [isCaptureLoading, setIsCaptureLoading] = useState<boolean>(false);
   const [remoteFrame, setRemoteFrame] = useState<string | null>(null);
+
+  // Game Framing, Zoom & Overscan Compensation (Fixes game cut off / aspect ratio mismatch)
+  const [gameFitMode, setGameFitMode] = useState<'fit' | 'stretch' | 'fill'>('fit');
+  const [gameZoom, setGameZoom] = useState<number>(100);
+  const [gameOffsetX, setGameOffsetX] = useState<number>(0);
+  const [gameOffsetY, setGameOffsetY] = useState<number>(0);
+  const [showFramingControls, setShowFramingControls] = useState<boolean>(false);
+  const [showIPhoneGuide, setShowIPhoneGuide] = useState<boolean>(false);
 
   // Console & Game Audio Management (Elgato HDMI Audio / Desktop Audio / Stems)
   const [selectedGameAudioId, setSelectedGameAudioId] = useState<string>('');
@@ -194,10 +210,14 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
       const normalCams = videoInputs.filter(v => !v.isCaptureCard);
       const iphoneCam = videoInputs.find(v => v.isIPhone || v.isContinuity);
 
-      // If Elgato 4K is present, auto-enable 4K resolution
+      // If Elgato 4K is present, auto-enable 4K Ultra HD resolution immediately!
       const elgatoCard = videoInputs.find(v => v.isCaptureCard);
-      if (elgatoCard && (elgatoCard.label.toLowerCase().includes('4k') || elgatoCard.label.toLowerCase().includes('cam link'))) {
-        setVideoResolution(prev => (prev === '720p' ? '1080p' : prev));
+      if (elgatoCard && (
+        elgatoCard.label.toLowerCase().includes('4k') || 
+        elgatoCard.label.toLowerCase().includes('cam link') || 
+        elgatoCard.label.toLowerCase().includes('camlink')
+      )) {
+        setVideoResolution('4k');
       }
 
       if (normalCams.length > 0 && !selectedVideoId) {
@@ -438,6 +458,7 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
       }
       setGameplaySourceType(null);
       setCaptureQualityBadge('');
+      setCaptureDetails(null);
       return;
     }
 
@@ -451,15 +472,22 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
     setIsCaptureLoading(true);
 
     try {
-      const currentRes = overrideRes || videoResolution;
+      const cardDev = videoDevices.find(v => v.deviceId === deviceId);
+      const cardLabel = (cardDev?.label || '').toLowerCase();
+      const is4KCard = cardLabel.includes('4k') || cardLabel.includes('cam link') || cardLabel.includes('camlink');
+      
+      // Auto-promote to 4K resolution if 4K capture card is used
+      const currentRes = overrideRes || (is4KCard ? '4k' : videoResolution);
+      if (currentRes !== videoResolution) {
+        setVideoResolution(currentRes);
+      }
+
       const constraintList = getCaptureCardConstraints(currentRes, deviceId);
 
       let stream: MediaStream | null = null;
       let selectedSettings: MediaTrackSettings | null = null;
 
       // Find any matching audio input for the capture card (e.g. "Elgato", "Cam Link", "Capture")
-      const cardDev = videoDevices.find(v => v.deviceId === deviceId);
-      const cardLabel = (cardDev?.label || '').toLowerCase();
       const matchingAudio = audioDevices.find(a => {
         const aLabel = (a.label || '').toLowerCase();
         return (
@@ -528,9 +556,11 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
         const h = selectedSettings.height || 0;
         const fps = Math.round(selectedSettings.frameRate || 0);
         setCaptureQualityBadge(`${w}×${h} @ ${fps}FPS`);
+        setCaptureDetails({ width: w, height: h, fps });
 
         videoTrack.onended = () => {
           handleSelectCaptureCard('');
+          setCaptureDetails(null);
         };
       }
 
@@ -656,7 +686,60 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
       const hasGameFeed = gameVideo && gameVideo.readyState >= 2;
 
       if (hasGameFeed) {
-        ctx.drawImage(gameVideo, 0, 0, W, H);
+        // Clear background with solid black for clean pillarbox / letterbox framing
+        ctx.fillStyle = '#000000';
+        ctx.fillRect(0, 0, W, H);
+
+        const vw = gameVideo.videoWidth || W;
+        const vh = gameVideo.videoHeight || H;
+        const srcRatio = vw / vh;
+        const dstRatio = W / H;
+
+        let baseW = W;
+        let baseH = H;
+        let baseX = 0;
+        let baseY = 0;
+
+        if (gameFitMode === 'fit') {
+          // Fit mode: Zero crop! Preserves 100% of game field of view without cutting a single pixel
+          if (srcRatio > dstRatio) {
+            baseW = W;
+            baseH = W / srcRatio;
+            baseY = (H - baseH) / 2;
+          } else {
+            baseH = H;
+            baseW = H * srcRatio;
+            baseX = (W - baseW) / 2;
+          }
+        } else if (gameFitMode === 'fill') {
+          // Fill mode: Covers canvas with uniform scaling
+          if (srcRatio > dstRatio) {
+            baseH = H;
+            baseW = H * srcRatio;
+            baseX = (W - baseW) / 2;
+          } else {
+            baseW = W;
+            baseH = W / srcRatio;
+            baseY = (H - baseH) / 2;
+          }
+        } else {
+          // Stretch mode: Exact 16:9 full canvas
+          baseW = W;
+          baseH = H;
+          baseX = 0;
+          baseY = 0;
+        }
+
+        // Apply custom zoom (80% to 120%) and pan offsets (overscan compensation)
+        const zoomMult = (gameZoom || 100) / 100;
+        const finalW = baseW * zoomMult;
+        const finalH = baseH * zoomMult;
+        const offsetX = ((gameOffsetX || 0) / 100) * W;
+        const offsetY = ((gameOffsetY || 0) / 100) * H;
+        const finalX = baseX + (baseW - finalW) / 2 + offsetX;
+        const finalY = baseY + (baseH - finalH) / 2 + offsetY;
+
+        ctx.drawImage(gameVideo, finalX, finalY, finalW, finalH);
       } else {
         // Futuristic Cyber Gaming Backdrop
         const grad = ctx.createLinearGradient(0, 0, W, H);
@@ -876,7 +959,11 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
     isMirrored,
     isVideoMuted,
     isUsingRemoteCam,
-    isRecording
+    isRecording,
+    gameFitMode,
+    gameZoom,
+    gameOffsetX,
+    gameOffsetY
   ]);
 
   // 8. Recording Engine (High Bitrate 60FPS Single Video File + Isolated Stems)
@@ -1279,7 +1366,197 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
               </kbd>
             </button>
           ))}
+
+          {/* Framing / Crop / Overscan Adjustment Button */}
+          <button
+            type="button"
+            onClick={() => setShowFramingControls(prev => !prev)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all border ${
+              showFramingControls || gameFitMode !== 'stretch' || gameZoom !== 100 || gameOffsetX !== 0 || gameOffsetY !== 0
+                ? 'bg-amber-500 text-slate-950 border-amber-400 font-black shadow-lg shadow-amber-950/40'
+                : 'bg-slate-900 border-slate-700 text-slate-300 hover:text-white hover:bg-slate-800'
+            }`}
+            title="התאמת גודל משחק, זום ותיקון חיתוך שוליים (Overscan)"
+          >
+            <Crop className="w-3.5 h-3.5" />
+            <span>התאמת גודל וחיתוך</span>
+            {(gameFitMode !== 'stretch' || gameZoom !== 100 || gameOffsetX !== 0) && (
+              <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping" />
+            )}
+          </button>
         </div>
+
+        {/* Floating Top-Right Live Hardware Capture Badge */}
+        <div className="absolute top-4 right-4 z-20 flex items-center gap-2">
+          {captureDetails ? (
+            <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-2xl backdrop-blur-md border text-xs font-bold shadow-2xl ${
+              captureDetails.width >= 3840 
+                ? 'bg-emerald-950/90 border-emerald-500/50 text-emerald-300' 
+                : 'bg-amber-950/90 border-amber-500/50 text-amber-300'
+            }`}>
+              <span className={`w-2 h-2 rounded-full ${captureDetails.width >= 3840 ? 'bg-emerald-400' : 'bg-amber-400'} animate-pulse`} />
+              <span>
+                {captureDetails.width >= 3840 
+                  ? `🎮 אלגטו 4K: ${captureDetails.width}×${captureDetails.height} @ ${captureDetails.fps}FPS`
+                  : `⚠️ אלגטו: ${captureDetails.width}×${captureDetails.height} @ ${captureDetails.fps}FPS (לא 4K!)`
+                }
+              </span>
+              {captureDetails.width < 3840 && (
+                <button
+                  type="button"
+                  onClick={() => handleResolutionChange('4k')}
+                  className="px-2 py-0.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-[10px] font-black transition-all ml-1 active:scale-95"
+                  title="כפה על אלגטו ועל הדפדפן לעבור ל-4K Ultra HD"
+                >
+                  כפה 4K עכשיו
+                </button>
+              )}
+            </div>
+          ) : isScreenCapturing ? (
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-2xl bg-cyan-950/90 backdrop-blur-md border border-cyan-500/40 text-xs font-bold text-cyan-300 shadow-2xl">
+              <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
+              <span>לכידת מסך / חלון 60FPS</span>
+            </div>
+          ) : null}
+        </div>
+
+        {/* Floating Game Framing & Overscan Control HUD (Collapsible) */}
+        {showFramingControls && (
+          <div className="absolute top-16 left-4 z-30 w-80 p-3.5 rounded-2xl bg-slate-950/95 backdrop-blur-xl border border-amber-500/40 shadow-2xl space-y-3 animate-in fade-in zoom-in-95 text-xs text-right" dir="rtl">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+              <div className="flex items-center gap-1.5 text-amber-300 font-bold">
+                <Crop className="w-4 h-4" />
+                <span>כיוונון תצוגת משחק ותיקון חיתוך (Overscan)</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowFramingControls(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            {/* Mode selection */}
+            <div className="space-y-1">
+              <label className="text-[11px] font-bold text-slate-300">אופן התאמת המסך:</label>
+              <div className="grid grid-cols-3 gap-1 p-1 rounded-xl bg-slate-900 border border-slate-800">
+                {[
+                  { id: 'fit', label: 'התאמה מלאה', desc: 'אפס חיתוך (Fit)' },
+                  { id: 'stretch', label: 'מתיחה', desc: '16:9 מלא' },
+                  { id: 'fill', label: 'מילוי', desc: 'Cover' },
+                ].map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => setGameFitMode(m.id as any)}
+                    className={`py-1 px-1 rounded-lg text-center transition-all ${
+                      gameFitMode === m.id
+                        ? 'bg-amber-500 text-slate-950 font-black shadow'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <div className="text-[11px] leading-tight font-bold">{m.label}</div>
+                    <div className="text-[9px] opacity-75">{m.desc}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Quick Zoom buttons (Solves cut off edges immediately) */}
+            <div className="space-y-1">
+              <div className="flex items-center justify-between text-[11px]">
+                <label className="font-bold text-slate-300">זום תמונה (Zoom):</label>
+                <span className="font-mono text-amber-300 font-bold">{gameZoom}%</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setGameZoom(prev => Math.max(80, prev - 4))}
+                  className="flex-1 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-[11px] border border-slate-700 flex items-center justify-center gap-1"
+                  title="התרחק 4% - מחזיר שוליים חתוכים מהקונסולה"
+                >
+                  <ZoomOut className="w-3 h-3 text-amber-400" />
+                  <span>התרחק (-4%)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setGameZoom(100)}
+                  className="px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-300 font-mono text-[11px] border border-slate-800"
+                >
+                  100%
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setGameZoom(prev => Math.min(120, prev + 4))}
+                  className="flex-1 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-[11px] border border-slate-700 flex items-center justify-center gap-1"
+                >
+                  <ZoomIn className="w-3 h-3 text-amber-400" />
+                  <span>התקרב (+4%)</span>
+                </button>
+              </div>
+              <input
+                type="range"
+                min="80"
+                max="120"
+                step="1"
+                value={gameZoom}
+                onChange={(e) => setGameZoom(Number(e.target.value))}
+                className="w-full accent-amber-500 cursor-pointer h-1.5 bg-slate-800 rounded-lg"
+              />
+            </div>
+
+            {/* Horizontal / Vertical Pan Offset (Moves game if left edge is cut off) */}
+            <div className="space-y-1.5 pt-1 border-t border-slate-800">
+              <div className="flex items-center justify-between text-[11px]">
+                <label className="font-bold text-slate-300">הזזה אופקית (מרכוז ימין/שמאל):</label>
+                <span className="font-mono text-amber-300 font-bold">{gameOffsetX > 0 ? `+${gameOffsetX}%` : `${gameOffsetX}%`}</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setGameOffsetX(prev => Math.max(-15, prev - 2))}
+                  className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-bold"
+                >
+                  ⬅ שמאלה
+                </button>
+                <input
+                  type="range"
+                  min="-15"
+                  max="15"
+                  step="1"
+                  value={gameOffsetX}
+                  onChange={(e) => setGameOffsetX(Number(e.target.value))}
+                  className="flex-1 accent-amber-500 cursor-pointer h-1.5 bg-slate-800 rounded-lg"
+                />
+                <button
+                  type="button"
+                  onClick={() => setGameOffsetX(prev => Math.min(15, prev + 2))}
+                  className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-bold"
+                >
+                  ימינה ➡
+                </button>
+              </div>
+            </div>
+
+            {/* Reset All */}
+            <div className="pt-1 flex items-center justify-between">
+              <span className="text-[10px] text-slate-400">אם טקסט נחתך: בחר &quot;התאמה מלאה&quot; או הקטן זום ל-95%.</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setGameFitMode('fit');
+                  setGameZoom(100);
+                  setGameOffsetX(0);
+                  setGameOffsetY(0);
+                }}
+                className="px-2 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white text-[10px] font-bold border border-slate-800"
+              >
+                אפס הכל
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Floating Bottom PiP Corner Repositioner (Only visible in PiP mode) */}
         {facecamLayout.startsWith('pip') && (
@@ -1612,7 +1889,57 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
                   </div>
                 );
               }
-              return null;
+              
+              // iPhone Assistant when not yet detected
+              return (
+                <div className="p-3.5 rounded-2xl bg-gradient-to-r from-slate-900 via-indigo-950/40 to-slate-900 border border-indigo-500/30 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Smartphone className="w-4 h-4 text-indigo-400" />
+                      <span className="text-xs font-black text-indigo-200">לא זוהה iPhone כמצלמה מקומית?</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowIPhoneGuide(prev => !prev)}
+                      className="text-[10px] text-indigo-400 hover:text-white flex items-center gap-1 font-bold underline"
+                    >
+                      <HelpCircle className="w-3 h-3" />
+                      <span>{showIPhoneGuide ? 'סגור מדריך' : 'איך לחבר?'}</span>
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setIsRemoteModalOpen(true)}
+                      className="py-2 px-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-bold transition-all shadow-md flex items-center justify-center gap-1.5"
+                    >
+                      <Smartphone className="w-3.5 h-3.5" />
+                      <span>סרוק קוד QR</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={refreshDevices}
+                      className="py-2 px-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white text-xs font-bold border border-slate-700 transition-all flex items-center justify-center gap-1.5"
+                    >
+                      <RotateCw className="w-3.5 h-3.5 text-indigo-400" />
+                      <span>הער מצלמת המשכיות</span>
+                    </button>
+                  </div>
+
+                  {showIPhoneGuide && (
+                    <div className="p-2.5 rounded-xl bg-slate-950/90 border border-slate-800 text-[11px] text-slate-300 space-y-1.5 animate-in fade-in">
+                      <p className="font-bold text-indigo-300">💡 3 דרכים פשוטות לחיבור האייפון:</p>
+                      <div className="space-y-1 text-[10px] text-slate-400">
+                        <p>1. 🔌 <b className="text-slate-200">כבל USB ישיר למק (מומלץ ביותר):</b> חבר בכבל, פתח את נעילת האייפון ולחץ על <span className="text-emerald-400">&quot;בטח במחשב זה&quot;</span>.</p>
+                        <p>2. 📷 <b className="text-slate-200">סריקת QR:</b> פתח את המצלמה באייפון, סרוק את הקוד, אשר גישה והמצלמה משדרת מיד.</p>
+                        <p>3. 📡 <b className="text-slate-200">Apple Continuity (אלחוטי):</b> וודא ש-Wi-Fi ו-Bluetooth דלוקים בשני המכשירים ומוגדרים על אותו Apple ID. הנח את האייפון לרוחב (Landscape).</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
             })()}
 
             {/* Camera Selector Dropdown */}

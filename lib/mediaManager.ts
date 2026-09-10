@@ -55,6 +55,7 @@ export async function getMediaDevices(): Promise<{
           labelLower.includes('iriun') || 
           labelLower.includes('droidcam') || 
           labelLower.includes('apple') || 
+          labelLower.includes('phone') || 
           labelLower.includes('ios');
 
         const isContinuity = 
@@ -108,17 +109,19 @@ export function getCaptureCardConstraints(resolution: VideoResolution = '1080p',
 
   if (resolution === '4k') {
     return [
-      // 1. True 4K 60FPS (Elgato 4K X / 4K60 Pro / 4K Pro)
-      { ...baseId, width: { ideal: 3840, min: 2560 }, height: { ideal: 2160, min: 1440 }, frameRate: { ideal: 60 } },
-      // 2. True 4K 30FPS (Elgato Cam Link 4K / HDMI 4K30)
+      // 1. Exact 4K 30FPS (Native standard for Cam Link 4K and USB 3.0 4K HDMI cards)
+      { ...baseId, width: { exact: 3840 }, height: { exact: 2160 }, frameRate: { ideal: 30, max: 60 } },
+      // 2. Exact 4K 60FPS (For Elgato 4K X / 4K60 Pro)
+      { ...baseId, width: { exact: 3840 }, height: { exact: 2160 }, frameRate: { ideal: 60 } },
+      // 3. True 4K with min 2560 and ideal 30FPS (prevents Chrome rejecting due to 60fps limit)
       { ...baseId, width: { ideal: 3840, min: 2560 }, height: { ideal: 2160, min: 1440 }, frameRate: { ideal: 30 } },
-      // 3. 4K ideal without strict min
+      // 4. Ideal 4K 60FPS
       { ...baseId, width: { ideal: 3840 }, height: { ideal: 2160 }, frameRate: { ideal: 60 } },
-      // 4. High-Bitrate Full HD 60FPS fallback
+      // 5. 1440p Quad HD (2560x1440)
+      { ...baseId, width: { ideal: 2560 }, height: { ideal: 1440 }, frameRate: { ideal: 60 } },
+      // 6. High-Bitrate Full HD 60FPS fallback
       { ...baseId, width: { ideal: 1920, min: 1280 }, height: { ideal: 1080, min: 720 }, frameRate: { ideal: 60 } },
-      // 5. Relaxed 1080p
-      { ...idealId, width: { ideal: 1920 }, height: { ideal: 1080 } },
-      // 6. Generic device fallback
+      // 7. Generic device fallback
       { ...idealId }
     ];
   }
