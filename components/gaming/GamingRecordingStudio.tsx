@@ -47,7 +47,14 @@ import {
   HelpCircle,
   ChevronDown,
   ChevronUp,
-  AlertTriangle
+  AlertTriangle,
+  Timer,
+  Plus,
+  Eye,
+  EyeOff,
+  PanelRight,
+  RotateCcw,
+  StopCircle,
 } from 'lucide-react';
 import { 
   getMediaDevices, 
@@ -64,6 +71,8 @@ import { Episode, TimestampMarker, AudioInputDevice, VideoInputDevice } from '@/
 import { saveMediaBlob, saveEpisode, formatTime } from '@/lib/storage';
 import PostRecordingReview from '@/components/studio/PostRecordingReview';
 import RemoteCamModal from '@/components/studio/RemoteCamModal';
+import OverlayCanvas, { OVERLAY_CATALOG } from './OverlayCanvas';
+import type { OverlayItem, OverlayType } from './OverlayCanvas';
 
 interface GamingRecordingStudioProps {
   episode: Episode;
@@ -165,6 +174,165 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
   const [showFramingControls, setShowFramingControls] = useState<boolean>(false);
   const [showIPhoneGuide, setShowIPhoneGuide] = useState<boolean>(false);
   const [showElgatoTroubleshooter, setShowElgatoTroubleshooter] = useState<boolean>(false);
+
+  // ── Draggable Camera Block ──────────────────────────────────────────────────
+  type CamSizeKey = 'hidden' | 'xs' | 'sm' | 'md' | 'lg' | 'xl';
+  const CAM_SIZES: Record<CamSizeKey, { w: number; label: string }> = {
+    hidden: { w: 0,   label: 'מוסתר'  },
+    xs:     { w: 120, label: 'XS'     },
+    sm:     { w: 180, label: 'S'      },
+    md:     { w: 260, label: 'M'      },
+    lg:     { w: 380, label: 'L'      },
+    xl:     { w: 520, label: 'XL'     },
+  };
+  const [camSize, setCamSize] = useState<CamSizeKey>('md');
+  // null = use CSS layout anchor; non-null = free drag position (% of container)
+  const [camFreePos, setCamFreePos] = useState<{ x: number; y: number } | null>(null);
+  const [camAnchor, setCamAnchor] = useState<string>('br');
+  const camIsDragging = useRef(false);
+  const camDragOffset = useRef({ x: 0, y: 0 });
+  const camPreviewContainerRef = useRef<HTMLDivElement | null>(null);
+
+  const handleCamMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    camIsDragging.current = true;
+    const container = camPreviewContainerRef.current;
+    if (!container) return;
+    const containerRect = container.getBoundingClientRect();
+    const camEl = (e.currentTarget as HTMLElement);
+    const camRect = camEl.getBoundingClientRect();
+    camDragOffset.current = {
+      x: e.clientX - camRect.left,
+      y: e.clientY - camRect.top,
+    };
+    const onMove = (me: MouseEvent) => {
+      if (!camIsDragging.current) return;
+      const cr = container.getBoundingClientRect();
+      const newX = ((me.clientX - cr.left - camDragOffset.current.x) / cr.width) * 100;
+      const newY = ((me.clientY - cr.top - camDragOffset.current.y) / cr.height) * 100;
+      setCamFreePos({ x: Math.max(0, Math.min(85, newX)), y: Math.max(0, Math.min(80, newY)) });
+    };
+    const onUp = () => {
+      camIsDragging.current = false;
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }, []);
+
+  const CAM_ANCHORS = [
+    { id: 'tl', label: '↖', title: 'שמאל עליון' },
+    { id: 'tc', label: '↑', title: 'אמצע עליון' },
+    { id: 'tr', label: '↗', title: 'ימין עליון' },
+    { id: 'ml', label: '←', title: 'שמאל אמצע' },
+    { id: 'mc', label: '·', title: 'מרכז' },
+    { id: 'mr', label: '→', title: 'ימין אמצע' },
+    { id: 'bl', label: '↙', title: 'שמאל תחתון' },
+    { id: 'bc', label: '↓', title: 'אמצע תחתון' },
+    { id: 'br', label: '↘', title: 'ימין תחתון' },
+  ];
+
+  function camAnchorStyle(anchor: string): React.CSSProperties {
+    const map: Record<string, React.CSSProperties> = {
+      tl: { top: '8px',  left: '8px'  },
+      tc: { top: '8px',  left: '50%', transform: 'translateX(-50%)' },
+      tr: { top: '8px',  right: '8px' },
+      ml: { top: '50%',  left: '8px',  transform: 'translateY(-50%)' },
+      mc: { top: '50%',  left: '50%',  transform: 'translate(-50%,-50%)' },
+      mr: { top: '50%',  right: '8px', transform: 'translateY(-50%)' },
+      bl: { bottom: '8px', left: '8px' },
+      bc: { bottom: '8px', left: '50%', transform: 'translateX(-50%)' },
+      br: { bottom: '8px', right: '8px' },
+    };
+    return map[anchor] ?? map['br'];
+  }
+
+  // ── Studio Timer ────────────────────────────────────────────────────────────
+  type TimerMode = 'off' | 'stopwatch' | 'countdown';
+  const [timerMode, setTimerMode] = useState<TimerMode>('off');
+  const [timerRunning, setTimerRunning] = useState(false);
+  const [timerElapsed, setTimerElapsed] = useState(0);       // seconds elapsed (stopwatch) or remaining (countdown)
+  const [timerTarget, setTimerTarget] = useState(300);       // countdown target in seconds
+  const [timerCountdownInput, setTimerCountdownInput] = useState('05:00');
+  const studioTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const startTimer = useCallback(() => {
+    if (timerRunning) return;
+    setTimerRunning(true);
+    studioTimerRef.current = setInterval(() => {
+      setTimerElapsed(prev => {
+        if (timerMode === 'countdown') {
+          const next = prev + 1;
+          if (next >= timerTarget) {
+            clearInterval(studioTimerRef.current!);
+            setTimerRunning(false);
+            return timerTarget;
+          }
+          return next;
+        }
+        return prev + 1;
+      });
+    }, 1000);
+  }, [timerRunning, timerMode, timerTarget]);
+
+  const pauseTimer = useCallback(() => {
+    if (studioTimerRef.current) clearInterval(studioTimerRef.current);
+    setTimerRunning(false);
+  }, []);
+
+  const resetTimer = useCallback(() => {
+    if (studioTimerRef.current) clearInterval(studioTimerRef.current);
+    setTimerRunning(false);
+    setTimerElapsed(0);
+  }, []);
+
+  useEffect(() => {
+    return () => { if (studioTimerRef.current) clearInterval(studioTimerRef.current); };
+  }, []);
+
+  const timerDisplay = useCallback((seconds: number) => {
+    const display = timerMode === 'countdown' ? Math.max(0, timerTarget - seconds) : seconds;
+    const h = Math.floor(display / 3600);
+    const m = Math.floor((display % 3600) / 60);
+    const s = display % 60;
+    if (h > 0) return `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+    return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+  }, [timerMode, timerTarget]);
+
+  // ── Overlay System ──────────────────────────────────────────────────────────
+  const [overlays, setOverlays] = useState<OverlayItem[]>([]);
+  const [showOverlayPanel, setShowOverlayPanel] = useState(false);
+  const [isOverlayEditMode, setIsOverlayEditMode] = useState(false);
+  const [overlayCategoryFilter, setOverlayCategoryFilter] = useState<'all' | 'gaming' | 'streaming' | 'review' | 'cinema'>('all');
+
+  const addOverlay = useCallback((type: OverlayType) => {
+    const catalog = OVERLAY_CATALOG.find(c => c.type === type);
+    if (!catalog) return;
+    const newOverlay: OverlayItem = {
+      id: `${type}_${Date.now()}`,
+      type,
+      x: 5 + Math.random() * 30,
+      y: 5 + Math.random() * 30,
+      visible: true,
+      config: { ...catalog.defaultConfig },
+    };
+    setOverlays(prev => [...prev, newOverlay]);
+    setIsOverlayEditMode(true);
+  }, []);
+
+  const removeOverlay = useCallback((id: string) => {
+    setOverlays(prev => prev.filter(o => o.id !== id));
+  }, []);
+
+  const toggleOverlayVisible = useCallback((id: string) => {
+    setOverlays(prev => prev.map(o => o.id === id ? { ...o, visible: !o.visible } : o));
+  }, []);
+
+  const updateOverlayPosition = useCallback((id: string, x: number, y: number) => {
+    setOverlays(prev => prev.map(o => o.id === id ? { ...o, x, y } : o));
+  }, []);
 
   // Console & Game Audio Management (Elgato HDMI Audio / Desktop Audio / Stems)
   const [selectedGameAudioId, setSelectedGameAudioId] = useState<string>('');
@@ -1508,12 +1676,70 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
       </div>
 
       {/* MAIN STAGE: 60FPS COMPOSITOR CANVAS PREVIEW */}
-      <div className="relative rounded-3xl overflow-hidden bg-black border-2 border-purple-500/30 shadow-2xl shadow-purple-950/40">
+      <div
+        ref={(el) => { (containerRef as any).current = el; (camPreviewContainerRef as any).current = el; }}
+        className="relative rounded-3xl overflow-hidden bg-black border-2 border-purple-500/30 shadow-2xl shadow-purple-950/40"
+      >
         <canvas
           ref={gamingCompositorCanvasRef}
           className="w-full aspect-video bg-[#090d16] object-contain block cursor-pointer"
           title="קנבס הקלטת גיימינג ב-60FPS"
         />
+
+        {/* ── Overlay Canvas (all active overlays rendered here) ── */}
+        <OverlayCanvas
+          overlays={overlays}
+          containerRef={camPreviewContainerRef}
+          onPositionChange={updateOverlayPosition}
+          onRemove={removeOverlay}
+          onToggleVisible={toggleOverlayVisible}
+          isEditing={isOverlayEditMode}
+          timerSeconds={timerElapsed}
+        />
+
+        {/* ── Studio Timer HUD (shown on preview when active) ── */}
+        {timerMode !== 'off' && (
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 px-4 py-2 rounded-2xl bg-black/70 backdrop-blur-md border border-purple-500/40 shadow-xl">
+            <Timer className={`w-4 h-4 ${timerRunning ? 'text-emerald-400 animate-pulse' : 'text-slate-400'}`} />
+            <span className="font-mono text-2xl font-black text-white tracking-widest tabular-nums">
+              {timerDisplay(timerElapsed)}
+            </span>
+            {timerMode === 'countdown' && timerTarget - timerElapsed <= 30 && timerElapsed < timerTarget && (
+              <span className="text-[10px] font-bold text-rose-400 animate-pulse">פג זמן!</span>
+            )}
+          </div>
+        )}
+
+        {/* ── Draggable Facecam block (free position mode) ── */}
+        {camSize !== 'hidden' && facecamStream && camFreePos !== null && (
+          <div
+            className="absolute z-20 cursor-move group/cam"
+            style={{
+              left: `${camFreePos.x}%`,
+              top: `${camFreePos.y}%`,
+              width: CAM_SIZES[camSize].w,
+            }}
+            onMouseDown={handleCamMouseDown}
+            title="גרור לשינוי מיקום"
+          >
+            <div className={`relative overflow-hidden shadow-2xl border-2 border-cyan-500/60 group-hover/cam:border-cyan-400 transition-all ${
+              facecamShape === 'circle' ? 'rounded-full aspect-square' :
+              facecamShape === 'rectangle' ? 'rounded-xl' : 'rounded-2xl'
+            }`} style={{ aspectRatio: facecamAspect === '1:1' ? '1/1' : facecamAspect === '9:16' ? '9/16' : '16/9' }}>
+              <video
+                ref={(el) => { if (el && facecamStream) el.srcObject = facecamStream; }}
+                autoPlay
+                playsInline
+                muted
+                className={`w-full h-full object-cover ${isMirrored ? 'scale-x-[-1]' : ''}`}
+              />
+              {/* Drag indicator */}
+              <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover/cam:opacity-100 transition-opacity bg-black/30 pointer-events-none">
+                <Move className="w-8 h-8 text-white drop-shadow-lg" />
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Floating Top-Left Layout Selector & Hotkeys Bar */}
         <div className="absolute top-4 left-4 z-20 flex items-center gap-1.5 p-1.5 rounded-2xl bg-slate-950/90 backdrop-blur-md border border-purple-500/30 shadow-2xl">
@@ -2042,22 +2268,44 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
                         <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
                         <div>
                           <span className="font-bold text-amber-300 block text-xs">
-                            מדוע הכפייה ל-4K לא עובדת והאלגטו תקוע על 640×480?
+                            מדוע ב-OBS זה מציג ב-Full HD וכאן זה תקוע על 640×480?
                           </span>
                           <p className="text-[11px] text-amber-200/90 leading-relaxed mt-1">
-                            החומרה של האלגטו מדווחת למחשב כרגע על 640×480 בלבד, ולכן הדפדפן אינו יכול לשדרג תוכנתית. 
-                            <b> זה 100% בר-תיקון!</b> זה נובע מאחת מ-2 סיבות חומרה עיקריות (הגנת HDCP בקונסולה או כבל USB 2.0).
+                            במערכת macOS, כאשר <b>OBS תופסת את ה-Elgato</b>, מערכת ההפעלה נועלת את החומרה ולא מאפשרת לדפדפן (Chrome) לקבל יותר מרזולוציית Preview נמוכה (640×480).
+                            <br />
+                            <b>זה 100% פתיר ב-10 שניות באחת מ-2 הדרכים הבאות:</b>
                           </p>
                         </div>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                      <div className="p-2.5 rounded-xl bg-purple-950/60 border border-purple-500/40 space-y-1">
+                        <div className="flex items-center gap-1.5 text-purple-300 font-bold text-[11px]">
+                          <span>🎥 דרך 1 (עם OBS פתוח):</span>
+                        </div>
+                        <p className="text-[10px] text-slate-300 leading-tight">
+                          בתוך OBS, לחץ על <b>Start Virtual Camera</b> (מצלמה וירטואלית בצד ימין למטה).
+                          לאחר מכן בחר בתפריט למעלה <b>OBS Virtual Camera</b> — תקבל 1080p 60FPS חלק מיד!
+                        </p>
+                      </div>
+
+                      <div className="p-2.5 rounded-xl bg-cyan-950/60 border border-cyan-500/40 space-y-1">
+                        <div className="flex items-center gap-1.5 text-cyan-300 font-bold text-[11px]">
+                          <span>🔒 דרך 2 (חיבור ישיר):</span>
+                        </div>
+                        <p className="text-[10px] text-slate-300 leading-tight">
+                          סגור את תוכנת OBS לחלוטין (<b>Cmd + Q</b>) כדי לשחרר את נעילת החומרה. לאחר מכן לחץ על <b>אתחל צינור</b> למעלה.
+                        </p>
                       </div>
                     </div>
 
                     <button
                       type="button"
                       onClick={() => setShowElgatoTroubleshooter(prev => !prev)}
-                      className="w-full py-2 px-3 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-xs font-bold transition-all flex items-center justify-between"
+                      className="w-full py-1.5 px-3 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-[11px] font-bold transition-all flex items-center justify-between"
                     >
-                      <span>🛠️ 3 צעדים מהירים לשחרור 4K / 1080p (פתרון ב-60 שניות):</span>
+                      <span>🛠️ בדיקות חומרה נוספות (HDCP / כבל USB):</span>
                       <ChevronDown className={`w-4 h-4 transition-transform ${showElgatoTroubleshooter ? 'rotate-180' : ''}`} />
                     </button>
 
@@ -2066,12 +2314,10 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
                         <div className="space-y-1">
                           <p className="font-bold text-amber-300 flex items-center gap-1.5">
                             <span className="w-4 h-4 rounded-full bg-amber-500 text-slate-950 flex items-center justify-center font-mono text-[10px] font-black">1</span>
-                            <span>כיבוי HDCP בפלייסטיישן (הסיבה הנפוצה ביותר!):</span>
+                            <span>כיבוי HDCP בפלייסטיישן:</span>
                           </p>
                           <p className="text-slate-300 pr-5 leading-relaxed">
                             ב-PS5: כנס ל-<b>הגדרות (Settings) &gt; מערכת (System) &gt; HDMI &gt; הפעלת HDCP (Enable HDCP)</b> &larr; העבר ל-<b>כבוי (OFF)</b>.
-                            <br />
-                            <span className="text-amber-400/90 text-[10px]">* כשה-HDCP דולק, סוני נועלת כרטיסי לכידה חיצוניים על 640×480 SD. ברגע שמכבים, זה קופץ מיד ל-4K/1080p!</span>
                           </p>
                         </div>
 
@@ -2081,20 +2327,7 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
                             <span>הגדרת רזולוציה ידנית וכיבוי 120Hz / VRR:</span>
                           </p>
                           <p className="text-slate-300 pr-5 leading-relaxed">
-                            ב-PS5: כנס ל-<b>הגדרות &gt; מסך ווידאו &gt; פלט וידאו &gt; רזולוציה</b> &larr; בחר <b>2160p (4K)</b> או <b>1080p</b> (לא &quot;אוטומטי&quot;).
-                            <br />
-                            וודא ש-<b>פלט 120Hz</b> ו-<b>VRR</b> מוגדרים על <b>כבוי</b> (Cam Link 4K לא תומך ב-120Hz).
-                          </p>
-                        </div>
-
-                        <div className="space-y-1 pt-1.5 border-t border-slate-800">
-                          <p className="font-bold text-amber-300 flex items-center gap-1.5">
-                            <span className="w-4 h-4 rounded-full bg-amber-500 text-slate-950 flex items-center justify-center font-mono text-[10px] font-black">3</span>
-                            <span>בדיקת מתאם ה-USB והכבל במק:</span>
-                          </p>
-                          <p className="text-slate-300 pr-5 leading-relaxed">
-                            חבר את ה-Cam Link 4K ישירות לשקע ה-USB-C / Thunderbolt של המק עם מתאם תומך <b>USB 3.0 (כחול / 5Gbps+)</b>.
-                            הימנע משימוש בכבל טעינה רגיל או מפצלים פשוטים (שמוגבלים ל-USB 2.0 480Mbps).
+                            ב-PS5: כנס ל-<b>הגדרות &gt; מסך ווידאו &gt; פלט וידאו &gt; רזולוציה</b> &larr; בחר <b>2160p (4K)</b> או <b>1080p</b>.
                           </p>
                         </div>
 
@@ -2364,8 +2597,8 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
               </p>
             </div>
 
-            {/* Facecam Shape & Size Pickers */}
-            <div className="grid grid-cols-2 gap-3 pt-1 border-t border-slate-800/80">
+            {/* Facecam Shape & Extended Size Pickers */}
+            <div className="space-y-3 pt-1 border-t border-slate-800/80">
               {/* Shape */}
               <div className="space-y-1.5">
                 <label className="text-[11px] font-bold text-slate-400">צורת מסגרת:</label>
@@ -2389,27 +2622,65 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
                 </div>
               </div>
 
-              {/* Size */}
+              {/* Extended Size (XS to XL + Hidden) */}
               <div className="space-y-1.5">
-                <label className="text-[11px] font-bold text-slate-400">גודל חלונית:</label>
-                <div className="flex gap-1 bg-slate-900 p-1 rounded-xl border border-slate-800">
-                  {[
-                    { id: 'small', label: 'קטן' },
-                    { id: 'medium', label: 'בינוני' },
-                    { id: 'large', label: 'גדול' }
-                  ].map(s => (
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-bold text-slate-400">גודל חלונית (XS-XL / מוסתר):</label>
+                  <span className="text-[10px] font-mono text-cyan-400 font-bold">{CAM_SIZES[camSize].label}</span>
+                </div>
+                <div className="grid grid-cols-6 gap-1 bg-slate-900 p-1 rounded-xl border border-slate-800">
+                  {(['hidden', 'xs', 'sm', 'md', 'lg', 'xl'] as CamSizeKey[]).map(s => (
                     <button
-                      key={s.id}
+                      key={s}
                       type="button"
-                      onClick={() => setFacecamSize(s.id as any)}
-                      className={`flex-1 py-1 text-[11px] font-bold rounded-lg transition-colors ${
-                        facecamSize === s.id ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-white'
+                      onClick={() => setCamSize(s)}
+                      className={`py-1 text-[10px] font-bold rounded-lg transition-all ${
+                        camSize === s ? 'bg-cyan-600 text-white shadow font-black scale-105' : 'text-slate-400 hover:text-white'
                       }`}
                     >
-                      {s.label}
+                      {CAM_SIZES[s].label}
                     </button>
                   ))}
                 </div>
+              </div>
+
+              {/* 9-Point Quick Position Anchors & Free Drag Mode Reset */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-bold text-slate-400">מיקום קבוע / עוגן מהיר (9 נקודות):</label>
+                  {camFreePos !== null && (
+                    <button
+                      type="button"
+                      onClick={() => setCamFreePos(null)}
+                      className="text-[10px] text-amber-400 hover:text-amber-300 font-bold underline"
+                    >
+                      חזור למיקום עוגן
+                    </button>
+                  )}
+                </div>
+                <div className="grid grid-cols-3 gap-1 w-36 mx-auto bg-slate-950 p-1 rounded-xl border border-slate-800 text-center">
+                  {CAM_ANCHORS.map(a => (
+                    <button
+                      key={a.id}
+                      type="button"
+                      title={a.title}
+                      onClick={() => {
+                        setCamAnchor(a.id);
+                        setCamFreePos(null);
+                      }}
+                      className={`py-1 rounded-lg text-xs font-black transition-all ${
+                        camFreePos === null && camAnchor === a.id
+                          ? 'bg-indigo-600 text-white shadow'
+                          : 'bg-slate-900 text-slate-400 hover:text-white hover:bg-slate-800'
+                      }`}
+                    >
+                      {a.label}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[10px] text-slate-400 text-center leading-tight">
+                  💡 ניתן גם לגרור את המצלמה באופן חופשי ישירות על גבי נגן ה-Preview!
+                </p>
               </div>
             </div>
 
@@ -2745,6 +3016,220 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
           </div>
         </div>
 
+      </div>
+
+      {/* TWO ADDITIONAL CONTROL DECKS: STUDIO TIMER & OVERLAY SYSTEM */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 pt-2">
+        {/* DECK A: STUDIO TIMER CONTROL */}
+        <div className="p-5 rounded-3xl bg-gradient-to-b from-[#141226]/95 via-[#0e1222]/95 to-[#0b0e18]/95 border border-purple-500/30 shadow-xl space-y-4">
+          <div className="flex items-center justify-between pb-2 border-b border-purple-500/20">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 rounded-xl bg-purple-600/20 text-purple-400 border border-purple-500/30">
+                <Timer className="w-4 h-4" />
+              </div>
+              <div>
+                <h3 className="text-sm font-black text-white">טיימר אולפן וספירה לאחור</h3>
+                <p className="text-[11px] text-slate-400">הפעלה על ה-Preview בזמן שידור/הקלטה</p>
+              </div>
+            </div>
+            <span className="text-[10px] font-mono font-bold text-purple-300 bg-purple-950/60 px-2 py-0.5 rounded border border-purple-800">
+              {timerMode === 'off' ? 'כבוי' : timerMode === 'stopwatch' ? 'ספירה קדימה' : 'ספירה לאחור'}
+            </span>
+          </div>
+
+          <div className="space-y-3">
+            {/* Mode selection */}
+            <div className="grid grid-cols-3 gap-2 bg-slate-900/90 p-1 rounded-xl border border-slate-800">
+              {[
+                { id: 'off', label: 'ללא טיימר' },
+                { id: 'stopwatch', label: '⏱️ ספירה קדימה' },
+                { id: 'countdown', label: '⏳ ספירה לאחור' }
+              ].map(m => (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => {
+                    setTimerMode(m.id as any);
+                    resetTimer();
+                  }}
+                  className={`py-1.5 px-2 rounded-lg text-center text-xs font-bold transition-all ${
+                    timerMode === m.id
+                      ? 'bg-purple-600 text-white shadow font-black'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Countdown target input */}
+            {timerMode === 'countdown' && (
+              <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-xs">
+                <label className="font-bold text-slate-300">זמן ספירה לאחור (דקות:שניות):</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={timerCountdownInput}
+                    onChange={(e) => {
+                      setTimerCountdownInput(e.target.value);
+                      const parts = e.target.value.split(':');
+                      if (parts.length === 2) {
+                        const m = parseInt(parts[0], 10) || 0;
+                        const s = parseInt(parts[1], 10) || 0;
+                        setTimerTarget(m * 60 + s);
+                      }
+                    }}
+                    placeholder="05:00"
+                    className="w-20 px-2 py-1 rounded bg-slate-950 border border-slate-700 text-center font-mono font-bold text-cyan-300"
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Timer controls */}
+            {timerMode !== 'off' && (
+              <div className="flex items-center gap-2">
+                {!timerRunning ? (
+                  <button
+                    type="button"
+                    onClick={startTimer}
+                    className="flex-1 py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black transition-all flex items-center justify-center gap-1.5 shadow"
+                  >
+                    <Play className="w-3.5 h-3.5" />
+                    <span>הפעל טיימר</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={pauseTimer}
+                    className="flex-1 py-2 px-3 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-black transition-all flex items-center justify-center gap-1.5 shadow"
+                  >
+                    <Pause className="w-3.5 h-3.5" />
+                    <span>השהה טיימר</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={resetTimer}
+                  className="py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition-all border border-slate-700 flex items-center justify-center gap-1.5"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>איפוס</span>
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* DECK B: OVERLAY SYSTEM MANAGER */}
+        <div className="p-5 rounded-3xl bg-gradient-to-b from-[#141226]/95 via-[#0e1222]/95 to-[#0b0e18]/95 border border-cyan-500/30 shadow-xl space-y-4">
+          <div className="flex items-center justify-between pb-2 border-b border-cyan-500/20">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 rounded-xl bg-cyan-600/20 text-cyan-400 border border-cyan-500/30">
+                <Layers className="w-4 h-4" />
+              </div>
+              <div>
+                <h3 className="text-sm font-black text-white">מערכת אלמנטים ו-Overlays ({overlays.length})</h3>
+                <p className="text-[11px] text-slate-400">אלמנטים לגיימינג, סטרימינג, ביקורות וקולנוע</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsOverlayEditMode(!isOverlayEditMode)}
+              className={`px-3 py-1 rounded-xl text-xs font-bold border transition-all flex items-center gap-1.5 ${
+                isOverlayEditMode
+                  ? 'bg-amber-500 text-slate-950 border-amber-400 font-black shadow'
+                  : 'bg-slate-900 text-slate-300 border-slate-800 hover:text-white'
+              }`}
+            >
+              <Move className="w-3.5 h-3.5" />
+              <span>{isOverlayEditMode ? 'סגור מצב הזזה' : 'מצב הזזה ועריכה'}</span>
+            </button>
+          </div>
+
+          <div className="space-y-3">
+            {/* Category tabs filter */}
+            <div className="flex items-center gap-1 overflow-x-auto pb-1 text-[11px] font-bold">
+              {[
+                { id: 'all', label: 'הכל' },
+                { id: 'gaming', label: '🎮 גיימינג' },
+                { id: 'streaming', label: '📡 סטרימינג' },
+                { id: 'review', label: '⭐ ביקורות' },
+                { id: 'cinema', label: '🎬 קולנוע' },
+              ].map(cat => (
+                <button
+                  key={cat.id}
+                  type="button"
+                  onClick={() => setOverlayCategoryFilter(cat.id as any)}
+                  className={`px-2.5 py-1 rounded-lg shrink-0 transition-colors ${
+                    overlayCategoryFilter === cat.id
+                      ? 'bg-cyan-600 text-white font-black'
+                      : 'bg-slate-900 text-slate-400 hover:text-white'
+                  }`}
+                >
+                  {cat.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Overlay Catalog Grid */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 max-h-44 overflow-y-auto p-1 bg-slate-950/80 rounded-2xl border border-slate-800">
+              {OVERLAY_CATALOG.filter(c => overlayCategoryFilter === 'all' || c.category === overlayCategoryFilter).map(item => (
+                <button
+                  key={item.type}
+                  type="button"
+                  onClick={() => addOverlay(item.type)}
+                  className="p-2 rounded-xl bg-slate-900/90 hover:bg-slate-800 border border-slate-800/80 hover:border-cyan-500/50 text-right transition-all flex items-center gap-2 group text-xs"
+                >
+                  <span className="text-base group-hover:scale-125 transition-transform">{item.emoji}</span>
+                  <div className="truncate">
+                    <span className="font-bold text-white block truncate">{item.label}</span>
+                    <span className="text-[9px] text-slate-400 capitalize">{item.category}</span>
+                  </div>
+                </button>
+              ))}
+            </div>
+
+            {/* Active Overlays List */}
+            {overlays.length > 0 && (
+              <div className="space-y-1.5 pt-2 border-t border-slate-800">
+                <span className="text-[11px] font-bold text-slate-300 block">אלמנטים פעילים על המסך:</span>
+                <div className="space-y-1 max-h-28 overflow-y-auto">
+                  {overlays.map(o => {
+                    const catalogItem = OVERLAY_CATALOG.find(c => c.type === o.type);
+                    return (
+                      <div key={o.id} className="flex items-center justify-between p-2 rounded-xl bg-slate-900 border border-slate-800 text-xs">
+                        <div className="flex items-center gap-2">
+                          <span>{catalogItem?.emoji || '🎨'}</span>
+                          <span className="font-bold text-white">{catalogItem?.label || o.type}</span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => toggleOverlayVisible(o.id)}
+                            className={`p-1 rounded text-slate-400 hover:text-white ${!o.visible ? 'opacity-40' : ''}`}
+                            title={o.visible ? 'הסתר' : 'הצג'}
+                          >
+                            {o.visible ? <Eye className="w-3.5 h-3.5 text-cyan-400" /> : <EyeOff className="w-3.5 h-3.5" />}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => removeOverlay(o.id)}
+                            className="p-1 rounded text-rose-400 hover:text-rose-300"
+                            title="מחק"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* iPhone RemoteCam WebRTC Modal */}

@@ -64,7 +64,7 @@ export async function getMediaDevices(): Promise<{
           labelLower.includes('iphone') || 
           labelLower.includes('אייפון');
 
-        // Comprehensive Capture Card matching (Elgato, Cam Link, HD60, 4K X/Pro, HDMI, USB Video)
+        // Comprehensive Capture Card matching (Elgato, Cam Link, HD60, 4K X/Pro, HDMI, USB Video, OBS Virtual Camera)
         const isCaptureCard = 
           labelLower.includes('elgato') || 
           labelLower.includes('cam link') || 
@@ -81,6 +81,8 @@ export async function getMediaDevices(): Promise<{
           labelLower.includes('usb3.0') || 
           labelLower.includes('avermedia') || 
           labelLower.includes('shadowcast') || 
+          labelLower.includes('obs') || 
+          labelLower.includes('virtual') || 
           labelLower.includes('game capture');
 
         videoInputs.push({
