@@ -3287,31 +3287,63 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
 
                         {/* Inline Content Editor Form for selected Overlay */}
                         {isEditingThis && (
-                          <div className="p-2.5 rounded-lg bg-slate-950 border border-amber-500/30 space-y-2 text-[11px] animate-in fade-in">
+                          <div className="p-3 rounded-xl bg-slate-950 border border-cyan-500/40 space-y-2 text-xs animate-in fade-in">
+                            <span className="text-[10px] font-bold text-cyan-400 block pb-1 border-b border-slate-800">
+                              עריכת פרטי האלמנט:
+                            </span>
                             {Object.keys(o.config).map(field => {
                               const val = (o.config as any)[field];
+                              const fieldLabels: Record<string, string> = {
+                                title: 'כותרת',
+                                name: 'שם / כינוי',
+                                subtitle: 'תת כותרת',
+                                text: 'טקסט',
+                                description: 'תיאור',
+                                username: 'שם משתמש',
+                                message: 'הודעה',
+                                channelName: 'שם הערוץ',
+                                score: 'ציון',
+                                maxScore: 'ציון מקסימלי',
+                                value: 'ערך / אחוז',
+                                label: 'תווית',
+                                verdict: 'סיכום / Verdict',
+                                scene: 'סצנה',
+                                reaction: 'תגובה (GG/EZ...)',
+                                pros: 'יתרונות (PROS)',
+                                cons: 'חסרונות (CONS)',
+                                genre: 'ז\'אנר',
+                                year: 'שנה',
+                                platform: 'פלטפורמה',
+                                color: 'צבע (Hex)',
+                                icon: 'אייקון / אימוג\'י',
+                                opacity: 'שקיפות (%)',
+                                showStars: 'הצג כוכבים',
+                                showValue: 'הצג ערך מספרי',
+                              };
+                              const labelText = fieldLabels[field] || field;
+
                               if (typeof val === 'boolean') {
                                 return (
-                                  <div key={field} className="flex items-center justify-between">
-                                    <label className="text-slate-400 font-bold">{field}:</label>
+                                  <div key={field} className="flex items-center justify-between py-1">
+                                    <label className="text-slate-300 font-bold">{labelText}:</label>
                                     <input
                                       type="checkbox"
                                       checked={val}
                                       onChange={(e) => updateOverlayConfig(o.id, field, e.target.checked)}
-                                      className="accent-cyan-500 cursor-pointer"
+                                      className="accent-cyan-500 cursor-pointer w-4 h-4"
                                     />
                                   </div>
                                 );
                               }
                               if (typeof val === 'number') {
                                 return (
-                                  <div key={field} className="flex items-center justify-between gap-2">
-                                    <label className="text-slate-400 font-bold">{field}:</label>
+                                  <div key={field} className="flex items-center justify-between gap-2 py-0.5">
+                                    <label className="text-slate-300 font-bold">{labelText}:</label>
                                     <input
                                       type="number"
                                       value={val}
                                       onChange={(e) => updateOverlayConfig(o.id, field, parseFloat(e.target.value) || 0)}
-                                      className="w-20 px-2 py-0.5 rounded bg-slate-900 border border-slate-700 text-white font-mono text-center"
+                                      className="w-24 px-2 py-1 rounded-lg bg-slate-900 border border-slate-700 text-cyan-300 font-mono font-bold text-center"
                                     />
                                   </div>
                                 );
@@ -3319,12 +3351,12 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
                               if (typeof val === 'string') {
                                 return (
                                   <div key={field} className="space-y-1">
-                                    <label className="text-slate-400 font-bold block">{field}:</label>
+                                    <label className="text-slate-400 font-bold text-[10px] block">{labelText}:</label>
                                     <input
                                       type="text"
                                       value={val}
                                       onChange={(e) => updateOverlayConfig(o.id, field, e.target.value)}
-                                      className="w-full px-2 py-1 rounded bg-slate-900 border border-slate-700 text-white"
+                                      className="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-white font-medium text-xs focus:border-cyan-500"
                                     />
                                   </div>
                                 );
@@ -3332,12 +3364,12 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
                               if (Array.isArray(val)) {
                                 return (
                                   <div key={field} className="space-y-1">
-                                    <label className="text-slate-400 font-bold block">{field} (מופרד בפסיק):</label>
+                                    <label className="text-slate-400 font-bold text-[10px] block">{labelText} (מופרדים בפסיקים):</label>
                                     <input
                                       type="text"
                                       value={val.join(', ')}
                                       onChange={(e) => updateOverlayConfig(o.id, field, e.target.value.split(',').map(s => s.trim()))}
-                                      className="w-full px-2 py-1 rounded bg-slate-900 border border-slate-700 text-white"
+                                      className="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-white text-xs"
                                     />
                                   </div>
                                 );
