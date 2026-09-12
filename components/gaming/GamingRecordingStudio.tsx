@@ -164,6 +164,7 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
   const [isApplyingResolution, setIsApplyingResolution] = useState<boolean>(false);
   const [captureCardError, setCaptureCardError] = useState<string | null>(null);
   const [isCaptureLoading, setIsCaptureLoading] = useState<boolean>(false);
+  const [targetFps, setTargetFps] = useState<30 | 60>(60); // User-selected target FPS for capture card
   const [remoteFrame, setRemoteFrame] = useState<string | null>(null);
 
   // Game Framing, Zoom & Overscan Compensation (Fixes game cut off / aspect ratio mismatch)
@@ -729,23 +730,22 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
     let actualFps = 0;
 
     try {
+      const fps = targetFps; // user-selected: 30 or 60
       // When VDCAssistant was just reset (_autoRecoveryAttempted=true), use ONLY `ideal` constraints.
-      // `exact` constraints on a freshly-reset UVC session can still silently return 640×480 — ideal
-      // lets the driver negotiate at the highest resolution it can actually provide.
       const resolutionTiers: { label: string; constraints: MediaTrackConstraints }[] = _autoRecoveryAttempted
         ? [
             // Recovery tiers — ideal only, no exact, no min filter (let driver decide)
-            { label: '4K Recovery (ideal only)', constraints: { deviceId: { ideal: deviceId }, width: { ideal: 3840 }, height: { ideal: 2160 }, frameRate: { ideal: 30, max: 60 } } },
-            { label: '1080p Recovery (ideal only)', constraints: { deviceId: { ideal: deviceId }, width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 60 } } },
-            { label: 'HD Recovery (min 720)', constraints: { deviceId: { ideal: deviceId }, width: { min: 1280 }, height: { min: 720 } } },
+            { label: '4K Recovery (ideal only)', constraints: { deviceId: { ideal: deviceId }, width: { ideal: 3840 }, height: { ideal: 2160 }, frameRate: { ideal: fps, max: 60 } } },
+            { label: '1080p Recovery (ideal only)', constraints: { deviceId: { ideal: deviceId }, width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: fps } } },
+            { label: 'HD Recovery (min 720)', constraints: { deviceId: { ideal: deviceId }, width: { min: 1280 }, height: { min: 720 }, frameRate: { ideal: fps } } },
           ]
         : [
             // Normal tiers — start with exact for best negotiation, fall back to ideal
-            { label: '4K Ultra HD (Exact 3840x2160)', constraints: { deviceId: { exact: deviceId }, width: { exact: 3840 }, height: { exact: 2160 }, frameRate: { ideal: 30, max: 60 } } },
-            { label: '4K Ultra HD (Ideal 3840x2160)', constraints: { deviceId: { exact: deviceId }, width: { ideal: 3840 }, height: { ideal: 2160 }, frameRate: { ideal: 30, max: 60 } } },
-            { label: 'Quad HD 1440p (Ideal 2560x1440)', constraints: { deviceId: { exact: deviceId }, width: { ideal: 2560, min: 1920 }, height: { ideal: 1440, min: 1080 }, frameRate: { ideal: 60 } } },
-            { label: 'Full HD 1080p (Exact 1920x1080)', constraints: { deviceId: { exact: deviceId }, width: { exact: 1920 }, height: { exact: 1080 }, frameRate: { ideal: 60 } } },
-            { label: 'Full HD 1080p (Ideal 1920x1080)', constraints: { deviceId: { exact: deviceId }, width: { ideal: 1920, min: 1280 }, height: { ideal: 1080, min: 720 }, frameRate: { ideal: 60 } } },
+            { label: `4K Ultra HD (Exact, ${fps}FPS)`, constraints: { deviceId: { exact: deviceId }, width: { exact: 3840 }, height: { exact: 2160 }, frameRate: { ideal: fps, max: 60 } } },
+            { label: `4K Ultra HD (Ideal, ${fps}FPS)`, constraints: { deviceId: { exact: deviceId }, width: { ideal: 3840 }, height: { ideal: 2160 }, frameRate: { ideal: fps, max: 60 } } },
+            { label: `Quad HD 1440p (Ideal, ${fps}FPS)`, constraints: { deviceId: { exact: deviceId }, width: { ideal: 2560, min: 1920 }, height: { ideal: 1440, min: 1080 }, frameRate: { ideal: fps } } },
+            { label: `Full HD 1080p (Exact, ${fps}FPS)`, constraints: { deviceId: { exact: deviceId }, width: { exact: 1920 }, height: { exact: 1080 }, frameRate: { ideal: fps } } },
+            { label: `Full HD 1080p (Ideal, ${fps}FPS)`, constraints: { deviceId: { exact: deviceId }, width: { ideal: 1920, min: 1280 }, height: { ideal: 1080, min: 720 }, frameRate: { ideal: fps } } },
           ];
 
       for (const tier of resolutionTiers) {
@@ -2338,10 +2338,59 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
             {/* Direct Hardware Force & Quality Controls */}
             {selectedCaptureCardId && (
               <div className="p-3 rounded-2xl bg-slate-900/90 border border-purple-500/20 space-y-2.5">
-                <div className="flex items-center justify-between">
+                {/* FPS selector row */}
+                <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-1.5 text-xs font-bold text-slate-200">
                     <Zap className="w-3.5 h-3.5 text-amber-400" />
-                    <span>שליטה ישירה ברזולוציית הלכידה:</span>
+                    <span>קצב פריימים:</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    {([30, 60] as const).map((fps) => (
+                      <button
+                        key={fps}
+                        type="button"
+                        disabled={isCaptureLoading || isApplyingResolution}
+                        onClick={async () => {
+                          setTargetFps(fps);
+                          // Re-apply immediately if already connected
+                          if (selectedCaptureCardId && captureCardStream) {
+                            const vt = captureCardStream.getVideoTracks()[0];
+                            if (vt) {
+                              try {
+                                await vt.applyConstraints({ frameRate: { ideal: fps } });
+                                const s = vt.getSettings();
+                                const actualFps = Math.round(s.frameRate || fps);
+                                setCaptureDetails(prev => prev ? { ...prev, fps: actualFps } : prev);
+                                setCaptureQualityBadge(`${s.width}×${s.height} @ ${actualFps}FPS`);
+                              } catch (e) {
+                                // fallback: reconnect with new fps
+                                await handleSelectCaptureCard(selectedCaptureCardId, videoResolution);
+                              }
+                            }
+                          }
+                        }}
+                        className={`px-3 py-1 rounded-lg text-xs font-black transition-all border ${
+                          targetFps === fps
+                            ? fps === 60
+                              ? 'bg-emerald-600 text-white border-emerald-400 shadow'
+                              : 'bg-indigo-600 text-white border-indigo-400 shadow'
+                            : 'bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700 border-slate-700'
+                        } disabled:opacity-60`}
+                      >
+                        {fps} FPS
+                      </button>
+                    ))}
+                    {captureDetails && (
+                      <span className="text-[10px] text-slate-500 font-mono mr-1">
+                        (בפועל: {captureDetails.fps}fps)
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-slate-200">
+                    <span>רזולוציה:</span>
                   </div>
                   {captureDetails && (
                     <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded border ${
