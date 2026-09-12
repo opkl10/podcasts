@@ -75,6 +75,27 @@ import OverlayCanvas, { OVERLAY_CATALOG } from './OverlayCanvas';
 import type { OverlayItem, OverlayType } from './OverlayCanvas';
 import SimpleOverlayManager from './SimpleOverlayManager';
 
+// Web Audio synthesizer beep for countdown (3, 2, 1, GO)
+function playCountdownBeep(isFinal: boolean = false) {
+  try {
+    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(isFinal ? 880 : 440, ctx.currentTime);
+    gain.gain.setValueAtTime(0.12, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + (isFinal ? 0.35 : 0.12));
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + (isFinal ? 0.35 : 0.12));
+  } catch (e) {
+    // Ignore audio restriction
+  }
+}
+
 interface GamingRecordingStudioProps {
   episode: Episode;
 }
@@ -265,6 +286,78 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
     };
     return map[anchor] ?? map['br'];
   }
+
+  // ── Pre-Broadcast Starting Soon Timer (ספירה לאחור לתחילת שידור) ───────────
+  const [preBroadcastDelay, setPreBroadcastDelay] = useState<number>(0); // 0 = immediate, 3, 5, 10, 30, 60, 180, 300
+  const [preBroadcastTotalDuration, setPreBroadcastTotalDuration] = useState<number>(0);
+  const [isPreBroadcastCounting, setIsPreBroadcastCounting] = useState<boolean>(false);
+  const [preBroadcastSecondsRemaining, setPreBroadcastSecondsRemaining] = useState<number>(0);
+  const [enableCountdownBeeps, setEnableCountdownBeeps] = useState<boolean>(true);
+  const [customCountdownInput, setCustomCountdownInput] = useState<string>('03:00');
+  const [showInStreamStopwatch, setShowInStreamStopwatch] = useState<boolean>(false);
+  const preBroadcastTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const startRecordingRef = useRef<() => void>(() => {});
+
+  const formatCountdownDisplay = useCallback((seconds: number) => {
+    if (seconds <= 0) return '0';
+    if (seconds < 60) return `${seconds}s`;
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m}:${String(s).padStart(2, '0')}`;
+  }, []);
+
+  const cancelPreBroadcastCountdown = useCallback(() => {
+    if (preBroadcastTimerRef.current) {
+      clearInterval(preBroadcastTimerRef.current);
+      preBroadcastTimerRef.current = null;
+    }
+    setIsPreBroadcastCounting(false);
+    setPreBroadcastSecondsRemaining(0);
+  }, []);
+
+  const startPreBroadcastCountdown = useCallback((durationSeconds?: number) => {
+    cancelPreBroadcastCountdown();
+    const totalSec = durationSeconds !== undefined ? durationSeconds : preBroadcastDelay;
+    if (totalSec <= 0) {
+      startRecordingRef.current();
+      return;
+    }
+
+    setPreBroadcastTotalDuration(totalSec);
+    setPreBroadcastSecondsRemaining(totalSec);
+    setIsPreBroadcastCounting(true);
+
+    if (enableCountdownBeeps && totalSec <= 3) {
+      playCountdownBeep(false);
+    }
+
+    preBroadcastTimerRef.current = setInterval(() => {
+      setPreBroadcastSecondsRemaining(prev => {
+        const next = prev - 1;
+        if (next <= 0) {
+          if (preBroadcastTimerRef.current) clearInterval(preBroadcastTimerRef.current);
+          preBroadcastTimerRef.current = null;
+          setIsPreBroadcastCounting(false);
+          if (enableCountdownBeeps) playCountdownBeep(true);
+          setTimeout(() => {
+            startRecordingRef.current();
+          }, 80);
+          return 0;
+        }
+
+        if (enableCountdownBeeps && next <= 3) {
+          playCountdownBeep(false);
+        }
+        return next;
+      });
+    }, 1000);
+  }, [cancelPreBroadcastCountdown, preBroadcastDelay, enableCountdownBeeps]);
+
+  useEffect(() => {
+    return () => {
+      if (preBroadcastTimerRef.current) clearInterval(preBroadcastTimerRef.current);
+    };
+  }, []);
 
   // ── Studio Timer ────────────────────────────────────────────────────────────
   type TimerMode = 'off' | 'stopwatch' | 'countdown';
@@ -1688,6 +1781,27 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
     }
   };
 
+  startRecordingRef.current = startRecording;
+
+  const handleMasterRecordClick = () => {
+    if (isRecording) {
+      stopRecording();
+      return;
+    }
+
+    if (isPreBroadcastCounting) {
+      cancelPreBroadcastCountdown();
+      startRecording();
+      return;
+    }
+
+    if (preBroadcastDelay > 0) {
+      startPreBroadcastCountdown(preBroadcastDelay);
+    } else {
+      startRecording();
+    }
+  };
+
   const toggleMic = () => {
     gamingMixerRef.current?.resume();
     const stream = micStream || (isUsingRemoteCam && remoteStream ? remoteStream : null);
@@ -1871,13 +1985,35 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
               <Square className="w-4 h-4 fill-white" />
               <span>עצור הקלטה</span>
             </button>
+          ) : isPreBroadcastCounting ? (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleMasterRecordClick}
+                className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 text-slate-950 font-black text-sm shadow-xl shadow-amber-950/60 active:scale-95 transition-all border border-amber-300 animate-pulse"
+                title="לחץ כדי לדלג על הספירה ולהתחיל מיד"
+              >
+                <Play className="w-4 h-4 fill-slate-950" />
+                <span>מתחיל בעוד: {formatCountdownDisplay(preBroadcastSecondsRemaining)} (דלג)</span>
+              </button>
+              <button
+                onClick={cancelPreBroadcastCountdown}
+                className="p-2.5 text-slate-400 hover:text-rose-400 rounded-xl hover:bg-rose-950/40 border border-slate-700 hover:border-rose-500/50 transition-colors"
+                title="בטל ספירה לאחור"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
           ) : (
             <button
-              onClick={startRecording}
+              onClick={handleMasterRecordClick}
               className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-gradient-to-r from-rose-600 via-purple-600 to-indigo-600 hover:from-rose-500 hover:to-indigo-500 text-white font-black text-sm shadow-xl shadow-purple-950/60 active:scale-95 transition-all border border-purple-400/40"
             >
               <CircleDot className="w-4 h-4 text-white" />
-              <span>התחל הקלטת גיימינג</span>
+              <span>
+                {preBroadcastDelay > 0
+                  ? `התחל שידור (ספירה של ${formatCountdownDisplay(preBroadcastDelay)})`
+                  : 'התחל הקלטת גיימינג'}
+              </span>
             </button>
           )}
 
@@ -1913,6 +2049,64 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
           isEditing={isOverlayEditMode}
           timerSeconds={timerElapsed}
         />
+
+        {/* ── Pre-Broadcast Starting Soon Countdown HUD Overlay ── */}
+        {isPreBroadcastCounting && (
+          <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-black/80 backdrop-blur-md transition-all">
+            <div className="relative flex flex-col items-center p-8 rounded-3xl bg-slate-950/95 border border-purple-500/50 shadow-2xl shadow-purple-950/90 max-w-md mx-4 text-center">
+              <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-rose-500/20 text-rose-400 border border-rose-500/40 text-xs font-black tracking-wider uppercase mb-3 animate-pulse">
+                <span className="w-2 h-2 rounded-full bg-rose-500" />
+                <span>השידור וההקלטה מתחילים בעוד</span>
+              </div>
+
+              {/* Giant Countdown Digits */}
+              <div className="my-2 flex items-center justify-center">
+                <span className="font-mono text-7xl sm:text-8xl font-black text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 via-purple-300 to-rose-400 tracking-tight tabular-nums drop-shadow-[0_0_30px_rgba(168,85,247,0.6)]">
+                  {formatCountdownDisplay(preBroadcastSecondsRemaining)}
+                </span>
+              </div>
+
+              {/* Progress Bar */}
+              {preBroadcastTotalDuration > 0 && (
+                <div className="w-64 h-2 bg-slate-800 rounded-full overflow-hidden mt-3 mb-4 border border-slate-700">
+                  <div
+                    className="h-full bg-gradient-to-r from-cyan-500 via-purple-500 to-rose-500 transition-all duration-1000 ease-linear rounded-full"
+                    style={{
+                      width: `${Math.min(100, Math.max(0, ((preBroadcastTotalDuration - preBroadcastSecondsRemaining) / preBroadcastTotalDuration) * 100))}%`,
+                    }}
+                  />
+                </div>
+              )}
+
+              <p className="text-xs text-slate-300 mb-6 font-medium">
+                {preBroadcastSecondsRemaining <= 3
+                  ? '🎯 היכונו לשידור... 3, 2, 1!'
+                  : 'התמקמו מול המצלמה והמיקרופון, השידור יתחיל אוטומטית'}
+              </p>
+
+              {/* Action Buttons */}
+              <div className="flex items-center gap-3 w-full">
+                <button
+                  type="button"
+                  onClick={handleMasterRecordClick}
+                  className="flex-1 py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-sm shadow-lg shadow-emerald-950/60 transition-all active:scale-95 flex items-center justify-center gap-2 border border-emerald-400/30"
+                >
+                  <Play className="w-4 h-4 fill-white" />
+                  <span>התחל עכשיו (דלג)</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={cancelPreBroadcastCountdown}
+                  className="py-3 px-4 rounded-xl bg-slate-800 hover:bg-rose-950/60 hover:border-rose-500/60 text-slate-300 hover:text-rose-300 font-bold text-sm transition-all border border-slate-700 active:scale-95 flex items-center gap-1.5"
+                >
+                  <X className="w-4 h-4" />
+                  <span>ביטול ספירה</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ── Studio Timer HUD (shown on preview when active) ── */}
         {timerMode !== 'off' && (
@@ -3496,105 +3690,261 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
 
       {/* TWO ADDITIONAL CONTROL DECKS: STUDIO TIMER & OVERLAY SYSTEM */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 pt-2">
-        {/* DECK A: STUDIO TIMER CONTROL */}
+        {/* DECK A: PRE-BROADCAST STARTING SOON COUNTDOWN */}
         <div className="p-5 rounded-3xl bg-gradient-to-b from-[#141226]/95 via-[#0e1222]/95 to-[#0b0e18]/95 border border-purple-500/30 shadow-xl space-y-4">
+          {/* Header */}
           <div className="flex items-center justify-between pb-2 border-b border-purple-500/20">
             <div className="flex items-center gap-2.5">
               <div className="p-2 rounded-xl bg-purple-600/20 text-purple-400 border border-purple-500/30">
                 <Timer className="w-4 h-4" />
               </div>
               <div>
-                <h3 className="text-sm font-black text-white">טיימר אולפן וספירה לאחור</h3>
-                <p className="text-[11px] text-slate-400">הפעלה על ה-Preview בזמן שידור/הקלטה</p>
+                <h3 className="text-sm font-black text-white">ספירה לאחור לתחילת שידור</h3>
+                <p className="text-[11px] text-slate-400">טיימר Starting Soon לפני שההקלטה/השידור מתחילים</p>
               </div>
             </div>
-            <span className="text-[10px] font-mono font-bold text-purple-300 bg-purple-950/60 px-2 py-0.5 rounded border border-purple-800">
-              {timerMode === 'off' ? 'כבוי' : timerMode === 'stopwatch' ? 'ספירה קדימה' : 'ספירה לאחור'}
+            <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded border ${
+              isPreBroadcastCounting
+                ? 'bg-rose-950/80 text-rose-300 border-rose-500/50 animate-pulse'
+                : preBroadcastDelay > 0
+                ? 'bg-purple-950/60 text-purple-300 border-purple-800'
+                : 'bg-slate-900 text-slate-400 border-slate-800'
+            }`}>
+              {isPreBroadcastCounting
+                ? `סופר: ${formatCountdownDisplay(preBroadcastSecondsRemaining)}`
+                : preBroadcastDelay === 0
+                ? 'מידי (ללא המתנה)'
+                : `השהיה: ${formatCountdownDisplay(preBroadcastDelay)}`}
             </span>
           </div>
 
-          <div className="space-y-3">
-            {/* Mode selection */}
-            <div className="grid grid-cols-3 gap-2 bg-slate-900/90 p-1 rounded-xl border border-slate-800">
-              {[
-                { id: 'off', label: 'ללא טיימר' },
-                { id: 'stopwatch', label: '⏱️ ספירה קדימה' },
-                { id: 'countdown', label: '⏳ ספירה לאחור' }
-              ].map(m => (
-                <button
-                  key={m.id}
-                  type="button"
-                  onClick={() => {
-                    setTimerMode(m.id as any);
-                    resetTimer();
-                  }}
-                  className={`py-1.5 px-2 rounded-lg text-center text-xs font-bold transition-all ${
-                    timerMode === m.id
-                      ? 'bg-purple-600 text-white shadow font-black'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  {m.label}
-                </button>
-              ))}
+          <div className="space-y-4">
+            {/* Quick Delay Presets */}
+            <div>
+              <label className="text-[11px] font-bold text-slate-300 block mb-2">
+                בחר זמן ספירה לאחור לפני תחילת השידור:
+              </label>
+              <div className="grid grid-cols-4 gap-1.5 bg-slate-900/90 p-1.5 rounded-2xl border border-slate-800">
+                {[
+                  { sec: 0, label: '⚡ מידי' },
+                  { sec: 3, label: '3 שנ\'' },
+                  { sec: 5, label: '5 שנ\'' },
+                  { sec: 10, label: '10 שנ\'' },
+                  { sec: 30, label: '30 שנ\'' },
+                  { sec: 60, label: '1 דק\'' },
+                  { sec: 180, label: '3 דק\'' },
+                  { sec: 300, label: '5 דק\'' },
+                ].map((item) => (
+                  <button
+                    key={item.sec}
+                    type="button"
+                    onClick={() => {
+                      setPreBroadcastDelay(item.sec);
+                      if (isPreBroadcastCounting) cancelPreBroadcastCountdown();
+                    }}
+                    className={`py-2 px-1.5 rounded-xl text-center text-xs font-bold transition-all ${
+                      preBroadcastDelay === item.sec
+                        ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-lg shadow-purple-950/60 font-black border border-purple-400/40'
+                        : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+                    }`}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
             </div>
 
-            {/* Countdown target input */}
-            {timerMode === 'countdown' && (
-              <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-xs">
-                <label className="font-bold text-slate-300">זמן ספירה לאחור (דקות:שניות):</label>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    value={timerCountdownInput}
-                    onChange={(e) => {
-                      setTimerCountdownInput(e.target.value);
-                      const parts = e.target.value.split(':');
-                      if (parts.length === 2) {
-                        const m = parseInt(parts[0], 10) || 0;
-                        const s = parseInt(parts[1], 10) || 0;
-                        setTimerTarget(m * 60 + s);
-                      }
-                    }}
-                    placeholder="05:00"
-                    className="w-20 px-2 py-1 rounded bg-slate-950 border border-slate-700 text-center font-mono font-bold text-cyan-300"
-                  />
+            {/* Custom Delay Input */}
+            <div className="flex items-center justify-between p-3 rounded-2xl bg-slate-900/80 border border-slate-800 text-xs">
+              <div>
+                <span className="font-bold text-white block">זמן ספירה מותאם אישית</span>
+                <span className="text-[11px] text-slate-400">הזן דקות ושניות (למשל 02:00)</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={customCountdownInput}
+                  onChange={(e) => setCustomCountdownInput(e.target.value)}
+                  placeholder="03:00"
+                  className="w-20 px-2.5 py-1.5 rounded-xl bg-slate-950 border border-slate-700 text-center font-mono font-bold text-cyan-300 text-xs focus:border-purple-500 focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const parts = customCountdownInput.trim().split(':');
+                    let secs = 0;
+                    if (parts.length === 2) {
+                      secs = (parseInt(parts[0], 10) || 0) * 60 + (parseInt(parts[1], 10) || 0);
+                    } else {
+                      secs = parseInt(customCountdownInput, 10) || 0;
+                    }
+                    if (secs > 0) {
+                      setPreBroadcastDelay(secs);
+                      if (isPreBroadcastCounting) cancelPreBroadcastCountdown();
+                    }
+                  }}
+                  className="px-3 py-1.5 rounded-xl bg-purple-600/30 hover:bg-purple-600 text-purple-200 hover:text-white font-bold text-xs transition-all border border-purple-500/40"
+                >
+                  החל
+                </button>
+              </div>
+            </div>
+
+            {/* Audio beeps toggle */}
+            <div className="flex items-center justify-between p-3 rounded-2xl bg-slate-900/60 border border-slate-800 text-xs">
+              <div className="flex items-center gap-2">
+                {enableCountdownBeeps ? (
+                  <Volume2 className="w-4 h-4 text-emerald-400" />
+                ) : (
+                  <VolumeX className="w-4 h-4 text-slate-500" />
+                )}
+                <div>
+                  <span className="font-bold text-white block">צלילי ביפ בספירה (3, 2, 1)</span>
+                  <span className="text-[11px] text-slate-400">משמיע צפצוף הכנה בשניות האחרונות</span>
                 </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEnableCountdownBeeps(!enableCountdownBeeps)}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all ${
+                  enableCountdownBeeps
+                    ? 'bg-emerald-600/20 text-emerald-300 border-emerald-500/40'
+                    : 'bg-slate-800 text-slate-400 border-slate-700'
+                }`}
+              >
+                {enableCountdownBeeps ? 'מופעל' : 'כבוי'}
+              </button>
+            </div>
+
+            {/* Live Countdown Status / Action Buttons */}
+            {isPreBroadcastCounting ? (
+              <div className="p-3.5 rounded-2xl bg-gradient-to-r from-purple-950/80 via-slate-900 to-rose-950/80 border border-rose-500/40 space-y-3 animate-pulse">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping" />
+                    <span className="text-xs font-bold text-white">ספירה פעילה לקראת שידור!</span>
+                  </div>
+                  <span className="font-mono text-xl font-black text-cyan-300 tabular-nums">
+                    {formatCountdownDisplay(preBroadcastSecondsRemaining)}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleMasterRecordClick}
+                    className="flex-1 py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs transition-all flex items-center justify-center gap-1.5 shadow"
+                  >
+                    <Play className="w-3.5 h-3.5 fill-white" />
+                    <span>התחל עכשיו (דלג)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={cancelPreBroadcastCountdown}
+                    className="py-2 px-3 rounded-xl bg-slate-800 hover:bg-rose-950/50 hover:border-rose-500/50 text-slate-300 hover:text-rose-300 font-bold text-xs transition-all border border-slate-700 flex items-center justify-center gap-1.5"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                    <span>ביטול</span>
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center justify-between p-3 rounded-2xl bg-slate-900/40 border border-slate-800/80 text-xs">
+                <span className="text-[11px] text-slate-300">
+                  {preBroadcastDelay === 0
+                    ? '⚡ ההקלטה תתחיל מיד בלחיצה על כפתור ההקלטה'
+                    : `⏳ בלחיצה על 'התחל שידור', תחל ספירה של ${formatCountdownDisplay(preBroadcastDelay)}`}
+                </span>
+                {preBroadcastDelay > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => startPreBroadcastCountdown(preBroadcastDelay)}
+                    className="px-3 py-1.5 rounded-xl bg-purple-600/30 hover:bg-purple-600 text-purple-200 hover:text-white font-bold text-xs transition-all border border-purple-500/40 flex items-center gap-1.5"
+                  >
+                    <Play className="w-3 h-3 fill-current" />
+                    <span>הפעל בדיקה</span>
+                  </button>
+                )}
               </div>
             )}
 
-            {/* Timer controls */}
-            {timerMode !== 'off' && (
-              <div className="flex items-center gap-2">
-                {!timerRunning ? (
-                  <button
-                    type="button"
-                    onClick={startTimer}
-                    className="flex-1 py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black transition-all flex items-center justify-center gap-1.5 shadow"
-                  >
-                    <Play className="w-3.5 h-3.5" />
-                    <span>הפעל טיימר</span>
-                  </button>
+            {/* Collapsible Sub-Option: In-Stream Stopwatch */}
+            <div className="pt-2 border-t border-purple-500/10">
+              <button
+                type="button"
+                onClick={() => setShowInStreamStopwatch(!showInStreamStopwatch)}
+                className="w-full flex items-center justify-between text-[11px] font-bold text-slate-400 hover:text-slate-200 py-1 transition-colors"
+              >
+                <div className="flex items-center gap-1.5">
+                  <Timer className="w-3.5 h-3.5 text-purple-400" />
+                  <span>שעון עצר נוסף על גבי המסך תוך כדי שידור (אופציונלי)</span>
+                </div>
+                {showInStreamStopwatch ? (
+                  <ChevronUp className="w-3.5 h-3.5 text-slate-500" />
                 ) : (
-                  <button
-                    type="button"
-                    onClick={pauseTimer}
-                    className="flex-1 py-2 px-3 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-black transition-all flex items-center justify-center gap-1.5 shadow"
-                  >
-                    <Pause className="w-3.5 h-3.5" />
-                    <span>השהה טיימר</span>
-                  </button>
+                  <ChevronDown className="w-3.5 h-3.5 text-slate-500" />
                 )}
-                <button
-                  type="button"
-                  onClick={resetTimer}
-                  className="py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition-all border border-slate-700 flex items-center justify-center gap-1.5"
-                >
-                  <RotateCcw className="w-3.5 h-3.5" />
-                  <span>איפוס</span>
-                </button>
-              </div>
-            )}
+              </button>
+
+              {showInStreamStopwatch && (
+                <div className="mt-2.5 p-3 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-3">
+                  <div className="grid grid-cols-3 gap-2 bg-slate-900 p-1 rounded-xl border border-slate-800">
+                    {[
+                      { id: 'off', label: 'ללא שעון' },
+                      { id: 'stopwatch', label: '⏱️ ספירה קדימה' },
+                      { id: 'countdown', label: '⏳ ספירה לאחור' },
+                    ].map((m) => (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => {
+                          setTimerMode(m.id as any);
+                          resetTimer();
+                        }}
+                        className={`py-1.5 px-2 rounded-lg text-center text-xs font-bold transition-all ${
+                          timerMode === m.id
+                            ? 'bg-purple-600 text-white shadow font-black'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        {m.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {timerMode !== 'off' && (
+                    <div className="flex items-center gap-2">
+                      {!timerRunning ? (
+                        <button
+                          type="button"
+                          onClick={startTimer}
+                          className="flex-1 py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black transition-all flex items-center justify-center gap-1.5 shadow"
+                        >
+                          <Play className="w-3.5 h-3.5" />
+                          <span>הפעל שעון</span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={pauseTimer}
+                          className="flex-1 py-2 px-3 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-black transition-all flex items-center justify-center gap-1.5 shadow"
+                        >
+                          <Pause className="w-3.5 h-3.5" />
+                          <span>השהה</span>
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={resetTimer}
+                        className="py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition-all border border-slate-700 flex items-center justify-center gap-1.5"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" />
+                        <span>איפוס</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
