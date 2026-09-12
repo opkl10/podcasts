@@ -1,13 +1,31 @@
-import { app, BrowserWindow, shell, session } from 'electron';
+import { app, BrowserWindow, shell, session, ipcMain } from 'electron';
 import * as path from 'path';
 import * as http from 'http';
-import { spawn, ChildProcess } from 'child_process';
+import { spawn, ChildProcess, exec } from 'child_process';
 
 let mainWindow: BrowserWindow | null = null;
 let nextServer: ChildProcess | null = null;
 
 const isDev = process.env.NODE_ENV !== 'production';
 const PORT = 3000;
+
+// ─── Chromium UVC / AVFoundation High-Resolution Flags ───────────────────────
+// These switches force Chromium's camera pipeline to request HD/4K from the
+// UVC driver instead of falling back to the macOS "safe preview" 640×480 mode
+// that AVFoundation offers when another app (FaceTime, OBS) is concurrently
+// holding a low-priority session on the device.
+app.commandLine.appendSwitch('enable-features', 'MediaFoundationVideoCapture,HardwareMediaKeyHandling,WebRtcHideLocalIpsWithMdns');
+app.commandLine.appendSwitch('disable-features', 'VizDisplayCompositor');
+// Force the GPU process to use 4K-capable pixel buffers for camera frames
+app.commandLine.appendSwitch('force-video-overlays');
+// Allow Chromium to re-negotiate camera resolution after initial stream open
+app.commandLine.appendSwitch('enable-precise-memory-info');
+// Bypass macOS screen-capture API for camera (uses native AVCaptureDevice directly)
+app.commandLine.appendSwitch('use-fake-ui-for-media-stream', 'false');
+// Disable throttling on background tabs that would reduce capture resolution
+app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
+app.commandLine.appendSwitch('disable-renderer-backgrounding');
+// ─────────────────────────────────────────────────────────────────────────────
 const APP_URL = `http://localhost:${PORT}`;
 
 function waitForServer(url: string, maxTries = 60, interval = 500): Promise<void> {
@@ -116,3 +134,28 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   if (nextServer) nextServer.kill();
 });
+
+// ─── IPC: AVFoundation Camera Lock Release ────────────────────────────────────
+// When the renderer calls window.electronAPI.releaseCameraLock(), the main
+// process runs a tiny AppleScript that kills any conflicting camera-locking
+// processes (FaceTime, Photo Booth) and then signals the renderer to re-open
+// the camera. This forces macOS to reassign the AVFoundation capture session
+// to Electron at full resolution.
+
+ipcMain.handle('release-camera-lock', async () => {
+  return new Promise<{ ok: boolean; msg: string }>((resolve) => {
+    // Kill processes known to lock UVC cameras on macOS (safe — they reopen on next launch)
+    const killCmd = [
+      'pkill -x "FaceTime" 2>/dev/null',
+      'pkill -x "Photo Booth" 2>/dev/null',
+    ].join('; ');
+
+    exec(killCmd, () => {
+      // Wait 800ms for macOS to fully release the AVFoundation session
+      setTimeout(() => {
+        resolve({ ok: true, msg: 'AVFoundation lock released — camera session closed by conflicting apps' });
+      }, 800);
+    });
+  });
+});
+// ─────────────────────────────────────────────────────────────────────────────

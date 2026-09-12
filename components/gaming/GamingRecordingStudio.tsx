@@ -890,6 +890,85 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
     }
   };
 
+  /**
+   * Nuclear AVFoundation Lock Release:
+   * 1. Stops all active tracks → releases Chrome's hold on the UVC device
+   * 2. If running in Electron, calls IPC to kill FaceTime / Photo Booth (the
+   *    apps that hold the AVFoundation session and force 640×480 on others)
+   * 3. Waits 1 second for macOS to fully deallocate the capture session
+   * 4. Re-opens the camera with only `ideal` constraints (no `exact`) so Chrome
+   *    can negotiate with the hardware driver at its native max resolution
+   */
+  const handleReleaseCameraLock = async () => {
+    if (!selectedCaptureCardId) return;
+    setIsApplyingResolution(true);
+    setCaptureQualityBadge('משחרר נעילה...');
+
+    // Step 1 — stop all active tracks to release Chrome's device hold
+    if (captureCardStream) {
+      captureCardStream.getTracks().forEach(t => t.stop());
+      setCaptureCardStream(null);
+    }
+
+    // Step 2 — if in Electron, ask main process to kill FaceTime / Photo Booth
+    const electronAPI = (window as any).electronAPI;
+    if (electronAPI?.releaseCameraLock) {
+      try {
+        const result = await electronAPI.releaseCameraLock();
+        console.log('%c[Video Source] 🔓 שחרור AVFoundation:', 'color: #10b981; font-weight: bold;', result.msg);
+      } catch (e) {
+        console.warn('[Video Source] Electron IPC not available, continuing anyway');
+      }
+    }
+
+    // Step 3 — wait 1.2 seconds for macOS to fully deallocate the session
+    await new Promise(r => setTimeout(r, 1200));
+
+    // Step 4 — re-open with ONLY `ideal` constraints (no `exact` — avoids silent SD fallback)
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          deviceId: { ideal: selectedCaptureCardId },
+          width: { ideal: 3840, min: 1920 },
+          height: { ideal: 2160, min: 1080 },
+          frameRate: { ideal: 60, min: 24 }
+        },
+        audio: false
+      });
+
+      const vt = stream.getVideoTracks()[0];
+      if (vt) {
+        const s = vt.getSettings();
+        const w = s.width || 0;
+        const h = s.height || 0;
+        const fps = Math.round(s.frameRate || 0);
+        console.log(`%c[Video Source] 🎯 לאחר שחרור נעילה: ${w}×${h} @ ${fps}FPS`, w >= 1920 ? 'color: #10b981; font-weight: bold;' : 'color: #f59e0b; font-weight: bold;');
+        setCaptureQualityBadge(`${w}×${h} @ ${fps}FPS`);
+        setCaptureDetails({ width: w, height: h, fps });
+        if (w >= 3840) setVideoResolution('4k');
+        else if (w >= 1920) setVideoResolution('1080p');
+
+        vt.onended = () => handleSelectCaptureCard('');
+      }
+
+      setCaptureCardStream(stream);
+      setGameplaySourceType('capture_card');
+
+      if (gameplayVideoRef.current) {
+        gameplayVideoRef.current.srcObject = stream;
+        gameplayVideoRef.current.play().catch(() => {});
+      }
+    } catch (err: any) {
+      console.error('[Video Source] ❌ שחרור נעילה נכשל:', err);
+      setCaptureQualityBadge('שגיאה — נסה שוב');
+      // Fall back to normal re-open
+      await handleSelectCaptureCard(selectedCaptureCardId, videoResolution);
+    } finally {
+      setIsApplyingResolution(false);
+    }
+  };
+
+
   // 5. Dual Audio Mixer Engine (Mic + Gameplay Sound)
   useEffect(() => {
     if (!gamingMixerRef.current) {
@@ -1843,16 +1922,28 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
                 }
               </span>
               {captureDetails.width < 3840 && (
-                <button
-                  type="button"
-                  disabled={isApplyingResolution}
-                  onClick={() => handleForceCaptureResolution('4k')}
-                  className="px-2.5 py-0.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-[10px] font-black transition-all ml-1 active:scale-95 flex items-center gap-1 disabled:opacity-60"
-                  title="כפה על אלגטו ועל הדפדפן לעבור ל-4K Ultra HD"
-                >
-                  {isApplyingResolution ? <RefreshCw className="w-2.5 h-2.5 animate-spin" /> : null}
-                  <span>כפה 4K עכשיו</span>
-                </button>
+                <div className="flex items-center gap-1 ml-1">
+                  <button
+                    type="button"
+                    disabled={isApplyingResolution}
+                    onClick={() => handleForceCaptureResolution('4k')}
+                    className="px-2.5 py-0.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-[10px] font-black transition-all active:scale-95 flex items-center gap-1 disabled:opacity-60"
+                    title="כפה על אלגטו ועל הדפדפן לעבור ל-4K Ultra HD"
+                  >
+                    {isApplyingResolution ? <RefreshCw className="w-2.5 h-2.5 animate-spin" /> : null}
+                    <span>כפה 4K</span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isApplyingResolution}
+                    onClick={handleReleaseCameraLock}
+                    className="px-2.5 py-0.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-[10px] font-black transition-all active:scale-95 flex items-center gap-1 disabled:opacity-60"
+                    title="שחרר נעילת AVFoundation — סוגר FaceTime/Photo Booth ופותח מחדש את המצלמה ב-HD מלא"
+                  >
+                    {isApplyingResolution ? <RefreshCw className="w-2.5 h-2.5 animate-spin" /> : <span>🔓</span>}
+                    <span>שחרר נעילה</span>
+                  </button>
+                </div>
               )}
             </div>
           ) : isScreenCapturing ? (
@@ -2244,7 +2335,7 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
                   )}
                 </div>
 
-                <div className="grid grid-cols-3 gap-1.5">
+                <div className="grid grid-cols-2 gap-1.5">
                   <button
                     type="button"
                     disabled={isApplyingResolution || isCaptureLoading}
@@ -2289,7 +2380,24 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
                     <RefreshCw className={`w-3 h-3 ${isCaptureLoading ? 'animate-spin' : ''}`} />
                     <span>אתחל צינור</span>
                   </button>
+
+                  {/* Nuclear Option — kills FaceTime/Photo Booth, releases AVFoundation UVC lock */}
+                  <button
+                    type="button"
+                    disabled={isCaptureLoading || isApplyingResolution}
+                    onClick={handleReleaseCameraLock}
+                    className="py-2 px-2 rounded-xl text-xs font-black bg-rose-950 hover:bg-rose-900 text-rose-300 hover:text-white border border-rose-500/50 hover:border-rose-400 transition-all flex items-center justify-center gap-1 disabled:opacity-60 shadow-md"
+                    title="שחרר נעילת AVFoundation — סוגר FaceTime ומאפשר ל-Elgato לעבוד ב-Full HD/4K"
+                  >
+                    {isApplyingResolution ? (
+                      <RefreshCw className="w-3 h-3 animate-spin" />
+                    ) : (
+                      <span>🔓</span>
+                    )}
+                    <span>שחרר נעילה</span>
+                  </button>
                 </div>
+
 
                 {/* 640x480 Low Quality / Safe Mode Diagnostic Alert & Step-by-Step Fixer */}
                 {captureDetails && captureDetails.width <= 640 && (
