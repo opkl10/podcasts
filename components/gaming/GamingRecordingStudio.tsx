@@ -73,6 +73,7 @@ import PostRecordingReview from '@/components/studio/PostRecordingReview';
 import RemoteCamModal from '@/components/studio/RemoteCamModal';
 import OverlayCanvas, { OVERLAY_CATALOG } from './OverlayCanvas';
 import type { OverlayItem, OverlayType } from './OverlayCanvas';
+import SimpleOverlayManager from './SimpleOverlayManager';
 
 interface GamingRecordingStudioProps {
   episode: Episode;
@@ -304,9 +305,7 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
 
   // ── Overlay System ──────────────────────────────────────────────────────────
   const [overlays, setOverlays] = useState<OverlayItem[]>([]);
-  const [showOverlayPanel, setShowOverlayPanel] = useState(false);
   const [isOverlayEditMode, setIsOverlayEditMode] = useState(false);
-  const [overlayCategoryFilter, setOverlayCategoryFilter] = useState<'all' | 'gaming' | 'streaming' | 'review' | 'cinema'>('all');
 
   const addOverlay = useCallback((type: OverlayType) => {
     const catalog = OVERLAY_CATALOG.find(c => c.type === type);
@@ -3361,226 +3360,20 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
           </div>
         </div>
 
-        {/* DECK B: OVERLAY SYSTEM MANAGER */}
-        <div className="p-5 rounded-3xl bg-gradient-to-b from-[#141226]/95 via-[#0e1222]/95 to-[#0b0e18]/95 border border-cyan-500/30 shadow-xl space-y-4">
-          <div className="flex items-center justify-between pb-2 border-b border-cyan-500/20">
-            <div className="flex items-center gap-2.5">
-              <div className="p-2 rounded-xl bg-cyan-600/20 text-cyan-400 border border-cyan-500/30">
-                <Layers className="w-4 h-4" />
-              </div>
-              <div>
-                <h3 className="text-sm font-black text-white">מערכת אלמנטים ו-Overlays ({overlays.length})</h3>
-                <p className="text-[11px] text-slate-400">אלמנטים לגיימינג, סטרימינג, ביקורות וקולנוע</p>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => setIsOverlayEditMode(!isOverlayEditMode)}
-              className={`px-3 py-1 rounded-xl text-xs font-bold border transition-all flex items-center gap-1.5 ${
-                isOverlayEditMode
-                  ? 'bg-amber-500 text-slate-950 border-amber-400 font-black shadow'
-                  : 'bg-slate-900 text-slate-300 border-slate-800 hover:text-white'
-              }`}
-            >
-              <Move className="w-3.5 h-3.5" />
-              <span>{isOverlayEditMode ? 'סגור מצב הזזה' : 'מצב הזזה ועריכה'}</span>
-            </button>
-          </div>
-
-          <div className="space-y-3">
-            {/* Category tabs filter */}
-            <div className="flex items-center gap-1 overflow-x-auto pb-1 text-[11px] font-bold">
-              {[
-                { id: 'all', label: 'הכל' },
-                { id: 'gaming', label: '🎮 גיימינג' },
-                { id: 'streaming', label: '📡 סטרימינג' },
-                { id: 'review', label: '⭐ ביקורות' },
-                { id: 'cinema', label: '🎬 קולנוע' },
-              ].map(cat => (
-                <button
-                  key={cat.id}
-                  type="button"
-                  onClick={() => setOverlayCategoryFilter(cat.id as any)}
-                  className={`px-2.5 py-1 rounded-lg shrink-0 transition-colors ${
-                    overlayCategoryFilter === cat.id
-                      ? 'bg-cyan-600 text-white font-black'
-                      : 'bg-slate-900 text-slate-400 hover:text-white'
-                  }`}
-                >
-                  {cat.label}
-                </button>
-              ))}
-            </div>
-
-            {/* Overlay Catalog Grid */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 max-h-44 overflow-y-auto p-1 bg-slate-950/80 rounded-2xl border border-slate-800">
-              {OVERLAY_CATALOG.filter(c => overlayCategoryFilter === 'all' || c.category === overlayCategoryFilter).map(item => (
-                <button
-                  key={item.type}
-                  type="button"
-                  onClick={() => addOverlay(item.type)}
-                  className="p-2 rounded-xl bg-slate-900/90 hover:bg-slate-800 border border-slate-800/80 hover:border-cyan-500/50 text-right transition-all flex items-center gap-2 group text-xs"
-                >
-                  <span className="text-base group-hover:scale-125 transition-transform">{item.emoji}</span>
-                  <div className="truncate">
-                    <span className="font-bold text-white block truncate">{item.label}</span>
-                    <span className="text-[9px] text-slate-400 capitalize">{item.category}</span>
-                  </div>
-                </button>
-              ))}
-            </div>
-
-            {/* Active Overlays List with Content Editor */}
-            {overlays.length > 0 && (
-              <div className="space-y-1.5 pt-2 border-t border-slate-800">
-                <span className="text-[11px] font-bold text-slate-300 block">אלמנטים פעילים על המסך (לחץ לעריכת תוכן):</span>
-                <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-                  {overlays.map(o => {
-                    const catalogItem = OVERLAY_CATALOG.find(c => c.type === o.type);
-                    const isEditingThis = editingOverlayId === o.id;
-
-                    return (
-                      <div key={o.id} className="p-2 rounded-xl bg-slate-900 border border-slate-800 space-y-2 text-xs">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <span>{catalogItem?.emoji || '🎨'}</span>
-                            <span className="font-bold text-white">{catalogItem?.label || o.type}</span>
-                          </div>
-                          <div className="flex items-center gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => setEditingOverlayId(isEditingThis ? null : o.id)}
-                              className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all ${
-                                isEditingThis
-                                  ? 'bg-amber-500 text-slate-950 font-black'
-                                  : 'bg-slate-800 text-cyan-400 hover:bg-slate-700'
-                              }`}
-                            >
-                              {isEditingThis ? 'סגור עריכה' : '✏️ ערוך תוכן'}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => toggleOverlayVisible(o.id)}
-                              className={`p-1 rounded text-slate-400 hover:text-white ${!o.visible ? 'opacity-40' : ''}`}
-                              title={o.visible ? 'הסתר' : 'הצג'}
-                            >
-                              {o.visible ? <Eye className="w-3.5 h-3.5 text-cyan-400" /> : <EyeOff className="w-3.5 h-3.5" />}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                removeOverlay(o.id);
-                                if (isEditingThis) setEditingOverlayId(null);
-                              }}
-                              className="p-1 rounded text-rose-400 hover:text-rose-300"
-                              title="מחק"
-                            >
-                              <X className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </div>
-
-                        {/* Inline Content Editor Form for selected Overlay */}
-                        {isEditingThis && (
-                          <div className="p-3 rounded-xl bg-slate-950 border border-cyan-500/40 space-y-2 text-xs animate-in fade-in">
-                            <span className="text-[10px] font-bold text-cyan-400 block pb-1 border-b border-slate-800">
-                              עריכת פרטי האלמנט:
-                            </span>
-                            {Object.keys(o.config).map(field => {
-                              const val = (o.config as any)[field];
-                              const fieldLabels: Record<string, string> = {
-                                title: 'כותרת',
-                                name: 'שם / כינוי',
-                                subtitle: 'תת כותרת',
-                                text: 'טקסט',
-                                description: 'תיאור',
-                                username: 'שם משתמש',
-                                message: 'הודעה',
-                                channelName: 'שם הערוץ',
-                                score: 'ציון',
-                                maxScore: 'ציון מקסימלי',
-                                value: 'ערך / אחוז',
-                                label: 'תווית',
-                                verdict: 'סיכום / Verdict',
-                                scene: 'סצנה',
-                                reaction: 'תגובה (GG/EZ...)',
-                                pros: 'יתרונות (PROS)',
-                                cons: 'חסרונות (CONS)',
-                                genre: 'ז\'אנר',
-                                year: 'שנה',
-                                platform: 'פלטפורמה',
-                                color: 'צבע (Hex)',
-                                icon: 'אייקון / אימוג\'י',
-                                opacity: 'שקיפות (%)',
-                                showStars: 'הצג כוכבים',
-                                showValue: 'הצג ערך מספרי',
-                              };
-                              const labelText = fieldLabels[field] || field;
-
-                              if (typeof val === 'boolean') {
-                                return (
-                                  <div key={field} className="flex items-center justify-between py-1">
-                                    <label className="text-slate-300 font-bold">{labelText}:</label>
-                                    <input
-                                      type="checkbox"
-                                      checked={val}
-                                      onChange={(e) => updateOverlayConfig(o.id, field, e.target.checked)}
-                                      className="accent-cyan-500 cursor-pointer w-4 h-4"
-                                    />
-                                  </div>
-                                );
-                              }
-                              if (typeof val === 'number') {
-                                return (
-                                  <div key={field} className="flex items-center justify-between gap-2 py-0.5">
-                                    <label className="text-slate-300 font-bold">{labelText}:</label>
-                                    <input
-                                      type="number"
-                                      value={val}
-                                      onChange={(e) => updateOverlayConfig(o.id, field, parseFloat(e.target.value) || 0)}
-                                      className="w-24 px-2 py-1 rounded-lg bg-slate-900 border border-slate-700 text-cyan-300 font-mono font-bold text-center"
-                                    />
-                                  </div>
-                                );
-                              }
-                              if (typeof val === 'string') {
-                                return (
-                                  <div key={field} className="space-y-1">
-                                    <label className="text-slate-400 font-bold text-[10px] block">{labelText}:</label>
-                                    <input
-                                      type="text"
-                                      value={val}
-                                      onChange={(e) => updateOverlayConfig(o.id, field, e.target.value)}
-                                      className="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-white font-medium text-xs focus:border-cyan-500"
-                                    />
-                                  </div>
-                                );
-                              }
-                              if (Array.isArray(val)) {
-                                return (
-                                  <div key={field} className="space-y-1">
-                                    <label className="text-slate-400 font-bold text-[10px] block">{labelText} (מופרדים בפסיקים):</label>
-                                    <input
-                                      type="text"
-                                      value={val.join(', ')}
-                                      onChange={(e) => updateOverlayConfig(o.id, field, e.target.value.split(',').map(s => s.trim()))}
-                                      className="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-white text-xs"
-                                    />
-                                  </div>
-                                );
-                              }
-                              return null;
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
+        {/* DECK B: SIMPLIFIED OVERLAY & VISUAL ELEMENTS SYSTEM */}
+        <SimpleOverlayManager
+          overlays={overlays}
+          setOverlays={setOverlays}
+          isEditMode={isOverlayEditMode}
+          setIsEditMode={setIsOverlayEditMode}
+          editingOverlayId={editingOverlayId}
+          setEditingOverlayId={setEditingOverlayId}
+          onAddOverlay={addOverlay}
+          onRemoveOverlay={removeOverlay}
+          onToggleVisible={toggleOverlayVisible}
+          onUpdateConfig={updateOverlayConfig}
+          onUpdatePosition={updateOverlayPosition}
+        />
       </div>
 
       {/* iPhone RemoteCam WebRTC Modal */}

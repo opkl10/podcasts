@@ -62,6 +62,18 @@ const REACTION_THEMES: Record<
     bgClass: 'bg-purple-500/10 border-purple-500/30',
     emoji: '🎯',
   },
+  FAIL: {
+    textClass: 'text-red-500',
+    glowClass: 'drop-shadow-[0_0_16px_rgba(239,68,68,1)]',
+    bgClass: 'bg-red-500/10 border-red-500/30',
+    emoji: '💀',
+  },
+  WIN: {
+    textClass: 'text-amber-300',
+    glowClass: 'drop-shadow-[0_0_16px_rgba(245,158,11,1)]',
+    bgClass: 'bg-amber-500/10 border-amber-500/30',
+    emoji: '🏆',
+  },
 };
 
 /**

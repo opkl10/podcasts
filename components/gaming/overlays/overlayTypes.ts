@@ -68,7 +68,7 @@ export interface GameTitleConfig extends OverlayBaseConfig {
 }
 
 export interface ReactionConfig extends OverlayBaseConfig {
-  reaction: 'GG' | 'EZ' | 'RAGE' | 'LOL' | 'WTF' | 'GJ' | 'NOOB' | 'CLUTCH';
+  reaction: 'GG' | 'EZ' | 'RAGE' | 'LOL' | 'WTF' | 'GJ' | 'NOOB' | 'CLUTCH' | 'FAIL' | 'WIN';
   color?: string;
 }
 
