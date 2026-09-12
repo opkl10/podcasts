@@ -92,7 +92,8 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
   const [selectedVideoId, setSelectedVideoId] = useState<string>('');
   const [selectedAudioId, setSelectedAudioId] = useState<string>('');
 
-  // Primary Facecam Stream
+  // Primary Audio & Video Streams
+  const [micStream, setMicStream] = useState<MediaStream | null>(null);
   const [facecamStream, setFacecamStream] = useState<MediaStream | null>(null);
   const [isVideoMuted, setIsVideoMuted] = useState(false);
   const [isAudioMuted, setIsAudioMuted] = useState(false);
@@ -384,12 +385,15 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
       setVideoDevices(videoInputs);
 
       // Auto-select microphone if not selected
+      const activeMicId = selectedAudioId || (audioInputs.length > 0 ? audioInputs[0].deviceId : '');
       if (audioInputs.length > 0 && !selectedAudioId) {
-        setSelectedAudioId(audioInputs[0].deviceId);
+        setSelectedAudioId(activeMicId);
       }
 
       // Auto-detect Elgato / Console audio input device (PlayStation / Xbox via HDMI)
+      // Must NOT be the same as the microphone!
       const elgatoAudioDev = audioInputs.find(a => {
+        if (a.deviceId === activeMicId) return false;
         const l = a.label.toLowerCase();
         return (
           l.includes('elgato') ||
@@ -399,7 +403,6 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
           l.includes('4k') ||
           l.includes('capture') ||
           l.includes('hdmi') ||
-          l.includes('usb audio') ||
           l.includes('digital audio') ||
           l.includes('game')
         );
@@ -555,19 +558,79 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
     };
   }, [episode.id]);
 
-  // 3. Initialize or Update Primary Facecam Stream
+  // 3a. Dedicated Streamer Microphone Stream Acquisition (Channel 1)
+  useEffect(() => {
+    let active = true;
+    let streamInstance: MediaStream | null = null;
+
+    async function initMicAudio() {
+      try {
+        let stream: MediaStream;
+        if (selectedAudioId) {
+          try {
+            stream = await navigator.mediaDevices.getUserMedia({
+              audio: {
+                deviceId: { ideal: selectedAudioId },
+                echoCancellation: false,
+                noiseSuppression: false,
+                autoGainControl: false,
+              },
+              video: false,
+            });
+          } catch (specificErr) {
+            console.warn('[Mic] Ideal device constraints failed, trying basic audio:', specificErr);
+            stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+          }
+        } else {
+          stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        }
+
+        if (!active) {
+          stream.getTracks().forEach(t => t.stop());
+          return;
+        }
+
+        if (micStream) {
+          micStream.getTracks().forEach(t => t.stop());
+        }
+
+        streamInstance = stream;
+        setMicStream(stream);
+
+        if (gamingMixerRef.current) {
+          gamingMixerRef.current.resume();
+        }
+      } catch (err) {
+        console.error('[Mic] Failed to acquire microphone stream:', err);
+        setMicStream(null);
+      }
+    }
+
+    initMicAudio();
+
+    return () => {
+      active = false;
+      if (streamInstance) {
+        streamInstance.getTracks().forEach(t => t.stop());
+      }
+    };
+  }, [selectedAudioId]);
+
+  // 3b. Initialize or Update Primary Facecam Video Stream (Video Only)
   useEffect(() => {
     let active = true;
 
     async function initFacecam() {
       if (isUsingRemoteCam && remoteStream) return;
+      if (!selectedVideoId) {
+        setFacecamStream(null);
+        return;
+      }
 
       try {
         const constraints: MediaStreamConstraints = {
-          audio: selectedAudioId ? { deviceId: { exact: selectedAudioId }, echoCancellation: true, noiseSuppression } : true,
-          video: selectedVideoId 
-            ? getVideoConstraints(videoResolution === '4k' ? '1080p' : videoResolution, selectedVideoId)
-            : getVideoConstraints('1080p')
+          audio: false,
+          video: getVideoConstraints(videoResolution === '4k' ? '1080p' : videoResolution, selectedVideoId)
         };
 
         const stream = await navigator.mediaDevices.getUserMedia(constraints);
@@ -591,7 +654,7 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
     return () => {
       active = false;
     };
-  }, [selectedVideoId, selectedAudioId, isUsingRemoteCam, noiseSuppression]);
+  }, [selectedVideoId, isUsingRemoteCam, videoResolution]);
 
   // Connect facecamStream to hidden video element
   useEffect(() => {
@@ -1012,7 +1075,7 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
       });
     }
 
-    const activeMicStream = isUsingRemoteCam && remoteStream ? remoteStream : facecamStream;
+    const activeMicStream = micStream || (isUsingRemoteCam && remoteStream ? remoteStream : null);
     const activeGameStream = gameAudioStream || (captureCardStream?.getAudioTracks().length ? captureCardStream : null) || (screenStream?.getAudioTracks().length ? screenStream : null);
 
     gamingMixerRef.current.setup(activeMicStream, activeGameStream, {
@@ -1026,7 +1089,7 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
       // Don't stop immediately on every re-render, keep instance alive
     };
   }, [
-    facecamStream,
+    micStream,
     remoteStream,
     isUsingRemoteCam,
     gameAudioStream,
@@ -1464,7 +1527,7 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
       }
 
       const compositeVideoTrack = canvasStream.getVideoTracks()[0];
-      const activeMicStream = isUsingRemoteCam && remoteStream ? remoteStream : facecamStream;
+      const activeMicStream = micStream || (isUsingRemoteCam && remoteStream ? remoteStream : null);
       const activeGameStream = gameAudioStream || (captureCardStream?.getAudioTracks().length ? captureCardStream : null) || (screenStream?.getAudioTracks().length ? screenStream : null);
 
       const audioPipes = gamingMixerRef.current?.setup(activeMicStream, activeGameStream, {
@@ -1626,7 +1689,8 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
   };
 
   const toggleMic = () => {
-    const stream = isUsingRemoteCam && remoteStream ? remoteStream : facecamStream;
+    gamingMixerRef.current?.resume();
+    const stream = micStream || (isUsingRemoteCam && remoteStream ? remoteStream : null);
     if (!stream) return;
     const audioTrack = stream.getAudioTracks()[0];
     if (audioTrack) {
@@ -3227,7 +3291,10 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
               {/* Mic Device Selector */}
               <select
                 value={selectedAudioId}
-                onChange={(e) => setSelectedAudioId(e.target.value)}
+                onChange={(e) => {
+                  setSelectedAudioId(e.target.value);
+                  gamingMixerRef.current?.resume();
+                }}
                 className="w-full px-2.5 py-1.5 rounded-lg bg-slate-950 border border-slate-700/80 text-[11px] text-white focus:outline-none focus:border-indigo-500"
               >
                 {audioDevices.map(a => (
@@ -3245,7 +3312,10 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
                   max="2"
                   step="0.05"
                   value={micGain}
-                  onChange={(e) => setMicGain(parseFloat(e.target.value))}
+                  onChange={(e) => {
+                    setMicGain(parseFloat(e.target.value));
+                    gamingMixerRef.current?.resume();
+                  }}
                   className="flex-1 accent-indigo-500 cursor-pointer h-1.5 bg-slate-800 rounded-lg"
                 />
                 <div className="w-20 h-2.5 rounded-full bg-slate-950 overflow-hidden border border-slate-700" title="מד עוצמת מיקרופון">

@@ -521,6 +521,9 @@ export class GamingAudioMixer {
     if (!AudioContextClass) return { mixedStream: null, isolatedMicStream: null, isolatedGameStream: null };
 
     this.audioCtx = new AudioContextClass({ latencyHint: 'interactive' });
+    if (this.audioCtx.state === 'suspended') {
+      this.audioCtx.resume().catch(() => {});
+    }
     this.masterDestinationNode = this.audioCtx.createMediaStreamDestination();
     this.micDestinationNode = this.audioCtx.createMediaStreamDestination();
     this.gameDestinationNode = this.audioCtx.createMediaStreamDestination();
@@ -619,6 +622,12 @@ export class GamingAudioMixer {
 
   public getIsolatedGameStream(): MediaStream | null {
     return this.gameDestinationNode?.stream || null;
+  }
+
+  public resume() {
+    if (this.audioCtx && this.audioCtx.state === 'suspended') {
+      this.audioCtx.resume().catch(() => {});
+    }
   }
 
   private startLevelLoop() {
