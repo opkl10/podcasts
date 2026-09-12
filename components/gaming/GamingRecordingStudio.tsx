@@ -2399,43 +2399,64 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
                 </div>
 
 
-                {/* 640x480 Low Quality / Safe Mode Diagnostic Alert & Step-by-Step Fixer */}
+                {/* 640x480 SD Lock Diagnostic Panel */}
                 {captureDetails && captureDetails.width <= 640 && (
-                  <div className="p-3.5 rounded-2xl bg-gradient-to-b from-amber-950/80 to-slate-950 border border-amber-500/50 space-y-3 text-xs text-amber-200 shadow-xl">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex items-start gap-2">
-                        <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                        <div>
-                          <span className="font-bold text-amber-300 block text-xs">
-                            מדוע ב-OBS זה מציג ב-Full HD וכאן זה תקוע על 640×480?
-                          </span>
-                          <p className="text-[11px] text-amber-200/90 leading-relaxed mt-1">
-                            במערכת macOS, כאשר <b>OBS תופסת את ה-Elgato</b>, מערכת ההפעלה נועלת את החומרה ולא מאפשרת לדפדפן (Chrome) לקבל יותר מרזולוציית Preview נמוכה (640×480).
-                            <br />
-                            <b>זה 100% פתיר ב-10 שניות באחת מ-2 הדרכים הבאות:</b>
-                          </p>
-                        </div>
-                      </div>
+                  <div className="p-3.5 rounded-2xl bg-gradient-to-b from-rose-950/80 to-slate-950 border border-rose-500/50 space-y-3 text-xs shadow-xl" dir="rtl">
+                    <div className="flex items-center gap-2 text-rose-300 font-black text-xs">
+                      <AlertTriangle className="w-4 h-4 shrink-0" />
+                      <span>🔒 Elgato נעול על SD — אבחון מהיר</span>
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
-                      <div className="p-2.5 rounded-xl bg-purple-950/60 border border-purple-500/40 space-y-1">
-                        <div className="flex items-center gap-1.5 text-purple-300 font-bold text-[11px]">
-                          <span>🎥 דרך 1 (עם OBS פתוח):</span>
+                    {/* Live capabilities readout */}
+                    {captureCapabilities && (
+                      <div className="p-2.5 rounded-xl bg-black/60 border border-slate-700 space-y-1.5 font-mono text-[10px] text-left" dir="ltr">
+                        <div className="text-slate-400 font-bold mb-1 text-right" dir="rtl">📊 מה Chrome מדווח על היכולות של המכשיר:</div>
+                        <div className={`flex items-center justify-between ${((captureCapabilities as any).width?.max ?? 0) >= 1920 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                          <span>width.max:</span>
+                          <span className="font-black">{(captureCapabilities as any).width?.max ?? '?'}px {((captureCapabilities as any).width?.max ?? 0) >= 1920 ? '✅ HD capable' : '❌ LOCKED TO SD'}</span>
                         </div>
-                        <p className="text-[10px] text-slate-300 leading-tight">
-                          בתוך OBS, לחץ על <b>Start Virtual Camera</b> (מצלמה וירטואלית בצד ימין למטה).
-                          לאחר מכן בחר בתפריט למעלה <b>OBS Virtual Camera</b> — תקבל 1080p 60FPS חלק מיד!
-                        </p>
+                        <div className="flex items-center justify-between text-slate-300">
+                          <span>height.max:</span>
+                          <span>{(captureCapabilities as any).height?.max ?? '?'}px</span>
+                        </div>
+                        <div className="flex items-center justify-between text-slate-300">
+                          <span>frameRate.max:</span>
+                          <span>{(captureCapabilities as any).frameRate?.max ?? '?'} FPS</span>
+                        </div>
+                        <div className="flex items-center justify-between text-slate-400">
+                          <span>deviceId:</span>
+                          <span className="truncate max-w-[140px]">{(captureCapabilities as any).deviceId ?? '?'}</span>
+                        </div>
                       </div>
+                    )}
 
-                      <div className="p-2.5 rounded-xl bg-cyan-950/60 border border-cyan-500/40 space-y-1">
-                        <div className="flex items-center gap-1.5 text-cyan-300 font-bold text-[11px]">
-                          <span>🔒 דרך 2 (חיבור ישיר):</span>
+                    {/* Diagnosis and fix */}
+                    <div className="space-y-2">
+                      {captureCapabilities && ((captureCapabilities as any).width?.max ?? 0) < 1920 ? (
+                        // Case 1: Chrome reports device is only capable of 640x480 → VDCAssistant locked
+                        <div className="p-2.5 rounded-xl bg-rose-950/60 border border-rose-500/40 text-[11px] text-rose-200 space-y-1.5">
+                          <p className="font-bold text-rose-300">🔴 VDCAssistant נועל את ה-Elgato</p>
+                          <p className="leading-relaxed">ה-daemon של macOS (VDCAssistant) מדווח לדפדפן שהמכשיר תומך ב-640×480 בלבד. לחץ על <b>🔓 שחרר נעילה</b> — זה יאפס את VDCAssistant ויחדש את הסשן.</p>
+                          <p className="text-rose-400/80 text-[10px]">אם 🔓 לא עוזר: נתק וחבר מחדש את כבל ה-USB של ה-Elgato.</p>
                         </div>
-                        <p className="text-[10px] text-slate-300 leading-tight">
-                          סגור את תוכנת OBS לחלוטין (<b>Cmd + Q</b>) כדי לשחרר את נעילת החומרה. לאחר מכן לחץ על <b>אתחל צינור</b> למעלה.
-                        </p>
+                      ) : (
+                        // Case 2: Chrome reports HD capable but still returning 640×480 → constraint issue
+                        <div className="p-2.5 rounded-xl bg-amber-950/60 border border-amber-500/40 text-[11px] text-amber-200 space-y-1.5">
+                          <p className="font-bold text-amber-300">🟡 Chrome יודע על HD אבל לא מספק</p>
+                          <p className="leading-relaxed">Chrome מדווח שהמכשיר תומך ב-{(captureCapabilities as any).width?.max}px — הבעיה היא ב-constraints. לחץ על <b>⚡ כפה 4K</b> או <b>📺 כפה 1080p</b>.</p>
+                        </div>
+                      )}
+
+                      <div className="grid grid-cols-2 gap-1.5">
+                        <div className="p-2 rounded-xl bg-slate-900/80 border border-slate-700 text-[10px] text-slate-300 space-y-1">
+                          <p className="font-bold text-slate-200">🔌 פתרון 1 — USB reset:</p>
+                          <p className="leading-relaxed">נתק כבל USB מהמחשב → המתן 3 שניות → חבר → לחץ אתחל צינור</p>
+                        </div>
+                        <div className="p-2 rounded-xl bg-slate-900/80 border border-slate-700 text-[10px] text-slate-300 space-y-1">
+                          <p className="font-bold text-slate-200">💻 פתרון 2 — טרמינל:</p>
+                          <code className="block text-emerald-400 leading-relaxed text-[9px] break-all">killall VDCAssistant</code>
+                          <p className="text-slate-400">ואז לחץ אתחל צינור</p>
+                        </div>
                       </div>
                     </div>
 

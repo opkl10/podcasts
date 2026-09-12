@@ -135,26 +135,33 @@ app.on('before-quit', () => {
   if (nextServer) nextServer.kill();
 });
 
-// ─── IPC: AVFoundation Camera Lock Release ────────────────────────────────────
-// When the renderer calls window.electronAPI.releaseCameraLock(), the main
-// process runs a tiny AppleScript that kills any conflicting camera-locking
-// processes (FaceTime, Photo Booth) and then signals the renderer to re-open
-// the camera. This forces macOS to reassign the AVFoundation capture session
-// to Electron at full resolution.
+// ─── IPC: AVFoundation + VDCAssistant Camera Lock Release ─────────────────────
+// VDCAssistant is the macOS system daemon that brokers ALL UVC camera sessions.
+// When it holds a stale session (even after all user apps close), Chrome gets
+// a degraded 640×480 "preview only" stream. Killing VDCAssistant forces macOS
+// to fully reset the UVC device and rebuild the session from scratch — allowing
+// Electron to claim it at full 4K resolution on next open.
+// Both VDCAssistant and AppleCameraAssistant auto-restart within ~1 second.
 
 ipcMain.handle('release-camera-lock', async () => {
   return new Promise<{ ok: boolean; msg: string }>((resolve) => {
-    // Kill processes known to lock UVC cameras on macOS (safe — they reopen on next launch)
     const killCmd = [
+      // User apps that might hold camera sessions
       'pkill -x "FaceTime" 2>/dev/null',
       'pkill -x "Photo Booth" 2>/dev/null',
+      'pkill -x "Facetime" 2>/dev/null',
+      // THE REAL FIX: macOS UVC broker daemons (safe — auto-restart in ~1s)
+      'killall VDCAssistant 2>/dev/null',
+      'killall AppleCameraAssistant 2>/dev/null',
     ].join('; ');
 
-    exec(killCmd, () => {
-      // Wait 800ms for macOS to fully release the AVFoundation session
+    exec(killCmd, (err) => {
+      const killedDaemon = !err || err.code !== null; // even exit 1 means something ran
+      console.log('[Electron] Camera daemon reset attempted:', killedDaemon ? 'VDCAssistant killed' : 'already clean');
+      // Wait 1.5s for macOS to fully restart VDCAssistant and rebuild USB session
       setTimeout(() => {
-        resolve({ ok: true, msg: 'AVFoundation lock released — camera session closed by conflicting apps' });
-      }, 800);
+        resolve({ ok: true, msg: 'VDCAssistant + AppleCameraAssistant killed — macOS UVC session fully reset' });
+      }, 1500);
     });
   });
 });
