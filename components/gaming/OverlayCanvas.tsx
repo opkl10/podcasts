@@ -22,6 +22,7 @@ import RatingMeter from './overlays/RatingMeter';
 import TipCard from './overlays/TipCard';
 import SocialBar from './overlays/SocialBar';
 import Watermark from './overlays/Watermark';
+import YouTubeLiveChat from './overlays/YouTubeLiveChat';
 
 interface OverlayCanvasProps {
   overlays: OverlayItemType[];
@@ -41,6 +42,7 @@ function renderOverlayContent(overlay: OverlayItemType, timerSeconds: number): R
     case 'achievement':       return <AchievementPopup config={cfg} />;
     case 'health_bar':        return <HealthBar config={cfg} />;
     case 'chat_bubble':       return <ChatBubble config={cfg} />;
+    case 'youtube_chat':      return <YouTubeLiveChat config={cfg} />;
     case 'score_counter':     return <ScoreCounter config={cfg} />;
     case 'game_title':        return <GameTitleCard config={cfg} />;
     case 'reaction':          return <ReactionSticker config={cfg} />;

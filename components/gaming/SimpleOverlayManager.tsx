@@ -29,6 +29,13 @@ import {
   ProConConfig,
   LiveBadgeConfig,
   SessionTimerConfig,
+  SocialBarConfig,
+  ChatBubbleConfig,
+  YouTubeChatConfig,
+  AchievementConfig,
+  TipCardConfig,
+  RatingMeterConfig,
+  WatermarkConfig,
 } from './overlays/overlayTypes';
 
 // ── 1-Click Presets ──────────────────────────────────────────────────────────
@@ -215,6 +222,7 @@ export const CATALOG_FRIENDLY_META: Record<OverlayType, { title: string; desc: s
   rating_meter: { title: 'מד הערכה (גרפיקה/הנאה)', desc: 'סליידר אחוזים גרפי' },
   tip_card: { title: 'כרטיס טיפ / אזהרה', desc: 'הודעת מידע קופצת עם אייקון' },
   social_bar: { title: 'פס רשתות חברתיות', desc: 'יוטיוב, טוויץ׳, טיקטוק ודיסקורד' },
+  youtube_chat: { title: 'צ׳אט יוטיוב לייב', desc: 'חלון צ׳אט חי מיוטיוב עם הודעות רצות וסופר-צ׳אט' },
   watermark: { title: 'קרדיט / סימן מים', desc: 'טקסט עדין ושקוף בפינת המסך' },
 };
 
@@ -245,8 +253,19 @@ export default function SimpleOverlayManager({
   onUpdateConfig,
   onUpdatePosition,
 }: SimpleOverlayManagerProps) {
-  const [activeTab, setActiveTab] = useState<'reactions' | 'presets' | 'add' | 'active'>('reactions');
+  const [activeTab, setActiveTab] = useState<'reactions' | 'youtube' | 'presets' | 'add' | 'active'>('reactions');
   const [catalogCategory, setCatalogCategory] = useState<'all' | 'gaming' | 'streaming' | 'review' | 'cinema'>('all');
+  const [youtubeVideoInput, setYoutubeVideoInput] = useState<string>('');
+  const [savedYoutubeId, setSavedYoutubeId] = useState<string>('');
+
+  const cleanYoutubeId = (url: string) => {
+    if (!url) return '';
+    const trimmed = url.trim();
+    const match = trimmed.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=|live\/))([\w-]{11})/);
+    if (match && match[1]) return match[1];
+    if (/^[\w-]{11}$/.test(trimmed)) return trimmed;
+    return trimmed;
+  };
 
   // 1-Click apply preset
   const handleApplyPreset = (preset: typeof OVERLAY_PRESETS[0]) => {
@@ -352,24 +371,37 @@ export default function SimpleOverlayManager({
       </div>
 
       {/* ── SIMPLE TABS ── */}
-      <div className="grid grid-cols-4 gap-1.5 p-1 rounded-2xl bg-slate-950/80 border border-slate-800 text-xs font-bold">
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 p-1 rounded-2xl bg-slate-950/80 border border-slate-800 text-xs font-bold">
         <button
           type="button"
           onClick={() => setActiveTab('reactions')}
-          className={`py-2 px-2 rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+          className={`py-2 px-1.5 rounded-xl transition-all flex items-center justify-center gap-1 cursor-pointer ${
             activeTab === 'reactions'
               ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-slate-950 font-black shadow-md'
               : 'text-slate-400 hover:text-slate-200'
           }`}
         >
           <Zap className="w-3.5 h-3.5" />
-          <span>מדבקות תגובה</span>
+          <span>תגובות</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('youtube')}
+          className={`py-2 px-1.5 rounded-xl transition-all flex items-center justify-center gap-1 cursor-pointer ${
+            activeTab === 'youtube'
+              ? 'bg-gradient-to-r from-red-600 to-rose-600 text-white font-black shadow-md shadow-red-950/50'
+              : 'text-red-400 hover:text-red-300 hover:bg-red-950/30'
+          }`}
+        >
+          <span className="w-2 h-2 rounded-full bg-red-500 animate-ping" />
+          <span>יוטיוב לייב 🔴</span>
         </button>
 
         <button
           type="button"
           onClick={() => setActiveTab('presets')}
-          className={`py-2 px-2 rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+          className={`py-2 px-1.5 rounded-xl transition-all flex items-center justify-center gap-1 cursor-pointer ${
             activeTab === 'presets'
               ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white font-black shadow-md'
               : 'text-slate-400 hover:text-slate-200'
@@ -382,7 +414,7 @@ export default function SimpleOverlayManager({
         <button
           type="button"
           onClick={() => setActiveTab('add')}
-          className={`py-2 px-2 rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+          className={`py-2 px-1.5 rounded-xl transition-all flex items-center justify-center gap-1 cursor-pointer ${
             activeTab === 'add'
               ? 'bg-cyan-600 text-white font-black shadow-md'
               : 'text-slate-400 hover:text-slate-200'
@@ -395,7 +427,7 @@ export default function SimpleOverlayManager({
         <button
           type="button"
           onClick={() => setActiveTab('active')}
-          className={`py-2 px-2 rounded-xl transition-all flex items-center justify-center gap-1.5 relative cursor-pointer ${
+          className={`py-2 px-1.5 rounded-xl transition-all flex items-center justify-center gap-1 relative cursor-pointer ${
             activeTab === 'active'
               ? 'bg-emerald-600 text-white font-black shadow-md'
               : 'text-slate-400 hover:text-slate-200'
@@ -458,7 +490,190 @@ export default function SimpleOverlayManager({
         </div>
       )}
 
-      {/* ── TAB 2: 1-CLICK PRESETS ── */}
+      {/* ── TAB: YOUTUBE LIVE INTEGRATION ── */}
+      {activeTab === 'youtube' && (
+        <div className="space-y-4 animate-in fade-in duration-200">
+          <div className="p-4 rounded-2xl bg-gradient-to-r from-red-950/60 via-slate-900 to-red-950/40 border border-red-500/40 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-xl bg-red-600 text-white shadow-lg shadow-red-950/50">
+                  <svg className="w-5 h-5 fill-white" viewBox="0 0 24 24">
+                    <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
+                  </svg>
+                </div>
+                <div>
+                  <h4 className="text-sm font-black text-white">חיבור לשידור חי ביוטיוב (YouTube Live)</h4>
+                  <p className="text-[11px] text-slate-300">סנכרון צ׳אט חי, באדג׳ שידור חי וסרגל רשתות</p>
+                </div>
+              </div>
+              <span className="text-[10px] font-bold text-red-400 bg-red-950/80 px-2.5 py-1 rounded-xl border border-red-800">
+                🔴 לייב סטרימינג
+              </span>
+            </div>
+
+            {/* Video ID or URL Input */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-slate-200 block">
+                קישור לשידור החי ביוטיוב או מזהה סרטון (Video ID):
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={youtubeVideoInput}
+                  onChange={(e) => setYoutubeVideoInput(e.target.value)}
+                  placeholder="https://youtube.com/live/xxxx או מזהה סרטון"
+                  className="flex-1 px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-xs font-mono focus:border-red-500 focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const clean = cleanYoutubeId(youtubeVideoInput);
+                    if (clean) {
+                      setSavedYoutubeId(clean);
+                      // Update any active youtube_chat overlay
+                      const existingChat = overlays.find(o => o.type === 'youtube_chat');
+                      if (existingChat) {
+                        onUpdateConfig(existingChat.id, 'videoId', clean);
+                      }
+                    }
+                  }}
+                  className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-black transition-all shadow cursor-pointer"
+                >
+                  חבר
+                </button>
+              </div>
+              {savedYoutubeId && (
+                <p className="text-[11px] text-emerald-400 flex items-center gap-1 font-bold">
+                  <span>✓ מחובר למזהה סרטון:</span>
+                  <span className="font-mono">{savedYoutubeId}</span>
+                </p>
+              )}
+            </div>
+          </div>
+
+          {/* Quick 1-Click YouTube Integration Buttons */}
+          <div className="space-y-2">
+            <label className="text-xs font-black text-slate-300 block">
+              אלמנטים מחוברים ליוטיוב להוספה בלחיצה אחת:
+            </label>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {/* 1. YouTube Live Chat Box */}
+              <button
+                type="button"
+                onClick={() => {
+                  const existing = overlays.find(o => o.type === 'youtube_chat');
+                  if (existing) {
+                    if (savedYoutubeId) onUpdateConfig(existing.id, 'videoId', savedYoutubeId);
+                    setEditingOverlayId(existing.id);
+                    setActiveTab('active');
+                  } else {
+                    onAddOverlay('youtube_chat');
+                    setActiveTab('active');
+                  }
+                }}
+                className="p-3 rounded-2xl bg-slate-900/90 hover:bg-slate-800 border border-red-500/30 hover:border-red-500/60 transition-all text-right group flex items-start gap-3 cursor-pointer"
+              >
+                <div className="p-2 rounded-xl bg-red-600/20 text-red-400 border border-red-500/30 shrink-0">
+                  <svg className="w-5 h-5 fill-current" viewBox="0 0 24 24">
+                    <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
+                  </svg>
+                </div>
+                <div>
+                  <h5 className="text-xs font-black text-white group-hover:text-red-300 transition-colors">
+                    💬 תיבת צ׳אט חי מיוטיוב
+                  </h5>
+                  <p className="text-[10px] text-slate-400 mt-0.5">
+                    הצגת הודעות הצופים רצות בזמן אמת על גבי מסך השידור
+                  </p>
+                </div>
+              </button>
+
+              {/* 2. Highlighted Chat Bubble */}
+              <button
+                type="button"
+                onClick={() => {
+                  onAddOverlay('chat_bubble');
+                  setActiveTab('active');
+                }}
+                className="p-3 rounded-2xl bg-slate-900/90 hover:bg-slate-800 border border-purple-500/30 hover:border-purple-500/60 transition-all text-right group flex items-start gap-3 cursor-pointer"
+              >
+                <div className="p-2 rounded-xl bg-purple-600/20 text-purple-400 border border-purple-500/30 shrink-0">
+                  <span className="text-base">🗨️</span>
+                </div>
+                <div>
+                  <h5 className="text-xs font-black text-white group-hover:text-purple-300 transition-colors">
+                    🗨️ בועת תגובה מודגשת (Highlight)
+                  </h5>
+                  <p className="text-[10px] text-slate-400 mt-0.5">
+                    הקפצת תגובת צופה נבחרת עם תג YouTube על גבי המסך
+                  </p>
+                </div>
+              </button>
+
+              {/* 3. YouTube Live Badge */}
+              <button
+                type="button"
+                onClick={() => {
+                  const existing = overlays.find(o => o.type === 'live_badge');
+                  if (existing) {
+                    onUpdateConfig(existing.id, 'channelName', 'LIVE ON YOUTUBE');
+                    onUpdateConfig(existing.id, 'color', '#ef4444');
+                    setEditingOverlayId(existing.id);
+                    setActiveTab('active');
+                  } else {
+                    onAddOverlay('live_badge');
+                    setActiveTab('active');
+                  }
+                }}
+                className="p-3 rounded-2xl bg-slate-900/90 hover:bg-slate-800 border border-red-500/30 hover:border-red-500/60 transition-all text-right group flex items-start gap-3 cursor-pointer"
+              >
+                <div className="p-2 rounded-xl bg-red-600/20 text-red-400 border border-red-500/30 shrink-0">
+                  <span className="w-2.5 h-2.5 rounded-full bg-red-500 block animate-ping" />
+                </div>
+                <div>
+                  <h5 className="text-xs font-black text-white group-hover:text-red-300 transition-colors">
+                    🔴 באדג׳ שידור חי ביוטיוב
+                  </h5>
+                  <p className="text-[10px] text-slate-400 mt-0.5">
+                    תגית "LIVE ON YOUTUBE" מהבהבת ומקצועית בפינת המסך
+                  </p>
+                </div>
+              </button>
+
+              {/* 4. Social Bar with YouTube */}
+              <button
+                type="button"
+                onClick={() => {
+                  const existing = overlays.find(o => o.type === 'social_bar');
+                  if (existing) {
+                    setEditingOverlayId(existing.id);
+                    setActiveTab('active');
+                  } else {
+                    onAddOverlay('social_bar');
+                    setActiveTab('active');
+                  }
+                }}
+                className="p-3 rounded-2xl bg-slate-900/90 hover:bg-slate-800 border border-cyan-500/30 hover:border-cyan-500/60 transition-all text-right group flex items-start gap-3 cursor-pointer"
+              >
+                <div className="p-2 rounded-xl bg-cyan-600/20 text-cyan-400 border border-cyan-500/30 shrink-0">
+                  <span className="text-base">📱</span>
+                </div>
+                <div>
+                  <h5 className="text-xs font-black text-white group-hover:text-cyan-300 transition-colors">
+                    📱 ערוץ יוטיוב בפס הרשתות
+                  </h5>
+                  <p className="text-[10px] text-slate-400 mt-0.5">
+                    הצגת שם ערוץ היוטיוב, טוויץ׳ וטיקטוק שלך בתחתית המסך
+                  </p>
+                </div>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── TAB 3: 1-CLICK PRESETS ── */}
       {activeTab === 'presets' && (
         <div className="space-y-2.5 animate-in fade-in duration-200">
           <span className="text-[11px] font-bold text-slate-300 block">
@@ -1040,6 +1255,379 @@ export default function SimpleOverlayManager({
                         </div>
                       </div>
                     )}
+
+                    {/* ── SOCIAL BAR EDITOR (פס רשתות חברתיות) ── */}
+                    {currentEditing.type === 'social_bar' && (
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between pb-1 border-b border-slate-800">
+                          <div>
+                            <h4 className="text-xs font-black text-white">עריכת פס רשתות חברתיות (Social Bar)</h4>
+                            <p className="text-[10px] text-slate-400">הגדר את שמות החשבונות שיוצגו בפס על גבי המסך</p>
+                          </div>
+                        </div>
+
+                        {/* List of current handles */}
+                        <div className="space-y-2">
+                          {((currentEditing.config as SocialBarConfig).handles || []).map((h, idx) => (
+                            <div key={idx} className="flex items-center gap-2 p-2 rounded-xl bg-slate-900 border border-slate-700/80">
+                              <span className="text-xs font-black uppercase px-2 py-1 rounded bg-slate-950 text-purple-300 border border-slate-800 min-w-[75px] text-center">
+                                {h.platform === 'youtube' ? 'YouTube 🔴' :
+                                 h.platform === 'twitch' ? 'Twitch 🟣' :
+                                 h.platform === 'tiktok' ? 'TikTok 🎵' :
+                                 h.platform === 'instagram' ? 'Instagram 📸' :
+                                 h.platform === 'discord' ? 'Discord 💬' :
+                                 'X / Twitter 𝕏'}
+                              </span>
+                              <input
+                                type="text"
+                                value={h.handle}
+                                onChange={(e) => {
+                                  const newHandles = [...((currentEditing.config as SocialBarConfig).handles || [])];
+                                  newHandles[idx] = { ...newHandles[idx], handle: e.target.value };
+                                  onUpdateConfig(currentEditing.id, 'handles', newHandles);
+                                }}
+                                placeholder="@שם_הערוץ"
+                                className="flex-1 px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 text-white text-xs font-bold"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const newHandles = ((currentEditing.config as SocialBarConfig).handles || []).filter((_, i) => i !== idx);
+                                  onUpdateConfig(currentEditing.id, 'handles', newHandles);
+                                }}
+                                className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-950/40 transition-colors cursor-pointer"
+                                title="הסר רשת זו"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* Add new platform quick buttons */}
+                        <div className="space-y-1.5 pt-1">
+                          <label className="text-[10px] font-bold text-slate-300 block">+ הוסף רשת חברתית לפס:</label>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            {[
+                              { id: 'youtube', label: 'YouTube 🔴', def: '@channel' },
+                              { id: 'twitch', label: 'Twitch 🟣', def: 'live' },
+                              { id: 'tiktok', label: 'TikTok 🎵', def: '@tiktok' },
+                              { id: 'instagram', label: 'Instagram 📸', def: '@insta' },
+                              { id: 'discord', label: 'Discord 💬', def: 'discord.gg/xxx' },
+                              { id: 'twitter', label: 'X / Twitter 𝕏', def: '@twitter' },
+                            ].map((plt) => {
+                              const alreadyHas = ((currentEditing.config as SocialBarConfig).handles || []).some(h => h.platform === plt.id);
+                              return (
+                                <button
+                                  key={plt.id}
+                                  type="button"
+                                  onClick={() => {
+                                    if (alreadyHas) return;
+                                    const cur = (currentEditing.config as SocialBarConfig).handles || [];
+                                    onUpdateConfig(currentEditing.id, 'handles', [...cur, { platform: plt.id as any, handle: plt.def }]);
+                                  }}
+                                  disabled={alreadyHas}
+                                  className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border transition-all ${
+                                    alreadyHas
+                                      ? 'opacity-40 bg-slate-900 border-slate-800 text-slate-500 cursor-not-allowed'
+                                      : 'bg-slate-900 hover:bg-slate-800 border-slate-700 text-slate-300 hover:text-white cursor-pointer'
+                                  }`}
+                                >
+                                  + {plt.label}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* ── CHAT BUBBLE EDITOR (בועת צ׳אט צופים) ── */}
+                    {currentEditing.type === 'chat_bubble' && (
+                      <div className="space-y-3">
+                        <div className="grid grid-cols-2 gap-2">
+                          <div className="space-y-1">
+                            <label className="text-[10px] text-slate-400 font-bold block">שם השולח / הצופה:</label>
+                            <input
+                              type="text"
+                              value={(currentEditing.config as ChatBubbleConfig).username || ''}
+                              onChange={e => onUpdateConfig(currentEditing.id, 'username', e.target.value)}
+                              placeholder="שם משתמש"
+                              className="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-white text-xs font-bold"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[10px] text-slate-400 font-bold block">תג צופה (Badge):</label>
+                            <div className="flex items-center gap-1">
+                              {['YouTube', 'Member', 'VIP', 'Mod'].map(b => (
+                                <button
+                                  key={b}
+                                  type="button"
+                                  onClick={() => onUpdateConfig(currentEditing.id, 'badge', (currentEditing.config as ChatBubbleConfig).badge === b ? undefined : b)}
+                                  className={`px-2 py-1 rounded text-[10px] font-black border transition-all cursor-pointer ${
+                                    (currentEditing.config as ChatBubbleConfig).badge === b
+                                      ? 'bg-purple-600 text-white border-purple-400 shadow-sm'
+                                      : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-white'
+                                  }`}
+                                >
+                                  {b}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-[10px] text-slate-400 font-bold block">תוכן ההודעה:</label>
+                          <textarea
+                            rows={2}
+                            value={(currentEditing.config as ChatBubbleConfig).message || ''}
+                            onChange={e => onUpdateConfig(currentEditing.id, 'message', e.target.value)}
+                            placeholder="הודעת הצופים שתוצג על המסך..."
+                            className="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-white text-xs resize-none"
+                          />
+                        </div>
+
+                        <div className="space-y-1.5 pt-1">
+                          <label className="text-[10px] text-slate-400 font-bold block">תבניות מהירות להודעה:</label>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            {[
+                              { u: 'Matan_Pro', m: 'אחלה לייב! איזה שוט מטורף 🔥', b: 'YouTube' },
+                              { u: 'GamerGirl', m: 'GG אחי! שידור מעולה', b: 'Member' },
+                              { u: 'Alex99', m: 'איזה משחק זה? נראה פגז!', b: 'VIP' },
+                            ].map((sample, idx) => (
+                              <button
+                                key={idx}
+                                type="button"
+                                onClick={() => {
+                                  onUpdateConfig(currentEditing.id, 'username', sample.u);
+                                  onUpdateConfig(currentEditing.id, 'message', sample.m);
+                                  onUpdateConfig(currentEditing.id, 'badge', sample.b);
+                                }}
+                                className="px-2 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-[10px] text-slate-300 hover:text-white cursor-pointer"
+                              >
+                                💬 {sample.u}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* ── YOUTUBE LIVE CHAT EDITOR ── */}
+                    {currentEditing.type === 'youtube_chat' && (
+                      <div className="space-y-3">
+                        <div className="space-y-1">
+                          <label className="text-[10px] text-slate-400 font-bold block">מזהה סרטון / קישור לשידור יוטיוב:</label>
+                          <input
+                            type="text"
+                            value={(currentEditing.config as YouTubeChatConfig).videoId || ''}
+                            onChange={e => onUpdateConfig(currentEditing.id, 'videoId', cleanYoutubeId(e.target.value))}
+                            placeholder="למשל: https://youtube.com/live/xxx או מזהה סרטון"
+                            className="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-white text-xs font-mono"
+                          />
+                          <p className="text-[10px] text-slate-400">
+                            הזן את הקישור לשידור החי ביוטיוב כדי להציג את הצ׳אט הרשמי מוטמע, או השאר ריק לתצוגת צ׳אט רץ בעיצוב סטודיו.
+                          </p>
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[10px] text-slate-400 font-bold block">כותרת התיבה:</label>
+                          <input
+                            type="text"
+                            value={(currentEditing.config as YouTubeChatConfig).title || ''}
+                            onChange={e => onUpdateConfig(currentEditing.id, 'title', e.target.value)}
+                            placeholder="YouTube Live Chat"
+                            className="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-white text-xs"
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {/* ── ACHIEVEMENT EDITOR ── */}
+                    {currentEditing.type === 'achievement' && (
+                      <div className="space-y-2.5">
+                        <div className="grid grid-cols-2 gap-2">
+                          <div className="space-y-1">
+                            <label className="text-[10px] text-slate-400 font-bold block">כותרת ההישג:</label>
+                            <input
+                              type="text"
+                              value={(currentEditing.config as AchievementConfig).title || ''}
+                              onChange={e => onUpdateConfig(currentEditing.id, 'title', e.target.value)}
+                              placeholder="Achievement Unlocked!"
+                              className="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-white text-xs font-bold"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[10px] text-slate-400 font-bold block">אייקון (אימוג׳י):</label>
+                            <div className="flex items-center gap-1">
+                              {['🏆', '👑', '⭐', '💎', '🔥', '⚡', '🎯'].map(icon => (
+                                <button
+                                  key={icon}
+                                  type="button"
+                                  onClick={() => onUpdateConfig(currentEditing.id, 'icon', icon)}
+                                  className={`w-7 h-7 rounded-lg border text-sm flex items-center justify-center cursor-pointer ${
+                                    (currentEditing.config as AchievementConfig).icon === icon
+                                      ? 'bg-amber-600/30 border-amber-400 shadow-sm'
+                                      : 'bg-slate-900 border-slate-800 hover:bg-slate-800'
+                                  }`}
+                                >
+                                  {icon}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[10px] text-slate-400 font-bold block">תיאור ההישג:</label>
+                          <input
+                            type="text"
+                            value={(currentEditing.config as AchievementConfig).description || ''}
+                            onChange={e => onUpdateConfig(currentEditing.id, 'description', e.target.value)}
+                            placeholder="השלמת משימה מיוחדת..."
+                            className="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-white text-xs"
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {/* ── TIP CARD EDITOR ── */}
+                    {currentEditing.type === 'tip_card' && (
+                      <div className="space-y-2.5">
+                        <div className="space-y-1">
+                          <label className="text-[10px] text-slate-400 font-bold block">סוג ההודעה:</label>
+                          <div className="grid grid-cols-4 gap-1">
+                            {[
+                              { id: 'tip', label: '💡 טיפ' },
+                              { id: 'spoiler', label: '⚠️ ספוילר' },
+                              { id: 'warning', label: '🚨 אזהרה' },
+                              { id: 'fun_fact', label: '🎲 עובדה' },
+                            ].map(t => (
+                              <button
+                                key={t.id}
+                                type="button"
+                                onClick={() => onUpdateConfig(currentEditing.id, 'type', t.id)}
+                                className={`py-1 rounded text-center text-[10px] font-bold border transition-all cursor-pointer ${
+                                  (currentEditing.config as TipCardConfig).type === t.id
+                                    ? 'bg-cyan-600 text-white border-cyan-400'
+                                    : 'bg-slate-900 text-slate-400 border-slate-800'
+                                }`}
+                              >
+                                {t.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[10px] text-slate-400 font-bold block">כותרת:</label>
+                          <input
+                            type="text"
+                            value={(currentEditing.config as TipCardConfig).title || ''}
+                            onChange={e => onUpdateConfig(currentEditing.id, 'title', e.target.value)}
+                            placeholder="כותרת הטיפ"
+                            className="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-white text-xs font-bold"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[10px] text-slate-400 font-bold block">תוכן:</label>
+                          <textarea
+                            rows={2}
+                            value={(currentEditing.config as TipCardConfig).text || ''}
+                            onChange={e => onUpdateConfig(currentEditing.id, 'text', e.target.value)}
+                            placeholder="תוכן ההודעה..."
+                            className="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-white text-xs resize-none"
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {/* ── RATING METER EDITOR ── */}
+                    {currentEditing.type === 'rating_meter' && (
+                      <div className="space-y-2.5">
+                        <div className="flex items-center justify-between">
+                          <label className="text-[10px] font-black text-slate-300">אחוז מד (Rating):</label>
+                          <span className="text-xs font-black text-cyan-400 font-mono">
+                            {(currentEditing.config as RatingMeterConfig).value ?? 80}%
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0"
+                          max="100"
+                          value={(currentEditing.config as RatingMeterConfig).value ?? 80}
+                          onChange={e => onUpdateConfig(currentEditing.id, 'value', parseInt(e.target.value))}
+                          className="w-full accent-cyan-500 cursor-pointer"
+                        />
+                        <div className="space-y-1">
+                          <label className="text-[10px] text-slate-400 font-bold block">תווית המד:</label>
+                          <input
+                            type="text"
+                            value={(currentEditing.config as RatingMeterConfig).label || ''}
+                            onChange={e => onUpdateConfig(currentEditing.id, 'label', e.target.value)}
+                            placeholder="למשל: גרפיקה / הנאה"
+                            className="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-white text-xs font-bold"
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {/* ── WATERMARK EDITOR ── */}
+                    {currentEditing.type === 'watermark' && (
+                      <div className="space-y-2">
+                        <div className="space-y-1">
+                          <label className="text-[10px] text-slate-400 font-bold block">טקסט סימן מים:</label>
+                          <input
+                            type="text"
+                            value={(currentEditing.config as WatermarkConfig).text || ''}
+                            onChange={e => onUpdateConfig(currentEditing.id, 'text', e.target.value)}
+                            placeholder="© ערוץ הגיימינג 2025"
+                            className="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-white text-xs"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[10px] text-slate-400 font-bold block">מיקום פינה:</label>
+                          <div className="grid grid-cols-4 gap-1">
+                            {[
+                              { id: 'br', label: 'ימין למטה' },
+                              { id: 'bl', label: 'שמאל למטה' },
+                              { id: 'tr', label: 'ימין למעלה' },
+                              { id: 'tl', label: 'שמאל למעלה' },
+                            ].map(pos => (
+                              <button
+                                key={pos.id}
+                                type="button"
+                                onClick={() => onUpdateConfig(currentEditing.id, 'position', pos.id)}
+                                className={`py-1 rounded text-center text-[10px] font-bold border cursor-pointer ${
+                                  ((currentEditing.config as WatermarkConfig).position || 'br') === pos.id
+                                    ? 'bg-cyan-600 text-white border-cyan-400'
+                                    : 'bg-slate-900 text-slate-400 border-slate-800'
+                                }`}
+                              >
+                                {pos.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* ── OPACITY SLIDER FOR ALL OVERLAYS ── */}
+                    <div className="space-y-1.5 pt-2 border-t border-slate-800/80">
+                      <div className="flex items-center justify-between">
+                        <label className="text-[10px] font-bold text-slate-300">שקיפות אלמנט (Opacity):</label>
+                        <span className="text-xs font-bold text-cyan-400 font-mono">
+                          {(currentEditing.config as any).opacity ?? 100}%
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min="10"
+                        max="100"
+                        step="5"
+                        value={(currentEditing.config as any).opacity ?? 100}
+                        onChange={e => onUpdateConfig(currentEditing.id, 'opacity', parseInt(e.target.value))}
+                        className="w-full accent-purple-500 cursor-pointer"
+                      />
+                    </div>
 
                     {/* ── COLOR SWATCHES ── */}
                     {('color' in currentEditing.config || 'avatarColor' in currentEditing.config) && (

@@ -4,6 +4,7 @@ export type OverlayType =
   | 'achievement'
   | 'health_bar'
   | 'chat_bubble'
+  | 'youtube_chat'
   | 'score_counter'
   | 'game_title'
   | 'reaction'
@@ -50,6 +51,14 @@ export interface ChatBubbleConfig extends OverlayBaseConfig {
   username: string;
   message: string;
   avatarColor?: string;
+  badge?: string; // 'YouTube' | 'VIP' | 'Member' | 'Mod' | string;
+}
+
+export interface YouTubeChatConfig extends OverlayBaseConfig {
+  videoId?: string;
+  title?: string;
+  showBadges?: boolean;
+  theme?: 'dark' | 'transparent';
 }
 
 export interface ScoreCounterConfig extends OverlayBaseConfig {
@@ -130,6 +139,7 @@ export type OverlayConfig =
   | AchievementConfig
   | HealthBarConfig
   | ChatBubbleConfig
+  | YouTubeChatConfig
   | ScoreCounterConfig
   | GameTitleConfig
   | ReactionConfig
@@ -154,10 +164,12 @@ export interface OverlayItem {
 
 export const OVERLAY_CATALOG: { type: OverlayType; label: string; emoji: string; category: 'gaming' | 'streaming' | 'review' | 'cinema'; defaultConfig: OverlayConfig }[] = [
   { type: 'live_badge', label: 'LIVE Badge', emoji: '🔴', category: 'streaming', defaultConfig: { channelName: 'MyChannel' } },
+  { type: 'youtube_chat', label: 'YouTube Live Chat', emoji: '💬', category: 'streaming', defaultConfig: { videoId: '', title: 'צ׳אט יוטיוב לייב', showBadges: true, theme: 'dark' } },
+  { type: 'chat_bubble', label: 'Chat Bubble', emoji: '🗨️', category: 'streaming', defaultConfig: { username: 'Viewer123', message: 'Great stream!', badge: 'YouTube' } },
+  { type: 'social_bar', label: 'Social Bar', emoji: '📱', category: 'streaming', defaultConfig: { handles: [{ platform: 'youtube', handle: '@channel' }, { platform: 'twitch', handle: 'live' }] } },
   { type: 'session_timer', label: 'Session Timer', emoji: '⏱️', category: 'streaming', defaultConfig: { mode: 'stopwatch', elapsedSeconds: 0 } },
   { type: 'achievement', label: 'Achievement', emoji: '🏆', category: 'gaming', defaultConfig: { title: 'Achievement Unlocked!', description: 'You did something awesome', icon: '🏆' } },
   { type: 'health_bar', label: 'Health Bar', emoji: '❤️', category: 'gaming', defaultConfig: { value: 75, label: 'HP', color: '#10b981', showValue: true } },
-  { type: 'chat_bubble', label: 'Chat Bubble', emoji: '💬', category: 'streaming', defaultConfig: { username: 'Viewer123', message: 'Great stream!' } },
   { type: 'score_counter', label: 'Score / Kills', emoji: '🎯', category: 'gaming', defaultConfig: { label: 'KILLS', value: 0, icon: '💀' } },
   { type: 'game_title', label: 'Game Title Card', emoji: '🎮', category: 'gaming', defaultConfig: { title: 'Game Title', genre: 'Action', year: '2024', platform: 'PS5' } },
   { type: 'reaction', label: 'Reaction Sticker', emoji: '⚡', category: 'gaming', defaultConfig: { reaction: 'GG' } },
@@ -168,6 +180,5 @@ export const OVERLAY_CATALOG: { type: OverlayType; label: string; emoji: string;
   { type: 'scene_label', label: 'Scene Label', emoji: '🎬', category: 'cinema', defaultConfig: { scene: 'GAMEPLAY', color: '#a855f7' } },
   { type: 'rating_meter', label: 'Rating Meter', emoji: '📊', category: 'review', defaultConfig: { value: 80, label: 'Enjoyment', color: '#06b6d4', orientation: 'horizontal' } },
   { type: 'tip_card', label: 'Tip / Alert', emoji: '💡', category: 'cinema', defaultConfig: { type: 'tip', text: 'Pro tip: Always check your surroundings!', title: 'Pro Tip' } },
-  { type: 'social_bar', label: 'Social Bar', emoji: '📱', category: 'streaming', defaultConfig: { handles: [{ platform: 'youtube', handle: '@mychannel' }, { platform: 'twitch', handle: 'mychannel' }] } },
   { type: 'watermark', label: 'Watermark', emoji: '💧', category: 'cinema', defaultConfig: { text: '© MyChannel 2025', position: 'br' } },
 ];
