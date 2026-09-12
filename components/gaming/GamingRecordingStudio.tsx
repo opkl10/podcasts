@@ -686,25 +686,41 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
     });
 
     const requestUserMedia = async (videoConstraints: MediaTrackConstraints): Promise<MediaStream> => {
-      if (matchingAudio) {
-        try {
-          return await navigator.mediaDevices.getUserMedia({
-            video: videoConstraints,
-            audio: { deviceId: { exact: matchingAudio.deviceId } }
-          });
-        } catch (e) {}
-      }
+      // 1. Try with exact deviceId
       try {
+        if (matchingAudio) {
+          try {
+            return await navigator.mediaDevices.getUserMedia({
+              video: videoConstraints,
+              audio: { deviceId: { exact: matchingAudio.deviceId } }
+            });
+          } catch (e) {}
+        }
         return await navigator.mediaDevices.getUserMedia({
           video: videoConstraints,
           audio: true
         });
-      } catch (e) {
-        return await navigator.mediaDevices.getUserMedia({
-          video: videoConstraints,
-          audio: false
-        });
+      } catch (e) {}
+
+      // 2. If exact deviceId failed (e.g. Chrome deviceId changed or exact constraint rejected), try with ideal deviceId
+      const relaxedVideo = { ...videoConstraints };
+      if (relaxedVideo.deviceId && typeof relaxedVideo.deviceId === 'object' && 'exact' in relaxedVideo.deviceId) {
+        relaxedVideo.deviceId = { ideal: (relaxedVideo.deviceId as any).exact };
       }
+
+      if (matchingAudio) {
+        try {
+          return await navigator.mediaDevices.getUserMedia({
+            video: relaxedVideo,
+            audio: { deviceId: { ideal: matchingAudio.deviceId } }
+          });
+        } catch (e) {}
+      }
+
+      return await navigator.mediaDevices.getUserMedia({
+        video: relaxedVideo,
+        audio: false
+      });
     };
 
     let stream: MediaStream | null = null;
@@ -713,89 +729,60 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
     let actualFps = 0;
 
     try {
-      // Step 1: Explicitly request 4K if desiredRes === '4k' (width: { ideal: 3840 }, height: { ideal: 2160 })
-      if (desiredRes === '4k') {
-        const constraints4K: MediaTrackConstraints = {
-          deviceId: { exact: deviceId },
-          width: { ideal: 3840 },
-          height: { ideal: 2160 },
-          frameRate: { ideal: 30, max: 60 }
-        };
+      // Progressive resolution requests: 4K (3840x2160) -> 1440p (2560x1440) -> 1080p (1920x1080)
+      const resolutionTiers: { label: string; constraints: MediaTrackConstraints }[] = [
+        {
+          label: '4K Ultra HD (Exact 3840x2160)',
+          constraints: { deviceId: { exact: deviceId }, width: { exact: 3840 }, height: { exact: 2160 }, frameRate: { ideal: 30, max: 60 } }
+        },
+        {
+          label: '4K Ultra HD (Ideal 3840x2160)',
+          constraints: { deviceId: { exact: deviceId }, width: { ideal: 3840 }, height: { ideal: 2160 }, frameRate: { ideal: 30, max: 60 } }
+        },
+        {
+          label: 'Quad HD 1440p (Ideal 2560x1440)',
+          constraints: { deviceId: { exact: deviceId }, width: { ideal: 2560, min: 1920 }, height: { ideal: 1440, min: 1080 }, frameRate: { ideal: 60 } }
+        },
+        {
+          label: 'Full HD 1080p (Exact 1920x1080)',
+          constraints: { deviceId: { exact: deviceId }, width: { exact: 1920 }, height: { exact: 1080 }, frameRate: { ideal: 60 } }
+        },
+        {
+          label: 'Full HD 1080p (Ideal 1920x1080)',
+          constraints: { deviceId: { exact: deviceId }, width: { ideal: 1920, min: 1280 }, height: { ideal: 1080, min: 720 }, frameRate: { ideal: 60 } }
+        }
+      ];
 
-        console.log(`%c[Video Source] 🚀 ניסיון 1: דרישת רזולוציית 4K מפורשת (width: { ideal: 3840 }, height: { ideal: 2160 }) עבור "${cardLabel}"...`, 'color: #a855f7; font-weight: bold;');
+      for (const tier of resolutionTiers) {
+        if (desiredRes !== '4k' && tier.label.includes('4K')) continue;
 
         try {
-          stream = await requestUserMedia(constraints4K);
-          const vt = stream.getVideoTracks()[0];
+          console.log(`%c[Video Source] 🚀 ניסיון: ${tier.label} עבור "${cardLabel}"...`, 'color: #a855f7; font-weight: bold;');
+          const testStream = await requestUserMedia(tier.constraints);
+          const vt = testStream.getVideoTracks()[0];
           if (vt) {
             const s = vt.getSettings();
-            actualWidth = s.width || 0;
-            actualHeight = s.height || 0;
-            actualFps = Math.round(s.frameRate || 0);
-            console.log(`%c[Video Source] 📊 תוצאת קריאת 4K: שם התקן: "${cardLabel}" | רזולוציה שהתקבלה בפועל מהדפדפן: ${actualWidth}×${actualHeight} @ ${actualFps}FPS`, 'color: #10b981; font-weight: bold;');
+            const w = s.width || 0;
+            const h = s.height || 0;
+            const fps = Math.round(s.frameRate || 0);
 
-            // Proactively try applyConstraints to enforce full 4K if macOS opened in low mode
-            if (actualWidth < 3840) {
-              try {
-                await vt.applyConstraints({ width: { ideal: 3840 }, height: { ideal: 2160 } });
-                const s2 = vt.getSettings();
-                actualWidth = s2.width || actualWidth;
-                actualHeight = s2.height || actualHeight;
-                actualFps = Math.round(s2.frameRate || actualFps);
-              } catch (e) {}
+            console.log(`%c[Video Source] 📊 תוצאת ניסיון ${tier.label}: רזולוציה שהתקבלה בפועל: ${w}×${h} @ ${fps}FPS`, w >= 1920 ? 'color: #10b981; font-weight: bold;' : 'color: #f59e0b; font-weight: bold;');
+
+            if (w >= 1280 || !stream) {
+              if (stream) stream.getTracks().forEach(t => t.stop());
+              stream = testStream;
+              actualWidth = w;
+              actualHeight = h;
+              actualFps = fps;
+
+              // If we reached target resolution (Full HD or 4K), break!
+              if (w >= 1920) break;
+            } else {
+              testStream.getTracks().forEach(t => t.stop());
             }
           }
-        } catch (err4k: any) {
-          console.warn(`[Video Source] ⚠️ קריאת 4K נחסמה או נכשלה על ידי הדפדפן:`, err4k?.message || err4k);
-        }
-      }
-
-      // Step 2: Fallback mechanism - if 4K failed or browser gave SD (< 1280), pull 1080p automatically!
-      if (!stream || actualWidth < 1280) {
-        if (stream) {
-          console.warn(`%c[Video Source] ⚠️ הדפדפן החזיר רזולוציה נמוכה (${actualWidth}×${actualHeight}). מפעיל מנגנון Fallback אוטומטי ל-1080p כדי לא להיתקע על 640x480...`, 'color: #f59e0b; font-weight: bold;');
-          stream.getTracks().forEach(t => t.stop());
-          stream = null;
-        } else if (desiredRes === '4k') {
-          console.log(`%c[Video Source] 🔄 4K לא סופק. מפעיל מנגנון Fallback ל-1080p במקום להיתקע או להחזיר שגיאה...`, 'color: #38bdf8; font-weight: bold;');
-        }
-
-        const fallbackConstraints1080p: MediaTrackConstraints = {
-          deviceId: { exact: deviceId },
-          width: { ideal: 1920, min: 1280 },
-          height: { ideal: 1080, min: 720 },
-          frameRate: { ideal: 60, min: 30 }
-        };
-
-        try {
-          stream = await requestUserMedia(fallbackConstraints1080p);
-          const vt = stream.getVideoTracks()[0];
-          if (vt) {
-            const s = vt.getSettings();
-            actualWidth = s.width || 0;
-            actualHeight = s.height || 0;
-            actualFps = Math.round(s.frameRate || 0);
-            console.log(`%c[Video Source] ✅ Fallback ל-1080p הצליח! שם התקן: "${cardLabel}" | רזולוציה שהתקבלה בפועל: ${actualWidth}×${actualHeight} @ ${actualFps}FPS`, 'color: #10b981; font-weight: bold;');
-          }
-        } catch (err1080: any) {
-          console.warn(`[Video Source] ⚠️ Fallback עם min נכשל, מנסה 1080p ללא min...`, err1080?.message || err1080);
-          try {
-            stream = await requestUserMedia({
-              deviceId: { ideal: deviceId },
-              width: { ideal: 1920 },
-              height: { ideal: 1080 }
-            });
-            const vt = stream.getVideoTracks()[0];
-            if (vt) {
-              const s = vt.getSettings();
-              actualWidth = s.width || 0;
-              actualHeight = s.height || 0;
-              actualFps = Math.round(s.frameRate || 0);
-              console.log(`%c[Video Source] 📺 1080p התקבל: שם התקן: "${cardLabel}" | רזולוציה: ${actualWidth}×${actualHeight} @ ${actualFps}FPS`, 'color: #10b981; font-weight: bold;');
-            }
-          } catch (errGeneral: any) {
-            console.error(`[Video Source] ❌ כל הניסיונות לפתיחת הווידאו נכשלו:`, errGeneral);
-          }
+        } catch (errTier) {
+          // Continue to next tier
         }
       }
 
