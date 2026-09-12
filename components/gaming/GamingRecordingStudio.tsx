@@ -114,6 +114,20 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
 
   // Facecam Visual Styling & Layout Engine
   const [facecamLayout, setFacecamLayout] = useState<'solo_game' | 'pip_br' | 'pip_bl' | 'pip_tr' | 'pip_tl' | 'solo_cam' | 'split'>('pip_br');
+  const [isLayoutMenuOpen, setIsLayoutMenuOpen] = useState<boolean>(false);
+  const layoutMenuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!isLayoutMenuOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (layoutMenuRef.current && !layoutMenuRef.current.contains(e.target as Node)) {
+        setIsLayoutMenuOpen(false);
+      }
+    };
+    window.addEventListener('mousedown', handleClickOutside);
+    return () => window.removeEventListener('mousedown', handleClickOutside);
+  }, [isLayoutMenuOpen]);
+
   const [facecamShape, setFacecamShape] = useState<'rounded' | 'circle' | 'rectangle'>('rounded');
   const [facecamAspect, setFacecamAspect] = useState<'auto' | '16:9' | '4:3' | '1:1' | '9:16'>('auto');
   const [facecamSize, setFacecamSize] = useState<'small' | 'medium' | 'large'>('medium');
@@ -1880,49 +1894,203 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
           </div>
         )}
 
-        {/* Floating Top-Left Layout Selector & Hotkeys Bar */}
-        <div className="absolute top-4 left-4 z-20 flex items-center gap-1.5 p-1.5 rounded-2xl bg-slate-950/90 backdrop-blur-md border border-purple-500/30 shadow-2xl">
-          {[
-            { id: 'solo_game', label: 'משחק בלבד', hotkey: '1', icon: Monitor },
-            { id: 'pip_br', label: 'חלונית פינה', hotkey: '2', icon: LayoutGrid },
-            { id: 'solo_cam', label: 'מצלמה בלבד', hotkey: '3', icon: Video },
-            { id: 'split', label: 'מסך חצי-חצי', hotkey: '4', icon: SplitSquareVertical },
-          ].map((l) => (
+        {/* Minimized Floating Top-Left Layout Selector */}
+        <div ref={layoutMenuRef} className="absolute top-4 left-4 z-30">
+          <div className="flex items-center gap-1.5 p-1 rounded-2xl bg-slate-950/90 backdrop-blur-md border border-purple-500/30 shadow-2xl">
             <button
-              key={l.id}
               type="button"
-              onClick={() => setFacecamLayout(l.id as any)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
-                facecamLayout === l.id
+              onClick={() => setIsLayoutMenuOpen(prev => !prev)}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                isLayoutMenuOpen
                   ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-lg shadow-purple-950/50'
-                  : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+                  : 'text-slate-200 hover:text-white hover:bg-slate-800/80'
               }`}
+              title="לחץ לבחירת תצוגת מסך (מצלמה, גיימפליי, מסך מפוצל)"
             >
-              <l.icon className="w-3.5 h-3.5" />
-              <span>{l.label}</span>
-              <kbd className="text-[10px] font-mono px-1 py-0.2 rounded bg-black/40 text-purple-300 border border-purple-500/30">
-                {l.hotkey}
-              </kbd>
+              {facecamLayout === 'solo_game' && <Monitor className="w-3.5 h-3.5 text-cyan-400" />}
+              {facecamLayout.startsWith('pip') && <LayoutGrid className="w-3.5 h-3.5 text-purple-400" />}
+              {facecamLayout === 'solo_cam' && <Video className="w-3.5 h-3.5 text-emerald-400" />}
+              {facecamLayout === 'split' && <SplitSquareVertical className="w-3.5 h-3.5 text-amber-400" />}
+              <span>
+                {facecamLayout === 'solo_game' && 'משחק בלבד'}
+                {facecamLayout.startsWith('pip') && (
+                  facecamLayout === 'pip_br' ? 'מצלמה ומשחק (ימין מטה)' :
+                  facecamLayout === 'pip_bl' ? 'מצלמה ומשחק (שמאל מטה)' :
+                  facecamLayout === 'pip_tr' ? 'מצלמה ומשחק (ימין מעלה)' :
+                  'מצלמה ומשחק (שמאל מעלה)'
+                )}
+                {facecamLayout === 'solo_cam' && 'מצלמה בלבד'}
+                {facecamLayout === 'split' && 'מסך חצי-חצי'}
+              </span>
+              <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-200 ${isLayoutMenuOpen ? 'rotate-180 text-white' : ''}`} />
             </button>
-          ))}
 
-          {/* Framing / Crop / Overscan Adjustment Button */}
-          <button
-            type="button"
-            onClick={() => setShowFramingControls(prev => !prev)}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all border ${
-              showFramingControls || gameFitMode !== 'stretch' || gameZoom !== 100 || gameOffsetX !== 0 || gameOffsetY !== 0
-                ? 'bg-amber-500 text-slate-950 border-amber-400 font-black shadow-lg shadow-amber-950/40'
-                : 'bg-slate-900 border-slate-700 text-slate-300 hover:text-white hover:bg-slate-800'
-            }`}
-            title="התאמת גודל משחק, זום ותיקון חיתוך שוליים (Overscan)"
-          >
-            <Crop className="w-3.5 h-3.5" />
-            <span>התאמת גודל וחיתוך</span>
-            {(gameFitMode !== 'stretch' || gameZoom !== 100 || gameOffsetX !== 0) && (
-              <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping" />
-            )}
-          </button>
+            {/* Framing / Crop / Overscan Adjustment Button */}
+            <button
+              type="button"
+              onClick={() => setShowFramingControls(prev => !prev)}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all border cursor-pointer ${
+                showFramingControls || gameFitMode !== 'stretch' || gameZoom !== 100 || gameOffsetX !== 0 || gameOffsetY !== 0
+                  ? 'bg-amber-500 text-slate-950 border-amber-400 font-black shadow-lg shadow-amber-950/40'
+                  : 'bg-slate-900 border-slate-700 text-slate-300 hover:text-white hover:bg-slate-800'
+              }`}
+              title="התאמת גודל משחק, זום ותיקון חיתוך שוליים (Overscan)"
+            >
+              <Crop className="w-3.5 h-3.5" />
+              {(gameFitMode !== 'stretch' || gameZoom !== 100 || gameOffsetX !== 0) && (
+                <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping" />
+              )}
+            </button>
+          </div>
+
+          {/* Expanded Dropdown Panel with All Layout Options */}
+          {isLayoutMenuOpen && (
+            <div className="mt-2 w-72 rounded-2xl bg-[#0b0e18]/95 backdrop-blur-xl border border-purple-500/40 shadow-2xl p-3 space-y-2 animate-in fade-in slide-in-from-top-2">
+              <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+                <span className="text-[11px] font-black text-slate-200">מה רואים בשידור ובהקלטה:</span>
+                <button
+                  type="button"
+                  onClick={() => setIsLayoutMenuOpen(false)}
+                  className="text-slate-400 hover:text-white p-0.5 rounded-lg hover:bg-slate-800 cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              <div className="space-y-1.5">
+                {/* 1. Solo Game */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFacecamLayout('solo_game');
+                    setIsLayoutMenuOpen(false);
+                  }}
+                  className={`w-full flex items-center justify-between p-2 rounded-xl text-xs font-bold border transition-all text-right cursor-pointer ${
+                    facecamLayout === 'solo_game'
+                      ? 'bg-purple-600/30 border-purple-400 text-white shadow-sm ring-1 ring-purple-400'
+                      : 'bg-slate-900/80 border-slate-800 text-slate-300 hover:bg-slate-800 hover:text-white'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <Monitor className="w-4 h-4 text-cyan-400 shrink-0" />
+                    <div>
+                      <span className="block font-bold">משחק בלבד (מסך מלא)</span>
+                      <span className="block text-[10px] text-slate-400 font-normal">ללא מצלמה — גיימפליי בלבד</span>
+                    </div>
+                  </div>
+                  <kbd className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-black/50 text-purple-300 border border-purple-500/30">
+                    1
+                  </kbd>
+                </button>
+
+                {/* 2. PiP (Camera + Game) */}
+                <div className={`p-2 rounded-xl border transition-all space-y-2 ${
+                  facecamLayout.startsWith('pip')
+                    ? 'bg-purple-600/30 border-purple-400 text-white shadow-sm ring-1 ring-purple-400'
+                    : 'bg-slate-900/80 border-slate-800 text-slate-300'
+                }`}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!facecamLayout.startsWith('pip')) {
+                        setFacecamLayout('pip_br');
+                      }
+                    }}
+                    className="w-full flex items-center justify-between text-xs font-bold text-right cursor-pointer"
+                  >
+                    <div className="flex items-center gap-2">
+                      <LayoutGrid className="w-4 h-4 text-purple-400 shrink-0" />
+                      <div>
+                        <span className="block font-bold text-white">מצלמה ומשחק (חלונית צפה)</span>
+                        <span className="block text-[10px] text-slate-400 font-normal">חלונית מצלמה בפינת המשחק</span>
+                      </div>
+                    </div>
+                    <kbd className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-black/50 text-purple-300 border border-purple-500/30">
+                      2
+                    </kbd>
+                  </button>
+
+                  {/* Corner selector */}
+                  <div className="pt-1.5 border-t border-slate-800/80 flex items-center justify-between gap-1">
+                    <span className="text-[9px] text-slate-400 font-bold shrink-0">פינה:</span>
+                    <div className="grid grid-cols-4 gap-1 w-full">
+                      {[
+                        { id: 'pip_br', label: '↘ ימין מטה' },
+                        { id: 'pip_bl', label: '↙ שמאל מטה' },
+                        { id: 'pip_tr', label: '↗ ימין מעלה' },
+                        { id: 'pip_tl', label: '↖ שמאל מעלה' },
+                      ].map(c => (
+                        <button
+                          key={c.id}
+                          type="button"
+                          onClick={() => {
+                            setFacecamLayout(c.id as any);
+                          }}
+                          className={`py-1 px-1 rounded-lg text-[9px] font-bold transition-all text-center cursor-pointer ${
+                            facecamLayout === c.id
+                              ? 'bg-purple-600 text-white shadow'
+                              : 'bg-slate-950/80 text-slate-400 hover:text-white border border-slate-800'
+                          }`}
+                        >
+                          {c.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* 3. Solo Camera */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFacecamLayout('solo_cam');
+                    setIsLayoutMenuOpen(false);
+                  }}
+                  className={`w-full flex items-center justify-between p-2 rounded-xl text-xs font-bold border transition-all text-right cursor-pointer ${
+                    facecamLayout === 'solo_cam'
+                      ? 'bg-purple-600/30 border-purple-400 text-white shadow-sm ring-1 ring-purple-400'
+                      : 'bg-slate-900/80 border-slate-800 text-slate-300 hover:bg-slate-800 hover:text-white'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <Video className="w-4 h-4 text-emerald-400 shrink-0" />
+                    <div>
+                      <span className="block font-bold">מצלמה בלבד (מסך מלא)</span>
+                      <span className="block text-[10px] text-slate-400 font-normal">לפתיח, דיבור ישיר וסגיר</span>
+                    </div>
+                  </div>
+                  <kbd className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-black/50 text-purple-300 border border-purple-500/30">
+                    3
+                  </kbd>
+                </button>
+
+                {/* 4. Split Screen */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFacecamLayout('split');
+                    setIsLayoutMenuOpen(false);
+                  }}
+                  className={`w-full flex items-center justify-between p-2 rounded-xl text-xs font-bold border transition-all text-right cursor-pointer ${
+                    facecamLayout === 'split'
+                      ? 'bg-purple-600/30 border-purple-400 text-white shadow-sm ring-1 ring-purple-400'
+                      : 'bg-slate-900/80 border-slate-800 text-slate-300 hover:bg-slate-800 hover:text-white'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <SplitSquareVertical className="w-4 h-4 text-amber-400 shrink-0" />
+                    <div>
+                      <span className="block font-bold">מסך חצי-חצי (Split Screen)</span>
+                      <span className="block text-[10px] text-slate-400 font-normal">משחק לצד מצלמה בפרופורציה שווה</span>
+                    </div>
+                  </div>
+                  <kbd className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-black/50 text-purple-300 border border-purple-500/30">
+                    4
+                  </kbd>
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Floating Top-Right Live Hardware Capture Badge */}
