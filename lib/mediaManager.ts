@@ -154,36 +154,39 @@ export async function applyCaptureCardResolution(
     tryConstraintSets.push(
       { width: { exact: 3840 }, height: { exact: 2160 }, frameRate: { ideal: 30 } },
       { width: { exact: 3840 }, height: { exact: 2160 } },
-      { width: { min: 2560, ideal: 3840 }, height: { min: 1440, ideal: 2160 }, frameRate: { ideal: 30 } },
-      { width: { exact: 1920 }, height: { exact: 1080 }, frameRate: { ideal: 60 } },
-      { width: { min: 1920, ideal: 1920 }, height: { min: 1080, ideal: 1080 } }
+      { width: { min: 2560, ideal: 3840 }, height: { min: 1440, ideal: 2160 } },
+      { width: { min: 1920, ideal: 1920 }, height: { min: 1080, ideal: 1080 }, frameRate: { ideal: 60 } },
+      { width: { min: 1280 }, height: { min: 720 } }
     );
   } else if (targetRes === '1080p') {
     tryConstraintSets.push(
       { width: { exact: 1920 }, height: { exact: 1080 }, frameRate: { ideal: 60 } },
       { width: { exact: 1920 }, height: { exact: 1080 } },
       { width: { min: 1920, ideal: 1920 }, height: { min: 1080, ideal: 1080 } },
-      { width: { min: 1280, ideal: 1920 }, height: { min: 720, ideal: 1080 } }
+      { width: { min: 1280 }, height: { min: 720 } }
     );
   } else {
     tryConstraintSets.push(
       { width: { exact: 1280 }, height: { exact: 720 } },
-      { width: { min: 1280, ideal: 1280 }, height: { min: 720, ideal: 720 } }
+      { width: { min: 1280 }, height: { min: 720 } }
     );
   }
 
-  let applied = false;
   for (const c of tryConstraintSets) {
     try {
       await track.applyConstraints(c);
-      const s = track.getSettings();
-      // If we escaped 640x480 or reached our target
-      if ((s.width || 0) > 640 || targetRes === '720p') {
-        applied = true;
-        break;
+      const settings = track.getSettings();
+      if (settings.width && settings.width >= 1280) {
+        console.log(`%c[MediaManager] 🎯 applyConstraints succeeded with width: ${settings.width}x${settings.height}`, 'color: #10b981; font-weight: bold;');
+        return {
+          width: settings.width || 0,
+          height: settings.height || 0,
+          fps: Math.round(settings.frameRate || 0),
+          applied: true
+        };
       }
     } catch (err) {
-      // Continue to next constraint tier
+      // Continue to next constraint set
     }
   }
 
@@ -192,7 +195,7 @@ export async function applyCaptureCardResolution(
     width: finalSettings.width || 0,
     height: finalSettings.height || 0,
     fps: Math.round(finalSettings.frameRate || 0),
-    applied
+    applied: false
   };
 }
 
