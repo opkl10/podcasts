@@ -1693,13 +1693,22 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
 
       {/* TOP HEADER & STATUS BAR */}
       <div className="flex flex-wrap items-center justify-between gap-4 p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-[#12162a] via-[#101424] to-[#0c0f1d] border border-purple-500/20 shadow-2xl">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 flex-wrap">
+          <Link
+            href="/?view=gaming"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-purple-950/70 hover:bg-purple-900/90 text-purple-200 hover:text-white border border-purple-500/40 text-xs font-bold transition-all shadow-sm"
+            title="יציאה למרכז סרטוני הגיימינג והיוטיוב"
+          >
+            <ArrowRight className="w-3.5 h-3.5" />
+            <span>סרטוני גיימינג</span>
+          </Link>
+
           <Link
             href={`/episodes/${episode.id}`}
-            className="p-2.5 text-slate-400 hover:text-white rounded-xl hover:bg-slate-800/80 border border-slate-700/60 transition-colors"
+            className="p-2 text-slate-400 hover:text-white rounded-xl hover:bg-slate-800/80 border border-slate-700/60 transition-colors text-xs font-medium"
             title="חזרה לפרטי הפרק"
           >
-            <ArrowRight className="w-4 h-4" />
+            <span>פרטי הפרק</span>
           </Link>
 
           <div>

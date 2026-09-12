@@ -13,6 +13,8 @@ import ImportEpisodesModal from '@/components/dashboard/ImportEpisodesModal';
 import RecordedEpisodesVault from '@/components/recordings/RecordedEpisodesVault';
 import SubtitleStudio from '@/components/subtitles/SubtitleStudio';
 import AudioEditorAudiogramStudio from '@/components/audio/AudioEditorAudiogramStudio';
+import GamingEpisodesHub from '@/components/gaming/GamingEpisodesHub';
+import { cleanupDuplicateEmptyGamingSessions } from '@/lib/storage';
 import { 
   PlusCircle, 
   Search, 
@@ -44,7 +46,7 @@ export default function DashboardPage() {
   const [selectedPodcastId, setSelectedPodcastId] = useState<string>('all');
   const [activeFilter, setActiveFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
-  const [mainView, setMainView] = useState<'episodes' | 'vault'>('episodes');
+  const [mainView, setMainView] = useState<'episodes' | 'gaming' | 'vault'>('episodes');
   const [subtitleEpisode, setSubtitleEpisode] = useState<Episode | null>(null);
   const [audiogramEpisode, setAudiogramEpisode] = useState<Episode | null>(null);
 
@@ -190,11 +192,24 @@ export default function DashboardPage() {
   };
 
   useEffect(() => {
+    // 1. Clean up duplicate empty ghost gaming sessions from refreshes
+    cleanupDuplicateEmptyGamingSessions();
+
     const episodesData = getEpisodes();
     const podcastsData = getPodcasts();
     setEpisodes(episodesData);
     setPodcasts(podcastsData);
     setIsLoaded(true);
+
+    // 2. Check if URL has ?view=gaming to automatically activate the gaming tab
+    if (typeof window !== 'undefined') {
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.get('view') === 'gaming') {
+        setMainView('gaming');
+      } else if (urlParams.get('view') === 'vault') {
+        setMainView('vault');
+      }
+    }
 
     // Auto-heal all episodes with unlinked or 0-duration recordings
     autoHealAllEpisodes().then(healed => {
@@ -353,36 +368,55 @@ export default function DashboardPage() {
       </div>
 
       {/* Main View Switcher */}
-      <div className="flex items-center p-1.5 bg-[#121620] rounded-2xl border border-slate-800 shadow-lg">
+      <div className="flex items-center p-1.5 bg-[#121620] rounded-2xl border border-slate-800 shadow-lg gap-2 flex-wrap sm:flex-nowrap">
         <button
           onClick={() => setMainView('episodes')}
-          className={`flex-1 py-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 ${
+          className={`flex-1 py-3 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 ${
             mainView === 'episodes'
               ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-lg shadow-indigo-600/30'
               : 'text-slate-400 hover:text-white'
           }`}
         >
           <Layers className="w-4 h-4" />
-          <span>ניהול וקטלוג פרקים ({episodes.length})</span>
+          <span>🎙️ קטלוג פודקאסטים ({episodes.filter(e => e.mediaType !== 'gaming_creator' && !e.id.startsWith('gaming-') && e.podcastId !== 'pod-gaming').length})</span>
+        </button>
+
+        {/* Dedicated YouTube Gaming Tab */}
+        <button
+          onClick={() => setMainView('gaming')}
+          className={`flex-1 py-3 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 ${
+            mainView === 'gaming'
+              ? 'bg-gradient-to-r from-purple-600 via-fuchsia-600 to-indigo-600 text-white shadow-lg shadow-purple-900/50 border border-purple-400/40'
+              : 'text-purple-300 hover:text-white bg-purple-950/20 hover:bg-purple-900/40 border border-purple-500/20'
+          }`}
+        >
+          <Gamepad2 className="w-4 h-4 text-purple-300 animate-pulse" />
+          <span>🎮 הקלטות גיימינג ויוטיוב</span>
+          <span className="px-2 py-0.5 rounded-full text-[10px] bg-purple-500/30 text-purple-200 font-mono font-bold">
+            {episodes.filter(e => e.mediaType === 'gaming_creator' || e.id.startsWith('gaming-') || e.podcastId === 'pod-gaming').length}
+          </span>
         </button>
 
         <button
           onClick={() => setMainView('vault')}
-          className={`flex-1 py-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 ${
+          className={`flex-1 py-3 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 ${
             mainView === 'vault'
-              ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-lg shadow-purple-600/30'
+              ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg shadow-emerald-600/30'
               : 'text-slate-400 hover:text-white'
           }`}
         >
-          <FolderArchive className="w-4 h-4 text-purple-400" />
-          <span>ארכיון הקלטות והורדות (וידאו, סטריאו, מונו, כתוביות)</span>
-          <span className="px-2 py-0.5 rounded-full text-[10px] bg-purple-500/20 text-purple-300 font-mono">
-            {episodes.filter(e => e.status === 'recorded' || e.status === 'published' || e.recording).length}
-          </span>
+          <FolderArchive className="w-4 h-4 text-emerald-400" />
+          <span>🗄️ ארכיון הקלטות ומאסטר ({episodes.filter(e => e.status === 'recorded' || e.status === 'published' || e.recording).length})</span>
         </button>
       </div>
 
-      {mainView === 'vault' ? (
+      {mainView === 'gaming' ? (
+        <GamingEpisodesHub
+          episodes={episodes}
+          onDeleteEpisode={handleDeleteEpisode}
+          onUpdateEpisodes={(updated) => setEpisodes(updated)}
+        />
+      ) : mainView === 'vault' ? (
         <RecordedEpisodesVault
           episodes={episodes}
           podcasts={podcasts}

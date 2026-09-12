@@ -286,13 +286,24 @@ export default function EpisodeDetailsHeader({
           </button>
 
           {/* Enter Studio CTA */}
-          <Link
-            href={`/episodes/${episode.id}/studio`}
-            className="flex items-center gap-2 px-5 py-2 rounded-xl bg-gradient-to-r from-red-600 via-rose-600 to-pink-600 hover:from-red-500 hover:to-pink-500 text-white text-xs font-bold shadow-lg shadow-red-900/40 active:scale-95 transition-all"
-          >
-            <Mic className="w-4 h-4 animate-pulse" />
-            <span>כניסה לאולפן הקלטה</span>
-          </Link>
+          {episode.mediaType === 'gaming_creator' || episode.id.startsWith('gaming-') || episode.podcastId === 'pod-gaming' ? (
+            <Link
+              href={`/gaming?episodeId=${episode.id}`}
+              className="flex items-center gap-2 px-5 py-2 rounded-xl bg-gradient-to-r from-purple-600 via-fuchsia-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-black shadow-lg shadow-purple-900/40 active:scale-95 transition-all"
+              title="כניסה מחודשת לאולפן גיימינג 60FPS"
+            >
+              <Gamepad2 className="w-4 h-4 text-purple-200 animate-pulse" />
+              <span>כניסה לאולפן גיימינג</span>
+            </Link>
+          ) : (
+            <Link
+              href={`/episodes/${episode.id}/studio`}
+              className="flex items-center gap-2 px-5 py-2 rounded-xl bg-gradient-to-r from-red-600 via-rose-600 to-pink-600 hover:from-red-500 hover:to-pink-500 text-white text-xs font-bold shadow-lg shadow-red-900/40 active:scale-95 transition-all"
+            >
+              <Mic className="w-4 h-4 animate-pulse" />
+              <span>כניסה לאולפן הקלטה</span>
+            </Link>
+          )}
         </div>
       </div>
 

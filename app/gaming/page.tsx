@@ -1,20 +1,27 @@
 'use client';
 
 import React, { useState, useEffect, Suspense } from 'react';
-import { useSearchParams, useRouter } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import { Episode } from '@/lib/types';
-import { getEpisodeById, saveEpisode } from '@/lib/storage';
+import { 
+  getEpisodeById, 
+  getOrCreateActiveGamingSession, 
+  cleanupDuplicateEmptyGamingSessions 
+} from '@/lib/storage';
 import GamingRecordingStudio from '@/components/gaming/GamingRecordingStudio';
 import { Gamepad2 } from 'lucide-react';
 
 function GamingStudioSessionLoader() {
   const searchParams = useSearchParams();
-  const router = useRouter();
   const episodeId = searchParams.get('episodeId');
   const [episode, setEpisode] = useState<Episode | null>(null);
   const [isLoaded, setIsLoaded] = useState(false);
 
   useEffect(() => {
+    // 1. Clean up duplicate empty ghost sessions created by past refreshes
+    cleanupDuplicateEmptyGamingSessions();
+
+    // 2. If episodeId is provided in URL, load that exact session
     if (episodeId) {
       const existing = getEpisodeById(episodeId);
       if (existing) {
@@ -24,37 +31,16 @@ function GamingStudioSessionLoader() {
       }
     }
 
-    // Quick Start: Create an instant gaming recording session
-    const quickStartSession: Episode = {
-      id: `gaming-${Date.now()}`,
-      podcastId: 'pod-gaming',
-      title: `סשן גיימינג ויוצרים - ${new Date().toLocaleDateString('he-IL')}`,
-      description: 'הקלטת גיימפליי ב-60FPS עם מצלמת פנים רב-ערוצית ומיקסר אודיו כפול',
-      episodeNumber: 1,
-      season: 1,
-      status: 'ready',
-      mediaType: 'gaming_creator',
-      targetDurationMinutes: 30,
-      topics: [
-        {
-          id: 'topic-gameplay',
-          title: 'משחק חי וגיימפליי',
-          estimatedMinutes: 30,
-          notes: 'לכידת מסך / כרטיס אלגטו ב-60FPS',
-          talkingPoints: ['הצגת המשחק וההגדרות', 'גיימפליי חי ב-60FPS'],
-          questions: [],
-          resources: [],
-          completed: false,
-          order: 1
-        }
-      ],
-      subtitles: [],
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
+    // 3. If no episodeId, reuse the active unrecorded gaming session or create ONE session
+    const activeSession = getOrCreateActiveGamingSession();
 
-    saveEpisode(quickStartSession);
-    setEpisode(quickStartSession);
+    // Update browser URL without page reload so any future refreshes (F5 / Cmd+R)
+    // keep the EXACT same episode and NEVER duplicate!
+    if (typeof window !== 'undefined') {
+      window.history.replaceState(null, '', `/gaming?episodeId=${activeSession.id}`);
+    }
+
+    setEpisode(activeSession);
     setIsLoaded(true);
   }, [episodeId]);
 

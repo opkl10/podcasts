@@ -190,13 +190,24 @@ export default function EpisodeCard({ episode, onDelete, onOpenAudiogram }: Epis
             מחקר ואג'נדה
           </Link>
 
-          <Link
-            href={`/episodes/${episode.id}/studio`}
-            className="flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl bg-gradient-to-r from-red-600 via-rose-600 to-pink-600 hover:from-red-500 hover:to-pink-500 text-xs font-semibold text-white shadow-md shadow-red-950/40 hover:shadow-red-900/60 transition-all text-center group/btn"
-          >
-            <Mic className="w-3.5 h-3.5 group-hover/btn:animate-pulse" />
-            כניסה לאולפן
-          </Link>
+          {episode.mediaType === 'gaming_creator' || episode.id.startsWith('gaming-') || episode.podcastId === 'pod-gaming' ? (
+            <Link
+              href={`/gaming?episodeId=${episode.id}`}
+              className="flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl bg-gradient-to-r from-purple-600 via-fuchsia-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-xs font-bold text-white shadow-md shadow-purple-950/40 hover:shadow-purple-900/60 transition-all text-center group/btn"
+              title="כניסה מחודשת לאולפן גיימינג ב-60FPS"
+            >
+              <Gamepad2 className="w-3.5 h-3.5 group-hover/btn:scale-110 transition-transform text-purple-200" />
+              <span>אולפן גיימינג</span>
+            </Link>
+          ) : (
+            <Link
+              href={`/episodes/${episode.id}/studio`}
+              className="flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl bg-gradient-to-r from-red-600 via-rose-600 to-pink-600 hover:from-red-500 hover:to-pink-500 text-xs font-semibold text-white shadow-md shadow-red-950/40 hover:shadow-red-900/60 transition-all text-center group/btn"
+            >
+              <Mic className="w-3.5 h-3.5 group-hover/btn:animate-pulse" />
+              <span>כניסה לאולפן</span>
+            </Link>
+          )}
         </div>
 
         {Boolean(episode.recording || episode.subtitles?.length) && (

@@ -180,20 +180,30 @@ export default function PostRecordingReview({
             </div>
           </div>
 
-          <div className="flex items-center gap-3 shrink-0">
+          <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+            {/* Return to Studio */}
             <button
               onClick={onReRecord}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-300 hover:text-white border border-slate-700 transition-colors"
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-purple-600/20 hover:bg-purple-600/30 text-purple-200 hover:text-white border border-purple-500/40 text-xs font-bold transition-all shadow-md active:scale-95"
+              title="חזרה לאולפן להקלטה נוספת"
             >
-              <RotateCcw className="w-3.5 h-3.5" />
-              <span>הקלטה מחדש</span>
+              <Gamepad2 className="w-3.5 h-3.5 text-purple-400" />
+              <span>המשך הקלטה באולפן</span>
             </button>
+
+            {/* Back to Gaming Hub or Dashboard */}
+            <Link
+              href={episode.mediaType === 'gaming_creator' || episode.id.startsWith('gaming-') ? '/?view=gaming' : '/'}
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-300 hover:text-white border border-slate-700 transition-colors"
+            >
+              <span>{episode.mediaType === 'gaming_creator' || episode.id.startsWith('gaming-') ? '🎮 לכל סרטוני הגיימינג' : 'לכל הפרקים'}</span>
+            </Link>
 
             <Link
               href={`/episodes/${episode.id}`}
-              className="flex items-center gap-1.5 px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-bold text-white shadow-lg shadow-indigo-600/30 transition-all"
+              className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-bold text-white shadow-lg shadow-indigo-600/30 transition-all"
             >
-              <span>מעבר לעריכת הפרק</span>
+              <span>עריכת פרק ופרטים</span>
               <ArrowRight className="w-4 h-4" />
             </Link>
           </div>

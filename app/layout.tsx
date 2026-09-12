@@ -50,14 +50,21 @@ export default function RootLayout({
                 className="flex items-center gap-2 px-3 py-1.5 text-xs sm:text-sm font-medium text-slate-300 hover:text-white hover:bg-slate-800/60 rounded-lg transition-colors"
               >
                 <ListMusic className="w-4 h-4 text-indigo-400" />
-                <span>כל הפרקים</span>
+                <span>פודקאסטים</span>
+              </Link>
+              <Link
+                href="/?view=gaming"
+                className="flex items-center gap-2 px-3 py-1.5 text-xs sm:text-sm font-bold text-purple-300 hover:text-white hover:bg-purple-900/40 rounded-lg transition-colors"
+              >
+                <Gamepad2 className="w-4 h-4 text-purple-400" />
+                <span>🎮 סרטוני גיימינג</span>
               </Link>
               <Link
                 href="/gaming"
-                className="flex items-center gap-2 px-3 py-1.5 text-xs sm:text-sm font-bold text-purple-300 hover:text-white bg-purple-950/50 hover:bg-purple-900/60 border border-purple-500/30 rounded-lg transition-all shadow-sm"
+                className="flex items-center gap-2 px-3 py-1.5 text-xs sm:text-sm font-bold text-white bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 border border-purple-400/30 rounded-lg transition-all shadow-md shadow-purple-900/30"
               >
-                <Gamepad2 className="w-4 h-4 text-purple-400" />
-                <span>🎮 אולפן גיימינג</span>
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+                <span>אולפן חי</span>
               </Link>
             </nav>
 

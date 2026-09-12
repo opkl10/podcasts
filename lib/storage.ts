@@ -789,4 +789,94 @@ export function saveAudioStageConfig(config: AudioStageConfig, podcastId?: strin
   }
 }
 
+// ─── GAMING & YOUTUBE SESSIONS MANAGEMENT ─────────────────────────────────────
+
+/**
+ * Cleans up empty/ghost gaming sessions created by accidental browser refreshes.
+ * Preserves all sessions that have recorded media or custom descriptions.
+ */
+export function cleanupDuplicateEmptyGamingSessions(): Episode[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const episodes = getEpisodes();
+    // Identify unrecorded empty gaming sessions with 0 duration
+    const emptyGaming = episodes.filter(e => 
+      (e.mediaType === 'gaming_creator' || e.id.startsWith('gaming-')) && 
+      (!e.recording || e.recording.duration === 0) && 
+      e.status !== 'recorded'
+    );
+
+    if (emptyGaming.length > 1) {
+      // Keep only the newest empty session, remove the duplicate ghosts
+      const keepId = emptyGaming[0].id;
+      const cleaned = episodes.filter(e => {
+        const isEmpty = (e.mediaType === 'gaming_creator' || e.id.startsWith('gaming-')) && 
+          (!e.recording || e.recording.duration === 0) && 
+          e.status !== 'recorded';
+        return !isEmpty || e.id === keepId;
+      });
+      saveEpisodes(cleaned);
+      console.log(`[Storage] 🧹 ניקוי סשנים כפולים: הוסרו ${emptyGaming.length - 1} סשנים ריקים.`);
+      return cleaned;
+    }
+    return episodes;
+  } catch (err) {
+    console.error('Error cleaning duplicate gaming sessions:', err);
+    return getEpisodes();
+  }
+}
+
+/**
+ * Returns an existing active unrecorded gaming session or safely creates a single new one.
+ * Prevents duplicating sessions on every studio page refresh!
+ */
+export function getOrCreateActiveGamingSession(): Episode {
+  const episodes = getEpisodes();
+  // 1. Look for an existing unrecorded session to reuse
+  const existing = episodes.find(e => 
+    (e.mediaType === 'gaming_creator' || e.id.startsWith('gaming-')) && 
+    (!e.recording || e.recording.duration === 0) && 
+    e.status !== 'recorded'
+  );
+
+  if (existing) {
+    return existing;
+  }
+
+  // 2. Count existing gaming sessions to assign a sequential number
+  const gamingCount = episodes.filter(e => e.mediaType === 'gaming_creator' || e.id.startsWith('gaming-') || e.podcastId === 'pod-gaming').length;
+
+  const newSession: Episode = {
+    id: `gaming-${Date.now()}`,
+    podcastId: 'pod-gaming',
+    title: `סרטון גיימינג ויוטיוב #${gamingCount + 1} - ${new Date().toLocaleDateString('he-IL')}`,
+    description: 'הקלטת גיימפליי ב-60FPS עם מצלמת פנים, מיקסר אודיו כפול וכרטיס לכידה Elgato',
+    episodeNumber: gamingCount + 1,
+    season: 1,
+    status: 'ready',
+    mediaType: 'gaming_creator',
+    targetDurationMinutes: 30,
+    topics: [
+      {
+        id: 'topic-gameplay',
+        title: 'משחק חי וגיימפליי',
+        estimatedMinutes: 30,
+        notes: 'לכידת מסך / כרטיס אלגטו ב-60FPS',
+        talkingPoints: ['הצגת המשחק וההגדרות', 'גיימפליי חי ב-60FPS'],
+        questions: [],
+        resources: [],
+        completed: false,
+        order: 1
+      }
+    ],
+    subtitles: [],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+
+  saveEpisode(newSession);
+  return newSession;
+}
+
+
 

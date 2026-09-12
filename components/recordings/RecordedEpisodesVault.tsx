@@ -26,7 +26,8 @@ import {
   Activity,
   Trash2,
   RotateCcw,
-  X
+  X,
+  Gamepad2
 } from 'lucide-react';
 
 interface RecordedEpisodesVaultProps {
@@ -47,12 +48,22 @@ export default function RecordedEpisodesVault({
   onUpdateEpisodes
 }: RecordedEpisodesVaultProps) {
   const [selectedPodcastId, setSelectedPodcastId] = useState<string>('all');
+  const [selectedCategory, setSelectedCategory] = useState<'all' | 'podcasts' | 'gaming'>('all');
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
 
   // Filter episodes that have been recorded or have recording metadata
   const recordedEpisodes = episodes
     .filter(ep => ep.status === 'recorded' || ep.status === 'published' || ep.recording)
     .filter(ep => selectedPodcastId === 'all' || ep.podcastId === selectedPodcastId)
+    .filter(ep => {
+      if (selectedCategory === 'gaming') {
+        return ep.mediaType === 'gaming_creator' || ep.id.startsWith('gaming-') || ep.podcastId === 'pod-gaming';
+      }
+      if (selectedCategory === 'podcasts') {
+        return ep.mediaType !== 'gaming_creator' && !ep.id.startsWith('gaming-') && ep.podcastId !== 'pod-gaming';
+      }
+      return true;
+    })
     .sort((a, b) => {
       // Sort by Season desc then Episode desc
       if (b.season !== a.season) return b.season - a.season;
@@ -196,14 +207,47 @@ export default function RecordedEpisodesVault({
           </div>
         </div>
 
-        {/* Filter by Podcast */}
-        <div className="flex items-center gap-2">
+        {/* Category & Podcast Filters */}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center p-1 bg-slate-900 border border-slate-700 rounded-xl text-xs">
+            <button
+              onClick={() => setSelectedCategory('all')}
+              className={`px-3 py-1 rounded-lg font-bold transition-all ${
+                selectedCategory === 'all'
+                  ? 'bg-indigo-600 text-white shadow'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              הכל
+            </button>
+            <button
+              onClick={() => setSelectedCategory('podcasts')}
+              className={`px-3 py-1 rounded-lg font-bold transition-all ${
+                selectedCategory === 'podcasts'
+                  ? 'bg-indigo-600 text-white shadow'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              🎙️ פודקאסטים
+            </button>
+            <button
+              onClick={() => setSelectedCategory('gaming')}
+              className={`px-3 py-1 rounded-lg font-bold transition-all ${
+                selectedCategory === 'gaming'
+                  ? 'bg-purple-600 text-white shadow'
+                  : 'text-purple-300 hover:text-white'
+              }`}
+            >
+              🎮 גיימינג ויוטיוב
+            </button>
+          </div>
+
           <select
             value={selectedPodcastId}
             onChange={(e) => setSelectedPodcastId(e.target.value)}
             className="px-4 py-2 rounded-xl bg-slate-900 border border-slate-700 text-xs font-semibold text-white focus:outline-none focus:border-indigo-500"
           >
-            <option value="all">כל התוכניות והפודקאסטים</option>
+            <option value="all">כל התוכניות</option>
             {podcasts.map(p => (
               <option key={p.id} value={p.id}>{p.title}</option>
             ))}
@@ -395,6 +439,29 @@ function VaultEpisodeItemRow({
               <span>שיוך לפרק אחר</span>
             </button>
           )}
+
+          {/* Re-enter Studio CTA */}
+          <Link
+            href={ep.mediaType === 'gaming_creator' || ep.id.startsWith('gaming-') || ep.podcastId === 'pod-gaming' ? `/gaming?episodeId=${ep.id}` : `/episodes/${ep.id}/studio`}
+            className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all shadow-md active:scale-95 border ${
+              ep.mediaType === 'gaming_creator' || ep.id.startsWith('gaming-') || ep.podcastId === 'pod-gaming'
+                ? 'bg-purple-600/20 hover:bg-purple-600/30 text-purple-200 hover:text-white border-purple-500/40'
+                : 'bg-rose-600/20 hover:bg-rose-600/30 text-rose-200 hover:text-white border-rose-500/40'
+            }`}
+            title="כניסה מחודשת לאולפן להקלטה או המשך עבודה"
+          >
+            {ep.mediaType === 'gaming_creator' || ep.id.startsWith('gaming-') || ep.podcastId === 'pod-gaming' ? (
+              <>
+                <Gamepad2 className="w-3.5 h-3.5 text-purple-400" />
+                <span>אולפן גיימינג</span>
+              </>
+            ) : (
+              <>
+                <Mic className="w-3.5 h-3.5 text-rose-400" />
+                <span>אולפן הקלטה</span>
+              </>
+            )}
+          </Link>
 
           <Link
             href={`/episodes/${ep.id}`}
