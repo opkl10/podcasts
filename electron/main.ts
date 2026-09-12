@@ -119,6 +119,17 @@ app.whenReady().then(async () => {
     const { systemPreferences } = require('electron');
     await systemPreferences.askForMediaAccess('camera').catch(() => {});
     await systemPreferences.askForMediaAccess('microphone').catch(() => {});
+
+    // Pre-emptively reset VDCAssistant so we always start with a clean UVC session.
+    // VDCAssistant is the macOS daemon that brokers camera access. If it holds a
+    // stale session from a previous FaceTime/Zoom call, Chrome will only get 640×480.
+    // Killing it here (it auto-restarts in ~1s) ensures full HD/4K from first open.
+    await new Promise<void>((resolve) => {
+      exec('killall VDCAssistant 2>/dev/null; killall AppleCameraAssistant 2>/dev/null', () => {
+        setTimeout(resolve, 1200); // wait for daemon to restart
+      });
+    });
+    console.log('[Electron] ✅ VDCAssistant reset at startup — camera will open at full resolution');
   }
   await createWindow();
   app.on('activate', () => {

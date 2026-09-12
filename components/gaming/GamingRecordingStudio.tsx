@@ -633,7 +633,7 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
   };
 
   // 5. Hardware Video Source / Capture Card (Elgato / Cam Link) Controller
-  const handleSelectCaptureCard = async (deviceId: string, targetRes?: VideoResolution) => {
+  const handleSelectCaptureCard = async (deviceId: string, targetRes?: VideoResolution, _autoRecoveryAttempted = false) => {
     setSelectedCaptureCardId(deviceId);
     setCaptureCardError(null);
 
@@ -729,29 +729,24 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
     let actualFps = 0;
 
     try {
-      // Progressive resolution requests: 4K (3840x2160) -> 1440p (2560x1440) -> 1080p (1920x1080)
-      const resolutionTiers: { label: string; constraints: MediaTrackConstraints }[] = [
-        {
-          label: '4K Ultra HD (Exact 3840x2160)',
-          constraints: { deviceId: { exact: deviceId }, width: { exact: 3840 }, height: { exact: 2160 }, frameRate: { ideal: 30, max: 60 } }
-        },
-        {
-          label: '4K Ultra HD (Ideal 3840x2160)',
-          constraints: { deviceId: { exact: deviceId }, width: { ideal: 3840 }, height: { ideal: 2160 }, frameRate: { ideal: 30, max: 60 } }
-        },
-        {
-          label: 'Quad HD 1440p (Ideal 2560x1440)',
-          constraints: { deviceId: { exact: deviceId }, width: { ideal: 2560, min: 1920 }, height: { ideal: 1440, min: 1080 }, frameRate: { ideal: 60 } }
-        },
-        {
-          label: 'Full HD 1080p (Exact 1920x1080)',
-          constraints: { deviceId: { exact: deviceId }, width: { exact: 1920 }, height: { exact: 1080 }, frameRate: { ideal: 60 } }
-        },
-        {
-          label: 'Full HD 1080p (Ideal 1920x1080)',
-          constraints: { deviceId: { exact: deviceId }, width: { ideal: 1920, min: 1280 }, height: { ideal: 1080, min: 720 }, frameRate: { ideal: 60 } }
-        }
-      ];
+      // When VDCAssistant was just reset (_autoRecoveryAttempted=true), use ONLY `ideal` constraints.
+      // `exact` constraints on a freshly-reset UVC session can still silently return 640×480 — ideal
+      // lets the driver negotiate at the highest resolution it can actually provide.
+      const resolutionTiers: { label: string; constraints: MediaTrackConstraints }[] = _autoRecoveryAttempted
+        ? [
+            // Recovery tiers — ideal only, no exact, no min filter (let driver decide)
+            { label: '4K Recovery (ideal only)', constraints: { deviceId: { ideal: deviceId }, width: { ideal: 3840 }, height: { ideal: 2160 }, frameRate: { ideal: 30, max: 60 } } },
+            { label: '1080p Recovery (ideal only)', constraints: { deviceId: { ideal: deviceId }, width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 60 } } },
+            { label: 'HD Recovery (min 720)', constraints: { deviceId: { ideal: deviceId }, width: { min: 1280 }, height: { min: 720 } } },
+          ]
+        : [
+            // Normal tiers — start with exact for best negotiation, fall back to ideal
+            { label: '4K Ultra HD (Exact 3840x2160)', constraints: { deviceId: { exact: deviceId }, width: { exact: 3840 }, height: { exact: 2160 }, frameRate: { ideal: 30, max: 60 } } },
+            { label: '4K Ultra HD (Ideal 3840x2160)', constraints: { deviceId: { exact: deviceId }, width: { ideal: 3840 }, height: { ideal: 2160 }, frameRate: { ideal: 30, max: 60 } } },
+            { label: 'Quad HD 1440p (Ideal 2560x1440)', constraints: { deviceId: { exact: deviceId }, width: { ideal: 2560, min: 1920 }, height: { ideal: 1440, min: 1080 }, frameRate: { ideal: 60 } } },
+            { label: 'Full HD 1080p (Exact 1920x1080)', constraints: { deviceId: { exact: deviceId }, width: { exact: 1920 }, height: { exact: 1080 }, frameRate: { ideal: 60 } } },
+            { label: 'Full HD 1080p (Ideal 1920x1080)', constraints: { deviceId: { exact: deviceId }, width: { ideal: 1920, min: 1280 }, height: { ideal: 1080, min: 720 }, frameRate: { ideal: 60 } } },
+          ];
 
       for (const tier of resolutionTiers) {
         if (desiredRes !== '4k' && tier.label.includes('4K')) continue;
@@ -810,7 +805,7 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
           setCaptureCapabilities(caps);
         } catch (e) {}
 
-        console.log(`%c[Video Source] 🎯 סיכום חיבור: שם התקן שנבחר: "${cardLabel}" | רזולוציה שהתקבלה בפועל מהדפדפן: ${w}×${h} @ ${fps}FPS`, 'color: #06b6d4; font-weight: bold;');
+        console.log(`%c[Video Source] 🎯 סיכום חיבור: "${cardLabel}" | ${w}×${h} @ ${fps}FPS`, 'color: #06b6d4; font-weight: bold;');
 
         setCaptureQualityBadge(`${w}×${h} @ ${fps}FPS`);
         setCaptureDetails({ width: w, height: h, fps });
@@ -820,6 +815,32 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
         } else if (w >= 1920) {
           setVideoResolution('1080p');
         }
+
+        // ── AUTO-RECOVERY: if we got SD (640×480), automatically reset VDCAssistant ──
+        // This handles the "was working yesterday, broke today" scenario where
+        // VDCAssistant entered a stale locked state after another app briefly
+        // touched the camera (FaceTime, Zoom, QuickTime, etc.)
+        if (w <= 640 && !_autoRecoveryAttempted) {
+          console.warn('%c[Video Source] ⚠️ זוהתה נעילת SD אוטומטית — מפעיל ריסט VDCAssistant...', 'color: #f59e0b; font-weight: bold;');
+          stream.getTracks().forEach(t => t.stop());
+          setCaptureQualityBadge('מאפס VDCAssistant...');
+          setIsCaptureLoading(false);
+
+          // Kill VDCAssistant via Electron IPC (if available)
+          const electronAPI = (window as any).electronAPI;
+          if (electronAPI?.releaseCameraLock) {
+            try { await electronAPI.releaseCameraLock(); } catch (e) {}
+          } else {
+            // Web fallback: just wait 1.5s for any stale Chrome camera lock to clear
+            await new Promise(r => setTimeout(r, 1500));
+          }
+
+          // Re-open with ideal-only constraints (no exact) and mark as recovery attempt
+          console.log('%c[Video Source] 🔄 מנסה מחדש לאחר ריסט...', 'color: #10b981; font-weight: bold;');
+          await handleSelectCaptureCard(deviceId, desiredRes, true /* _autoRecoveryAttempted */);
+          return;
+        }
+        // ── END AUTO-RECOVERY ──
 
         videoTrack.onended = () => {
           console.log(`[Video Source] 🔌 נותק שידור הווידאו של "${cardLabel}"`);
