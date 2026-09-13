@@ -470,6 +470,13 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
   const recordedMicChunksRef = useRef<Blob[]>([]);
   const recordedGameChunksRef = useRef<Blob[]>([]);
 
+  // Video Container Format Selection (MP4 / WebM / MKV)
+  const [videoContainerFormat, setVideoContainerFormat] = useState<'mp4' | 'webm' | 'mkv'>('mp4');
+
+  // Broadcast Studio Vocal DSP & Noise Filtering States
+  const [studioVocalEnhance, setStudioVocalEnhance] = useState<boolean>(true);
+  const [micNoiseSuppression, setMicNoiseSuppression] = useState<boolean>(false);
+
   // 1. Device Discovery & Hotplugging Listener (iPhone USB / Continuity / Elgato)
   const refreshDevices = useCallback(async () => {
     try {
@@ -548,16 +555,42 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
     let streamInstance: MediaStream | null = null;
 
     async function initGameAudio() {
-      // 1. If explicit game audio device selected (Elgato HDMI / USB Audio / Line-In)
-      if (selectedGameAudioId) {
+      // Auto-detect matching capture card audio device if not explicitly picked
+      let targetId = selectedGameAudioId;
+      if (!targetId && selectedCaptureCardId) {
+        const cardDev = videoDevices.find(v => v.deviceId === selectedCaptureCardId);
+        const cardLabelLower = (cardDev?.label || '').toLowerCase();
+        const matching = audioDevices.find(a => {
+          if (a.deviceId === selectedAudioId) return false;
+          const al = (a.label || '').toLowerCase();
+          return (
+            (cardLabelLower.includes('elgato') && al.includes('elgato')) ||
+            (cardLabelLower.includes('cam link') && (al.includes('cam link') || al.includes('elgato'))) ||
+            (cardLabelLower.includes('hd60') && (al.includes('hd60') || al.includes('elgato'))) ||
+            al.includes('hdmi') ||
+            al.includes('digital audio') ||
+            al.includes('usb audio') ||
+            al.includes('capture') ||
+            al.includes('game')
+          );
+        });
+        if (matching) {
+          targetId = matching.deviceId;
+          setSelectedGameAudioId(targetId);
+        }
+      }
+
+      // 1. If explicit or detected game audio device selected (Elgato HDMI / USB Audio / Line-In)
+      if (targetId) {
         try {
           streamInstance = await navigator.mediaDevices.getUserMedia({
             audio: {
-              deviceId: { exact: selectedGameAudioId },
+              deviceId: { ideal: targetId },
+              sampleRate: { ideal: 48000 },
+              channelCount: { ideal: 2 },
               echoCancellation: false,
               noiseSuppression: false,
               autoGainControl: false,
-              channelCount: 2
             },
             video: false
           });
@@ -568,21 +601,39 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
           }
 
           setGameAudioStream(streamInstance);
+          gamingMixerRef.current?.resume();
           return;
         } catch (err) {
-          console.warn('Failed to open dedicated game audio device:', err);
+          console.warn('Failed to open dedicated game audio device with ideal constraints, trying basic audio:', err);
+          try {
+            streamInstance = await navigator.mediaDevices.getUserMedia({
+              audio: { deviceId: { ideal: targetId } },
+              video: false
+            });
+            if (!active) {
+              streamInstance.getTracks().forEach(t => t.stop());
+              return;
+            }
+            setGameAudioStream(streamInstance);
+            gamingMixerRef.current?.resume();
+            return;
+          } catch (e2) {
+            console.warn('Could not open dedicated game audio:', e2);
+          }
         }
       }
 
       // 2. Fallback to capture card stream if it contains audio tracks
       if (captureCardStream && captureCardStream.getAudioTracks().length > 0) {
         setGameAudioStream(captureCardStream);
+        gamingMixerRef.current?.resume();
         return;
       }
 
       // 3. Fallback to screen capture stream if screen capture is active
       if (screenStream && screenStream.getAudioTracks().length > 0) {
         setGameAudioStream(screenStream);
+        gamingMixerRef.current?.resume();
         return;
       }
 
@@ -597,7 +648,7 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
         streamInstance.getTracks().forEach(t => t.stop());
       }
     };
-  }, [selectedGameAudioId, captureCardStream, screenStream]);
+  }, [selectedGameAudioId, selectedCaptureCardId, captureCardStream, screenStream, audioDevices, videoDevices, selectedAudioId]);
 
   // 2. Start WebRTC Receiver & Frame Relay for Remote iPhone Camera
   useEffect(() => {
@@ -659,23 +710,29 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
     async function initMicAudio() {
       try {
         let stream: MediaStream;
+        const micConstraints: MediaTrackConstraints = {
+          sampleRate: { ideal: 48000, min: 44100 },
+          channelCount: { ideal: 2, min: 1 },
+          echoCancellation: false,
+          autoGainControl: false,
+          noiseSuppression: micNoiseSuppression ? true : false,
+        };
+
         if (selectedAudioId) {
-          try {
-            stream = await navigator.mediaDevices.getUserMedia({
-              audio: {
-                deviceId: { ideal: selectedAudioId },
-                echoCancellation: false,
-                noiseSuppression: false,
-                autoGainControl: false,
-              },
-              video: false,
-            });
-          } catch (specificErr) {
-            console.warn('[Mic] Ideal device constraints failed, trying basic audio:', specificErr);
-            stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-          }
-        } else {
-          stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+          micConstraints.deviceId = { ideal: selectedAudioId };
+        }
+
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            audio: micConstraints,
+            video: false,
+          });
+        } catch (specificErr) {
+          console.warn('[Mic] Ideal studio constraints failed, trying basic audio:', specificErr);
+          stream = await navigator.mediaDevices.getUserMedia({
+            audio: selectedAudioId ? { deviceId: { ideal: selectedAudioId } } : true,
+            video: false
+          });
         }
 
         if (!active) {
@@ -707,7 +764,7 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
         streamInstance.getTracks().forEach(t => t.stop());
       }
     };
-  }, [selectedAudioId]);
+  }, [selectedAudioId, micNoiseSuppression]);
 
   // 3b. Initialize or Update Primary Facecam Video Stream (Video Only)
   useEffect(() => {
@@ -854,6 +911,12 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
         (cardLabelLower.includes('usb video') && (aLabel.includes('usb audio') || aLabel.includes('usb video')))
       );
     });
+
+    if (matchingAudio) {
+      setSelectedGameAudioId(matchingAudio.deviceId);
+      console.log(`[Video Source] 🎮 זוהה ערוץ שמע אלגטו תואם: "${matchingAudio.label}"`);
+    }
+    gamingMixerRef.current?.resume();
 
     const requestUserMedia = async (videoConstraints: MediaTrackConstraints): Promise<MediaStream> => {
       // 1. Try with exact deviceId
@@ -1173,7 +1236,8 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
 
     gamingMixerRef.current.setup(activeMicStream, activeGameStream, {
       splitChannels,
-      monitorGame: monitorGameAudio
+      monitorGame: monitorGameAudio,
+      studioVocalDsp: studioVocalEnhance
     });
     gamingMixerRef.current.setMicVolume(isAudioMuted ? 0 : micGain);
     gamingMixerRef.current.setGameVolume(gameAudioVolume);
@@ -1188,22 +1252,47 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
     gameAudioStream,
     screenStream,
     captureCardStream,
-    splitChannels,
-    monitorGameAudio,
-    isAudioMuted
+    splitChannels
   ]);
 
   useEffect(() => {
     if (gamingMixerRef.current) {
-      gamingMixerRef.current.setMicVolume(micGain);
+      gamingMixerRef.current.setMicVolume(isAudioMuted ? 0 : micGain);
     }
-  }, [micGain]);
+  }, [micGain, isAudioMuted]);
 
   useEffect(() => {
     if (gamingMixerRef.current) {
       gamingMixerRef.current.setGameVolume(gameAudioVolume);
     }
   }, [gameAudioVolume]);
+
+  useEffect(() => {
+    if (gamingMixerRef.current) {
+      gamingMixerRef.current.setMonitoringGameAudio(monitorGameAudio);
+    }
+  }, [monitorGameAudio]);
+
+  useEffect(() => {
+    if (gamingMixerRef.current) {
+      gamingMixerRef.current.setStudioVocalEnhance(studioVocalEnhance);
+    }
+  }, [studioVocalEnhance]);
+
+  // Global user interaction unblocker for AudioContext (ensures audio plays without browser blocking)
+  useEffect(() => {
+    const handleInteraction = () => {
+      gamingMixerRef.current?.resume();
+    };
+    window.addEventListener('click', handleInteraction, { passive: true });
+    window.addEventListener('keydown', handleInteraction, { passive: true });
+    window.addEventListener('touchstart', handleInteraction, { passive: true });
+    return () => {
+      window.removeEventListener('click', handleInteraction);
+      window.removeEventListener('keydown', handleInteraction);
+      window.removeEventListener('touchstart', handleInteraction);
+    };
+  }, []);
 
   // 6. Keyboard Hotkeys (1-4 layouts, M for mute mic, V for mute cam, R for record)
   useEffect(() => {
@@ -1625,7 +1714,8 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
 
       const audioPipes = gamingMixerRef.current?.setup(activeMicStream, activeGameStream, {
         splitChannels,
-        monitorGame: monitorGameAudio
+        monitorGame: monitorGameAudio,
+        studioVocalDsp: studioVocalEnhance
       });
 
       const mixedAudioTrack = audioPipes?.mixedStream?.getAudioTracks()[0] || activeMicStream?.getAudioTracks()[0];
@@ -1641,12 +1731,35 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
         ? 12000000 // 12 Mbps for 1080p FHD 60FPS
         : 6000000;
 
+      // Determine optimum MIME type based on chosen video container format (MP4 / WebM / MKV)
       let mimeType = 'video/webm;codecs=vp9,opus';
-      if (!MediaRecorder.isTypeSupported(mimeType)) {
-        mimeType = 'video/webm;codecs=vp8,opus';
-        if (!MediaRecorder.isTypeSupported(mimeType)) {
-          mimeType = 'video/webm';
-        }
+      if (videoContainerFormat === 'mp4') {
+        const mp4Candidates = [
+          'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+          'video/mp4;codecs=avc1,mp4a.40.2',
+          'video/mp4;codecs=avc1',
+          'video/mp4;codecs=h264',
+          'video/mp4'
+        ];
+        const supported = mp4Candidates.find(t => MediaRecorder.isTypeSupported(t));
+        mimeType = supported || 'video/webm;codecs=vp9,opus';
+      } else if (videoContainerFormat === 'mkv') {
+        const mkvCandidates = [
+          'video/x-matroska;codecs=avc1,opus',
+          'video/x-matroska',
+          'video/webm;codecs=vp9,opus',
+          'video/webm'
+        ];
+        const supported = mkvCandidates.find(t => MediaRecorder.isTypeSupported(t));
+        mimeType = supported || 'video/webm;codecs=vp9,opus';
+      } else {
+        const webmCandidates = [
+          'video/webm;codecs=vp9,opus',
+          'video/webm;codecs=vp8,opus',
+          'video/webm'
+        ];
+        const supported = webmCandidates.find(t => MediaRecorder.isTypeSupported(t));
+        mimeType = supported || 'video/webm';
       }
 
       // 1. Master Composite Video Recorder
@@ -1843,6 +1956,7 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
         videoUrl={recordedVideoUrl}
         durationSeconds={recordedSecondsRef.current || recordedSeconds}
         markers={markersRef.current.length > 0 ? markersRef.current : markers}
+        defaultFormat={videoContainerFormat}
         onReRecord={() => {
           setFinishedRecording(false);
           setRecordedSeconds(0);
@@ -1943,6 +2057,46 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
                   }`}
                 >
                   <span>HD 720p</span>
+                </button>
+              </div>
+
+              {/* Video Container Format Switcher (MP4 / WebM / MKV) */}
+              <div className="flex items-center p-0.5 rounded-xl bg-slate-900 border border-purple-500/30 text-xs font-bold" title="בחר את פורמט שמירת הווידאו (MP4 מומלץ לעריכה ויוטיוב)">
+                <button
+                  type="button"
+                  onClick={() => setVideoContainerFormat('mp4')}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1 ${
+                    videoContainerFormat === 'mp4'
+                      ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-md font-black scale-105'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                  title="MP4 - תואם לכל תוכנות העריכה (Premiere, Final Cut, DaVinci) ויוטיוב"
+                >
+                  <span>🎞️ MP4</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setVideoContainerFormat('webm')}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1 ${
+                    videoContainerFormat === 'webm'
+                      ? 'bg-purple-700 text-white shadow-md font-black scale-105'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                  title="WebM - איכות שידור מלאה ויעילה"
+                >
+                  <span>🌐 WebM</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setVideoContainerFormat('mkv')}
+                  className={`px-2 py-1 rounded-lg text-[11px] font-bold transition-all ${
+                    videoContainerFormat === 'mkv'
+                      ? 'bg-slate-700 text-white shadow'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                  title="MKV - פורמט שידור חסין תקלות"
+                >
+                  <span>📦 MKV</span>
                 </button>
               </div>
 
@@ -3460,12 +3614,12 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
               </span>
             </div>
 
-            {/* CHANNEL 1: GAMER / STREAMER MICROPHONE */}
-            <div className="p-3 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-2">
+            {/* CHANNEL 1: GAMER / STREAMER MICROPHONE (BROADCAST STUDIO DSP) */}
+            <div className="p-3.5 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-2.5">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-1.5 text-xs font-bold text-white">
                   <Mic className="w-4 h-4 text-indigo-400" />
-                  <span>ערוץ 1: מיקרופון סטרימר</span>
+                  <span>ערוץ 1: מיקרופון שדרן (איכות אולפן HD)</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="text-[11px] font-mono text-indigo-400">{Math.round(micGain * 100)}%</span>
@@ -3498,7 +3652,38 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
                 ))}
               </select>
 
-              {/* Mic Slider + Real-Time VU */}
+              {/* Studio Broadcast Vocal DSP & AI Noise Filter Toggles */}
+              <div className="grid grid-cols-2 gap-1.5 pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setStudioVocalEnhance(!studioVocalEnhance);
+                    gamingMixerRef.current?.resume();
+                  }}
+                  className={`px-2 py-1.5 rounded-lg text-[10px] font-bold border flex items-center justify-center gap-1 transition-all ${
+                    studioVocalEnhance
+                      ? 'bg-indigo-600/30 border-indigo-500 text-indigo-200 shadow-sm'
+                      : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
+                  }`}
+                  title="מעבד קול אולפני: סינון רעידות 80Hz, הבלטת נוכחות 3.8kHz וקומפרסור מונע צרימות"
+                >
+                  <span>🎙️ עיבוד אולפן (DSP): {studioVocalEnhance ? 'פעיל ✨' : 'כבוי'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMicNoiseSuppression(!micNoiseSuppression)}
+                  className={`px-2 py-1.5 rounded-lg text-[10px] font-bold border flex items-center justify-center gap-1 transition-all ${
+                    micNoiseSuppression
+                      ? 'bg-teal-600/30 border-teal-500 text-teal-200 shadow-sm'
+                      : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
+                  }`}
+                  title="סינון רעשי רקע של חדר, מאווררים ומזגן"
+                >
+                  <span>🔇 סינון רעשים: {micNoiseSuppression ? 'פעיל' : 'כבוי'}</span>
+                </button>
+              </div>
+
+              {/* Mic Slider + Real-Time Multi-color VU */}
               <div className="flex items-center gap-3 pt-1">
                 <input
                   type="range"
@@ -3512,27 +3697,36 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
                   }}
                   className="flex-1 accent-indigo-500 cursor-pointer h-1.5 bg-slate-800 rounded-lg"
                 />
-                <div className="w-20 h-2.5 rounded-full bg-slate-950 overflow-hidden border border-slate-700" title="מד עוצמת מיקרופון">
+                <div className="w-24 h-3 rounded-full bg-slate-950 overflow-hidden border border-slate-700/80" title="מד עוצמת מיקרופון">
                   <div
-                    className="h-full bg-gradient-to-r from-indigo-500 to-cyan-400 transition-all duration-75"
+                    className={`h-full transition-all duration-75 ${
+                      micAudioLevel > 80
+                        ? 'bg-rose-500'
+                        : micAudioLevel > 50
+                        ? 'bg-amber-400'
+                        : 'bg-gradient-to-r from-indigo-500 to-cyan-400'
+                    }`}
                     style={{ width: `${Math.min(100, micAudioLevel)}%` }}
                   />
                 </div>
               </div>
             </div>
 
-            {/* CHANNEL 2: GAME / CONSOLE AUDIO (ELGATO HDMI AUDIO) */}
-            <div className="p-3 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-2">
+            {/* CHANNEL 2: GAME / CONSOLE AUDIO (ELGATO HDMI AUDIO - ALWAYS AUDIBLE & RECORDED) */}
+            <div className="p-3.5 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-2.5">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-1.5 text-xs font-bold text-white">
                   <Gamepad2 className="w-4 h-4 text-purple-400" />
-                  <span>ערוץ 2: סאונד קונסולה / משחק</span>
+                  <span>ערוץ 2: סאונד קונסולה / אלגטו (HDMI Audio)</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="text-[11px] font-mono text-purple-400">{Math.round(gameAudioVolume * 100)}%</span>
                   <button
                     type="button"
-                    onClick={() => setGameAudioVolume(prev => prev > 0 ? 0 : 1.0)}
+                    onClick={() => {
+                      setGameAudioVolume(prev => prev > 0 ? 0 : 1.0);
+                      gamingMixerRef.current?.resume();
+                    }}
                     className={`p-1.5 rounded-lg border text-xs ${
                       gameAudioVolume === 0 ? 'bg-rose-600 border-rose-500 text-white' : 'bg-slate-800 border-slate-700 text-slate-300'
                     }`}
@@ -3543,6 +3737,29 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
                 </div>
               </div>
 
+              {/* Automatic Monitoring Notice: Always live without requiring headphone checkbox */}
+              <div className="flex items-center justify-between px-2.5 py-1.5 rounded-xl bg-emerald-950/40 border border-emerald-800/60 text-[10px]">
+                <div className="flex items-center gap-1.5 text-emerald-300 font-bold">
+                  <Volume2 className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
+                  <span>שמע קונסולה חי: פועל אוטומטית ברמקולים/אוזניות ומוקלט לווידאו</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMonitorGameAudio(!monitorGameAudio);
+                    gamingMixerRef.current?.resume();
+                  }}
+                  className={`text-[9px] font-bold px-2 py-0.5 rounded transition-all ${
+                    monitorGameAudio
+                      ? 'bg-emerald-800/60 text-emerald-200'
+                      : 'bg-slate-800 text-slate-400 hover:text-white'
+                  }`}
+                  title="שליטה על השמעת הסאונד החי ברמקולים או באוזניות המחשב"
+                >
+                  {monitorGameAudio ? 'השמעה פעילה' : 'השמעה מושתקת'}
+                </button>
+              </div>
+
               {/* Game Audio Device Selector (Captures HDMI audio from Elgato) */}
               <div className="space-y-1">
                 <label className="text-[10px] text-slate-400 font-bold block">
@@ -3550,10 +3767,13 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
                 </label>
                 <select
                   value={selectedGameAudioId}
-                  onChange={(e) => setSelectedGameAudioId(e.target.value)}
+                  onChange={(e) => {
+                    setSelectedGameAudioId(e.target.value);
+                    gamingMixerRef.current?.resume();
+                  }}
                   className="w-full px-2.5 py-1.5 rounded-lg bg-slate-950 border border-slate-700/80 text-[11px] text-white focus:outline-none focus:border-purple-500"
                 >
-                  <option value="">-- אוטומטי (שמע מלוכד המסך / שיתוף מסך) --</option>
+                  <option value="">-- אוטומטי (זוהה מלוכד מסך / אלגטו) --</option>
                   {audioDevices.map(a => {
                     const isElgatoAudio = a.label.toLowerCase().includes('elgato') ||
                       a.label.toLowerCase().includes('cam link') ||
@@ -3578,33 +3798,24 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
                   max="2"
                   step="0.05"
                   value={gameAudioVolume}
-                  onChange={(e) => setGameAudioVolume(parseFloat(e.target.value))}
+                  onChange={(e) => {
+                    setGameAudioVolume(parseFloat(e.target.value));
+                    gamingMixerRef.current?.resume();
+                  }}
                   className="flex-1 accent-purple-500 cursor-pointer h-1.5 bg-slate-800 rounded-lg"
                 />
-                <div className="w-20 h-2.5 rounded-full bg-slate-950 overflow-hidden border border-slate-700" title="מד עוצמת סאונד משחק">
+                <div className="w-24 h-3 rounded-full bg-slate-950 overflow-hidden border border-slate-700/80" title="מד עוצמת סאונד משחק">
                   <div
-                    className="h-full bg-gradient-to-r from-purple-500 to-pink-500 transition-all duration-75"
+                    className={`h-full transition-all duration-75 ${
+                      gameAudioLevel > 80
+                        ? 'bg-rose-500'
+                        : gameAudioLevel > 50
+                        ? 'bg-amber-400'
+                        : 'bg-gradient-to-r from-purple-500 to-pink-500'
+                    }`}
                     style={{ width: `${Math.min(100, gameAudioLevel)}%` }}
                   />
                 </div>
-              </div>
-
-              {/* Headphone Monitor for Game Sound */}
-              <div className="pt-1 flex items-center justify-between border-t border-slate-800/60">
-                <button
-                  type="button"
-                  onClick={() => setMonitorGameAudio(!monitorGameAudio)}
-                  className={`text-[11px] font-bold px-2.5 py-1 rounded-lg border flex items-center gap-1.5 transition-all ${
-                    monitorGameAudio
-                      ? 'bg-purple-600/30 border-purple-500 text-purple-300'
-                      : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
-                  }`}
-                  title="האזן לסאונד המשחק בזמן אמת באוזניות ללא השהייה"
-                >
-                  <Headphones className="w-3.5 h-3.5" />
-                  <span>🎧 שמע משחק באוזניות: {monitorGameAudio ? 'מופעל' : 'כבוי'}</span>
-                </button>
-                <span className="text-[10px] text-slate-400">אפס השהייה</span>
               </div>
             </div>
 

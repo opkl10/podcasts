@@ -36,6 +36,7 @@ interface PostRecordingReviewProps {
   durationSeconds: number;
   markers: TimestampMarker[];
   onReRecord: () => void;
+  defaultFormat?: 'mp4' | 'webm' | 'mkv' | 'mov';
 }
 
 export default function PostRecordingReview({
@@ -46,12 +47,14 @@ export default function PostRecordingReview({
   videoUrl,
   durationSeconds,
   markers,
-  onReRecord
+  onReRecord,
+  defaultFormat = 'mp4'
 }: PostRecordingReviewProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [isAudiogramOpen, setIsAudiogramOpen] = useState(false);
+  const [selectedFormat, setSelectedFormat] = useState<'mp4' | 'webm' | 'mkv' | 'mov'>(defaultFormat);
 
   // BunnyCDN Upload States
   const [isUploadingBunny, setIsUploadingBunny] = useState(false);
@@ -102,32 +105,36 @@ export default function PostRecordingReview({
     setIsPlaying(true);
   };
 
-  const handleDownloadVideo = () => {
+  const handleDownloadVideo = (overrideFormat?: 'mp4' | 'webm' | 'mkv' | 'mov') => {
     if (!videoBlob && !videoUrl) return;
+    const format = overrideFormat || selectedFormat;
     const url = videoUrl || (videoBlob ? URL.createObjectURL(videoBlob) : '');
     if (!url) return;
+    const cleanTitle = (episode.title || 'episode').replace(/[^\w\u0590-\u05FF-]+/g, '_');
     const a = document.createElement('a');
     a.href = url;
-    a.download = `recording-ep${episode.episodeNumber}-${episode.title.replace(/\s+/g, '-')}.webm`;
+    a.download = `recording-ep${episode.episodeNumber}-${cleanTitle}.${format}`;
     a.click();
   };
 
-  const handleDownloadAudio = () => {
+  const handleDownloadAudio = (audioExt: 'wav' | 'mp3' | 'webm' = 'webm') => {
     if (!audioBlob) return;
     const url = URL.createObjectURL(audioBlob);
+    const cleanTitle = (episode.title || 'episode').replace(/[^\w\u0590-\u05FF-]+/g, '_');
     const a = document.createElement('a');
     a.href = url;
-    a.download = `master-audio-ep${episode.episodeNumber}-${episode.title.replace(/\s+/g, '-')}.webm`;
+    a.download = `master-audio-ep${episode.episodeNumber}-${cleanTitle}.${audioExt}`;
     a.click();
     URL.revokeObjectURL(url);
   };
 
-  const handleDownloadGameAudio = () => {
+  const handleDownloadGameAudio = (audioExt: 'wav' | 'mp3' | 'webm' = 'webm') => {
     if (!gameAudioBlob) return;
     const url = URL.createObjectURL(gameAudioBlob);
+    const cleanTitle = (episode.title || 'episode').replace(/[^\w\u0590-\u05FF-]+/g, '_');
     const a = document.createElement('a');
     a.href = url;
-    a.download = `game-audio-ep${episode.episodeNumber}-${episode.title.replace(/\s+/g, '-')}.webm`;
+    a.download = `game-audio-ep${episode.episodeNumber}-${cleanTitle}.${audioExt}`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -246,15 +253,38 @@ export default function PostRecordingReview({
 
           {/* Download & Export Suite */}
           <div className="p-6 rounded-3xl bg-[#121620] border border-slate-800 space-y-4">
-            <h3 className="text-sm font-bold text-white flex items-center gap-2">
-              <Download className="w-4 h-4 text-indigo-400" />
-              הורדות וייצוא קבצים (גיבוי רב-פורמטי)
-            </h3>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                <Download className="w-4 h-4 text-indigo-400" />
+                הורדות וייצוא קבצים (בחירת פורמט)
+              </h3>
+
+              {/* Video Format Selector (MP4 / WebM / MKV / MOV) */}
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] font-bold text-slate-400">פורמט וידאו:</span>
+                <div className="flex items-center p-0.5 rounded-xl bg-slate-950 border border-purple-500/40 text-xs font-bold">
+                  {(['mp4', 'webm', 'mkv', 'mov'] as const).map((fmt) => (
+                    <button
+                      key={fmt}
+                      type="button"
+                      onClick={() => setSelectedFormat(fmt)}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
+                        selectedFormat === fmt
+                          ? 'bg-indigo-600 text-white shadow-md font-black scale-105'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      .{fmt.toUpperCase()}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-              {/* 1. HD Video Download */}
+              {/* 1. HD Video Download in Selected Format */}
               <button
-                onClick={handleDownloadVideo}
+                onClick={() => handleDownloadVideo()}
                 disabled={!videoBlob && !videoUrl}
                 className="flex items-center justify-between p-3.5 rounded-2xl bg-indigo-600/10 hover:bg-indigo-600/20 border border-indigo-500/30 text-indigo-300 hover:text-white disabled:opacity-40 transition-all text-right group"
               >
@@ -263,8 +293,8 @@ export default function PostRecordingReview({
                     <Video className="w-4 h-4" />
                   </div>
                   <div>
-                    <p className="text-xs font-bold text-white">וידאו מלא (HD)</p>
-                    <p className="text-[10px] text-slate-400">קובץ וידאו + אודיו</p>
+                    <p className="text-xs font-bold text-white">וידאו מלא (.{selectedFormat.toUpperCase()})</p>
+                    <p className="text-[10px] text-slate-400">הורדה כקובץ {selectedFormat.toUpperCase()}</p>
                   </div>
                 </div>
                 <Download className="w-4 h-4 text-indigo-400 group-hover:translate-y-0.5 transition-transform shrink-0" />
@@ -272,7 +302,7 @@ export default function PostRecordingReview({
 
               {/* 2. Isolated Master Audio Download */}
               <button
-                onClick={handleDownloadAudio}
+                onClick={() => handleDownloadAudio()}
                 disabled={!audioBlob}
                 className="flex items-center justify-between p-3.5 rounded-2xl bg-emerald-600/10 hover:bg-emerald-600/20 border border-emerald-500/30 text-emerald-300 hover:text-white disabled:opacity-40 transition-all text-right group"
               >
@@ -291,7 +321,7 @@ export default function PostRecordingReview({
               {/* 2b. Isolated Console / Game Audio Download (if gaming) */}
               {gameAudioBlob && (
                 <button
-                  onClick={handleDownloadGameAudio}
+                  onClick={() => handleDownloadGameAudio()}
                   className="flex items-center justify-between p-3.5 rounded-2xl bg-cyan-600/10 hover:bg-cyan-600/20 border border-cyan-500/30 text-cyan-300 hover:text-white transition-all text-right group"
                 >
                   <div className="flex items-center gap-2.5">

@@ -493,6 +493,14 @@ export class GamingAudioMixer {
   private mergerNode: ChannelMergerNode | null = null;
   private animId: number | null = null;
 
+  // Broadcast Studio Vocal DSP Chain (Professional Radio / Streaming Voice)
+  private micHighPass: BiquadFilterNode | null = null;
+  private micDeMud: BiquadFilterNode | null = null;
+  private micPresence: BiquadFilterNode | null = null;
+  private micAir: BiquadFilterNode | null = null;
+  private micCompressor: DynamicsCompressorNode | null = null;
+  private isStudioVocalDspEnabled: boolean = true;
+
   private isMonitoringGame: boolean = true;
   private isChannelSplit: boolean = false;
   private onLevelsChange?: (micLevel: number, gameLevel: number) => void;
@@ -504,7 +512,7 @@ export class GamingAudioMixer {
   public setup(
     micStream: MediaStream | null, 
     gameStream: MediaStream | null, 
-    options?: { splitChannels?: boolean; monitorGame?: boolean }
+    options?: { splitChannels?: boolean; monitorGame?: boolean; studioVocalDsp?: boolean }
   ): { 
     mixedStream: MediaStream | null; 
     isolatedMicStream: MediaStream | null; 
@@ -515,6 +523,7 @@ export class GamingAudioMixer {
     if (options) {
       if (options.splitChannels !== undefined) this.isChannelSplit = options.splitChannels;
       if (options.monitorGame !== undefined) this.isMonitoringGame = options.monitorGame;
+      if (options.studioVocalDsp !== undefined) this.isStudioVocalDspEnabled = options.studioVocalDsp;
     }
 
     const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
@@ -528,7 +537,7 @@ export class GamingAudioMixer {
     this.micDestinationNode = this.audioCtx.createMediaStreamDestination();
     this.gameDestinationNode = this.audioCtx.createMediaStreamDestination();
 
-    // 1. Mic Channel
+    // 1. Mic Channel with Broadcast Studio Vocal DSP
     if (micStream && micStream.getAudioTracks().length > 0) {
       try {
         this.micSource = this.audioCtx.createMediaStreamSource(micStream);
@@ -536,7 +545,49 @@ export class GamingAudioMixer {
         this.micAnalyser = this.audioCtx.createAnalyser();
         this.micAnalyser.fftSize = 64;
 
-        this.micSource.connect(this.micGainNode);
+        // Stage 1: High-Pass Rumble Filter (80Hz Butterworth - cuts desk taps, HVAC hum)
+        this.micHighPass = this.audioCtx.createBiquadFilter();
+        this.micHighPass.type = 'highpass';
+        this.micHighPass.frequency.setValueAtTime(80, this.audioCtx.currentTime);
+        this.micHighPass.Q.setValueAtTime(0.707, this.audioCtx.currentTime);
+
+        // Stage 2: De-Mud Filter (cuts 320Hz boxy room resonance by -2dB)
+        this.micDeMud = this.audioCtx.createBiquadFilter();
+        this.micDeMud.type = 'peaking';
+        this.micDeMud.frequency.setValueAtTime(320, this.audioCtx.currentTime);
+        this.micDeMud.Q.setValueAtTime(1.0, this.audioCtx.currentTime);
+        this.micDeMud.gain.setValueAtTime(this.isStudioVocalDspEnabled ? -2.0 : 0.0, this.audioCtx.currentTime);
+
+        // Stage 3: Vocal Presence & Articulation Boost (3.8kHz +3.5dB for crisp radio clarity)
+        this.micPresence = this.audioCtx.createBiquadFilter();
+        this.micPresence.type = 'peaking';
+        this.micPresence.frequency.setValueAtTime(3800, this.audioCtx.currentTime);
+        this.micPresence.Q.setValueAtTime(1.2, this.audioCtx.currentTime);
+        this.micPresence.gain.setValueAtTime(this.isStudioVocalDspEnabled ? 3.5 : 0.0, this.audioCtx.currentTime);
+
+        // Stage 4: Broadcast Air & Condenser Sparkle (10kHz High Shelf +2.5dB)
+        this.micAir = this.audioCtx.createBiquadFilter();
+        this.micAir.type = 'highshelf';
+        this.micAir.frequency.setValueAtTime(10000, this.audioCtx.currentTime);
+        this.micAir.gain.setValueAtTime(this.isStudioVocalDspEnabled ? 2.5 : 0.0, this.audioCtx.currentTime);
+
+        // Stage 5: Studio Broadcast Dynamics Compressor / Peak Limiter (smooths peaks, prevents clipping)
+        this.micCompressor = this.audioCtx.createDynamicsCompressor();
+        this.micCompressor.threshold.setValueAtTime(this.isStudioVocalDspEnabled ? -18 : 0, this.audioCtx.currentTime);
+        this.micCompressor.knee.setValueAtTime(12, this.audioCtx.currentTime);
+        this.micCompressor.ratio.setValueAtTime(this.isStudioVocalDspEnabled ? 3.5 : 1.0, this.audioCtx.currentTime);
+        this.micCompressor.attack.setValueAtTime(0.003, this.audioCtx.currentTime);
+        this.micCompressor.release.setValueAtTime(0.20, this.audioCtx.currentTime);
+
+        // Connect Chain: Source -> HPF -> DeMud -> Presence -> Air -> Compressor -> MicGain
+        this.micSource
+          .connect(this.micHighPass)
+          .connect(this.micDeMud)
+          .connect(this.micPresence)
+          .connect(this.micAir)
+          .connect(this.micCompressor)
+          .connect(this.micGainNode);
+
         this.micGainNode.connect(this.micAnalyser);
         
         // Connect to isolated mic track destination
@@ -560,7 +611,7 @@ export class GamingAudioMixer {
         // Connect to isolated game track destination
         this.gameGainNode.connect(this.gameDestinationNode);
 
-        // Headphone Monitoring for Game Audio (So player can hear the console live in headphones!)
+        // Live Audio Output for Console Game Audio (Always audible through speakers / headphones automatically!)
         this.monitorGainNode = this.audioCtx.createGain();
         this.monitorGainNode.gain.setValueAtTime(this.isMonitoringGame ? 1.0 : 0.0, this.audioCtx.currentTime);
         this.gameGainNode.connect(this.monitorGainNode);
@@ -609,6 +660,19 @@ export class GamingAudioMixer {
     this.isMonitoringGame = enabled;
     if (this.monitorGainNode && this.audioCtx) {
       this.monitorGainNode.gain.setValueAtTime(enabled ? 1.0 : 0.0, this.audioCtx.currentTime);
+    }
+  }
+
+  public setStudioVocalEnhance(enabled: boolean) {
+    this.isStudioVocalDspEnabled = enabled;
+    if (!this.audioCtx) return;
+    const now = this.audioCtx.currentTime;
+    if (this.micDeMud) this.micDeMud.gain.setValueAtTime(enabled ? -2.0 : 0.0, now);
+    if (this.micPresence) this.micPresence.gain.setValueAtTime(enabled ? 3.5 : 0.0, now);
+    if (this.micAir) this.micAir.gain.setValueAtTime(enabled ? 2.5 : 0.0, now);
+    if (this.micCompressor) {
+      this.micCompressor.threshold.setValueAtTime(enabled ? -18 : 0, now);
+      this.micCompressor.ratio.setValueAtTime(enabled ? 3.5 : 1.0, now);
     }
   }
 
@@ -670,6 +734,26 @@ export class GamingAudioMixer {
     if (this.micSource) {
       try { this.micSource.disconnect(); } catch {}
       this.micSource = null;
+    }
+    if (this.micHighPass) {
+      try { this.micHighPass.disconnect(); } catch {}
+      this.micHighPass = null;
+    }
+    if (this.micDeMud) {
+      try { this.micDeMud.disconnect(); } catch {}
+      this.micDeMud = null;
+    }
+    if (this.micPresence) {
+      try { this.micPresence.disconnect(); } catch {}
+      this.micPresence = null;
+    }
+    if (this.micAir) {
+      try { this.micAir.disconnect(); } catch {}
+      this.micAir = null;
+    }
+    if (this.micCompressor) {
+      try { this.micCompressor.disconnect(); } catch {}
+      this.micCompressor = null;
     }
     if (this.gameSource) {
       try { this.gameSource.disconnect(); } catch {}
