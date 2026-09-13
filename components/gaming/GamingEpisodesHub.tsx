@@ -56,9 +56,9 @@ export default function GamingEpisodesHub({
   const totalDurationSeconds = gamingEpisodes.reduce((acc, ep) => acc + (ep.recording?.duration || 0), 0);
 
   // Download video (WebM / MP4)
-  const handleDownloadVideo = async (ep: Episode) => {
+  const handleDownloadVideo = async (ep: Episode, format: 'mp4' | 'webm' = 'mp4') => {
     try {
-      setDownloadingId(`${ep.id}_video`);
+      setDownloadingId(`${ep.id}_video_${format}`);
       let blob: Blob | null = null;
       if (ep.recording?.videoBlobKey) {
         blob = await getMediaBlob(ep.recording.videoBlobKey);
@@ -72,9 +72,10 @@ export default function GamingEpisodesHub({
         return;
       }
       const url = URL.createObjectURL(blob);
+      const cleanTitle = (ep.title || 'gaming-video').replace(/[^\w\u0590-\u05FF-]+/g, '_');
       const a = document.createElement('a');
       a.href = url;
-      a.download = `youtube-gaming-${ep.title.replace(/\s+/g, '-')}.webm`;
+      a.download = `youtube-gaming-${cleanTitle}.${format}`;
       a.click();
       URL.revokeObjectURL(url);
     } catch (e) {
@@ -327,16 +328,28 @@ export default function GamingEpisodesHub({
                   <div className="grid grid-cols-2 gap-2">
                     {hasRecording ? (
                       <>
-                        <button
-                          type="button"
-                          disabled={downloadingId === `${ep.id}_video`}
-                          onClick={() => handleDownloadVideo(ep)}
-                          className="flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-200 hover:text-white border border-slate-700 text-[11px] font-bold transition-all disabled:opacity-60 truncate"
-                          title="הורדת קובץ הווידאו המלא (MP4/WebM) להעלאה ליוטיוב"
-                        >
-                          <Download className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                          <span className="truncate">הורדת וידאו ליוטיוב</span>
-                        </button>
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            disabled={downloadingId?.startsWith(`${ep.id}_video`)}
+                            onClick={() => handleDownloadVideo(ep, 'mp4')}
+                            className="flex-1 flex items-center justify-center gap-1 py-2 px-2 rounded-xl bg-gradient-to-r from-purple-600/80 to-indigo-600/80 hover:from-purple-600 hover:to-indigo-600 text-white border border-purple-500/40 text-[11px] font-black transition-all disabled:opacity-60 truncate shadow-sm"
+                            title="הורד ישירות כ-MP4 תואם עריכה ויוטיוב"
+                          >
+                            <Download className="w-3.5 h-3.5 text-white shrink-0" />
+                            <span className="truncate">הורד MP4</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            disabled={downloadingId?.startsWith(`${ep.id}_video`)}
+                            onClick={() => handleDownloadVideo(ep, 'webm')}
+                            className="px-2 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-700 text-[10px] font-bold transition-all disabled:opacity-60"
+                            title="הורד כ-WebM מקורי"
+                          >
+                            WebM
+                          </button>
+                        </div>
 
                         <button
                           type="button"
@@ -346,7 +359,7 @@ export default function GamingEpisodesHub({
                           title="הורדת קול המיקרופון של השחקן בנפרד"
                         >
                           <Mic className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
-                          <span className="truncate">אודיו מיקרופון</span>
+                          <span className="truncate">אודיו נקי</span>
                         </button>
                       </>
                     ) : (

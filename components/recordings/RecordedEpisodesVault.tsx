@@ -71,9 +71,9 @@ export default function RecordedEpisodesVault({
     });
 
   // 1. Download Video (HD)
-  const handleDownloadVideo = async (episode: Episode) => {
+  const handleDownloadVideo = async (episode: Episode, format: 'mp4' | 'webm' = 'mp4') => {
     try {
-      setDownloadingId(`${episode.id}_video`);
+      setDownloadingId(`${episode.id}_video_${format}`);
       let blob: Blob | null = null;
       if (episode.recording?.videoBlobKey) {
         blob = await getMediaBlob(episode.recording.videoBlobKey);
@@ -89,7 +89,7 @@ export default function RecordedEpisodesVault({
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `video-S${episode.season}E${episode.episodeNumber}-${episode.title.replace(/\s+/g, '-')}.webm`;
+      a.download = `video-S${episode.season}E${episode.episodeNumber}-${episode.title.replace(/\s+/g, '-')}.${format}`;
       a.click();
       URL.revokeObjectURL(url);
     } catch (e) {
@@ -315,7 +315,7 @@ function VaultEpisodeItemRow({
   onOpenAudiogram?: (ep: Episode) => void;
   onDeleteEpisode?: (id: string) => void;
   onUpdateEpisodes?: (episodes: Episode[]) => void;
-  handleDownloadVideo: (ep: Episode) => void;
+  handleDownloadVideo: (ep: Episode, format?: 'mp4' | 'webm') => void;
   handleDownloadStereo: (ep: Episode) => void;
   handleDownloadMono: (ep: Episode) => void;
   handleDownloadChapters: (ep: Episode) => void;
@@ -563,16 +563,26 @@ function VaultEpisodeItemRow({
 
       {/* 5-Format Download Suite */}
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 pt-3 border-t border-slate-800/80">
-        {/* 1. Video (HD) */}
-        <button
-          onClick={() => handleDownloadVideo(ep)}
-          disabled={downloadingId === `${ep.id}_video`}
-          className="flex items-center justify-center gap-1.5 p-2.5 rounded-xl bg-indigo-600/10 hover:bg-indigo-600/20 border border-indigo-500/30 text-indigo-300 hover:text-white text-xs font-semibold transition-all active:scale-98 text-center"
-          title="הורדת קובץ וידאו מלא (1080p WebM/MP4)"
-        >
-          <Video className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
-          <span className="truncate">וידאו (HD)</span>
-        </button>
+        {/* 1. Video (MP4 / WebM) */}
+        <div className="flex items-center rounded-xl bg-indigo-600/10 border border-indigo-500/30 overflow-hidden">
+          <button
+            onClick={() => handleDownloadVideo(ep, 'mp4')}
+            disabled={downloadingId === `${ep.id}_video_mp4`}
+            className="flex-1 flex items-center justify-center gap-1.5 p-2.5 hover:bg-indigo-600/20 text-indigo-300 hover:text-white text-xs font-semibold transition-all active:scale-98 text-center"
+            title="הורדת קובץ וידאו מלא (1080p MP4 מתאים ליוטיוב ולעריכה)"
+          >
+            <Video className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+            <span className="truncate">MP4 (HD)</span>
+          </button>
+          <button
+            onClick={() => handleDownloadVideo(ep, 'webm')}
+            disabled={downloadingId === `${ep.id}_video_webm`}
+            className="px-2 py-2.5 border-r border-indigo-500/30 hover:bg-indigo-600/20 text-indigo-400 hover:text-white text-[10px] font-bold transition-all active:scale-98"
+            title="הורדה בפורמט WebM מקורי"
+          >
+            WebM
+          </button>
+        </div>
 
         {/* 2. Audio Stereo */}
         <button
