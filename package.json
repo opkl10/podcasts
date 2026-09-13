@@ -11,6 +11,7 @@
     "build": "next build --webpack",
     "start": "next start",
     "lint": "eslint",
+    "convert": "bash scripts/convert-to-mp4.sh",
     "electron:compile": "tsc -p electron/tsconfig.json",
     "electron:dev": "concurrently --kill-other-on-fail \"npm run dev\" \"wait-on http://localhost:3000 && cross-env NODE_ENV=development electron .\"",
     "electron:build": "npm run build && npm run electron:compile && electron-builder --mac --config electron-builder.config.js",
