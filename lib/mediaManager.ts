@@ -488,10 +488,19 @@ export class GamingAudioMixer {
   private masterDestinationNode: MediaStreamAudioDestinationNode | null = null;
   private micDestinationNode: MediaStreamAudioDestinationNode | null = null;
   private gameDestinationNode: MediaStreamAudioDestinationNode | null = null;
+  private backupMicDestinationNode: MediaStreamAudioDestinationNode | null = null;
   private micAnalyser: AnalyserNode | null = null;
   private gameAnalyser: AnalyserNode | null = null;
+  private backupMicAnalyser: AnalyserNode | null = null;
   private mergerNode: ChannelMergerNode | null = null;
   private animId: number | null = null;
+
+  // Emergency Backup Microphone Channel
+  private backupMicSource: MediaStreamAudioSourceNode | null = null;
+  private backupMicGainNode: GainNode | null = null;
+  private backupMicHighPass: BiquadFilterNode | null = null;
+  private backupMicCompressor: DynamicsCompressorNode | null = null;
+  private isBackupMicInMix: boolean = false;
 
   // Broadcast Studio Vocal DSP Chain (Professional Radio / Streaming Voice)
   private micHighPass: BiquadFilterNode | null = null;
@@ -503,20 +512,28 @@ export class GamingAudioMixer {
 
   private isMonitoringGame: boolean = true;
   private isChannelSplit: boolean = false;
-  private onLevelsChange?: (micLevel: number, gameLevel: number) => void;
+  private onLevelsChange?: (micLevel: number, gameLevel: number, backupMicLevel?: number) => void;
 
-  constructor(onLevelsChange?: (micLevel: number, gameLevel: number) => void) {
+  constructor(onLevelsChange?: (micLevel: number, gameLevel: number, backupMicLevel?: number) => void) {
     this.onLevelsChange = onLevelsChange;
   }
 
   public setup(
     micStream: MediaStream | null, 
     gameStream: MediaStream | null, 
-    options?: { splitChannels?: boolean; monitorGame?: boolean; studioVocalDsp?: boolean }
+    options?: { 
+      splitChannels?: boolean; 
+      monitorGame?: boolean; 
+      studioVocalDsp?: boolean;
+      backupMicStream?: MediaStream | null;
+      backupMicInMix?: boolean;
+      backupMicVolume?: number;
+    }
   ): { 
     mixedStream: MediaStream | null; 
     isolatedMicStream: MediaStream | null; 
     isolatedGameStream: MediaStream | null; 
+    isolatedBackupMicStream: MediaStream | null;
   } {
     this.stop();
 
@@ -524,10 +541,11 @@ export class GamingAudioMixer {
       if (options.splitChannels !== undefined) this.isChannelSplit = options.splitChannels;
       if (options.monitorGame !== undefined) this.isMonitoringGame = options.monitorGame;
       if (options.studioVocalDsp !== undefined) this.isStudioVocalDspEnabled = options.studioVocalDsp;
+      if (options.backupMicInMix !== undefined) this.isBackupMicInMix = options.backupMicInMix;
     }
 
     const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-    if (!AudioContextClass) return { mixedStream: null, isolatedMicStream: null, isolatedGameStream: null };
+    if (!AudioContextClass) return { mixedStream: null, isolatedMicStream: null, isolatedGameStream: null, isolatedBackupMicStream: null };
 
     this.audioCtx = new AudioContextClass({ latencyHint: 'interactive' });
     if (this.audioCtx.state === 'suspended') {
@@ -536,6 +554,7 @@ export class GamingAudioMixer {
     this.masterDestinationNode = this.audioCtx.createMediaStreamDestination();
     this.micDestinationNode = this.audioCtx.createMediaStreamDestination();
     this.gameDestinationNode = this.audioCtx.createMediaStreamDestination();
+    this.backupMicDestinationNode = this.audioCtx.createMediaStreamDestination();
 
     // 1. Mic Channel with Broadcast Studio Vocal DSP
     if (micStream && micStream.getAudioTracks().length > 0) {
@@ -621,17 +640,56 @@ export class GamingAudioMixer {
       }
     }
 
-    // 3. Connect to Master Destination (either Split Channels or Stereo Mix)
+    // 3. Emergency Backup Microphone Channel (Isolated Stem + Optional In-Mix / Hot-Swap)
+    if (options?.backupMicStream && options.backupMicStream.getAudioTracks().length > 0) {
+      try {
+        this.backupMicSource = this.audioCtx.createMediaStreamSource(options.backupMicStream);
+        this.backupMicGainNode = this.audioCtx.createGain();
+        this.backupMicGainNode.gain.setValueAtTime(options.backupMicVolume !== undefined ? options.backupMicVolume : 1.0, this.audioCtx.currentTime);
+        this.backupMicAnalyser = this.audioCtx.createAnalyser();
+        this.backupMicAnalyser.fftSize = 64;
+
+        // Stage 1: High-Pass Rumble Filter for backup mic (80Hz)
+        this.backupMicHighPass = this.audioCtx.createBiquadFilter();
+        this.backupMicHighPass.type = 'highpass';
+        this.backupMicHighPass.frequency.setValueAtTime(80, this.audioCtx.currentTime);
+
+        // Stage 2: Studio Compressor / Limiter for backup mic
+        this.backupMicCompressor = this.audioCtx.createDynamicsCompressor();
+        this.backupMicCompressor.threshold.setValueAtTime(-16, this.audioCtx.currentTime);
+        this.backupMicCompressor.ratio.setValueAtTime(3.0, this.audioCtx.currentTime);
+
+        this.backupMicSource
+          .connect(this.backupMicHighPass)
+          .connect(this.backupMicCompressor)
+          .connect(this.backupMicGainNode);
+
+        this.backupMicGainNode.connect(this.backupMicAnalyser);
+
+        // Always connect to isolated backup mic stem for rescue/emergency recovery
+        this.backupMicGainNode.connect(this.backupMicDestinationNode);
+      } catch (err) {
+        console.warn('Could not connect backup mic track to mixer:', err);
+      }
+    }
+
+    // 4. Connect to Master Destination (either Split Channels or Stereo Mix)
     if (this.isChannelSplit) {
       // Channel 0 = Mic (Left), Channel 1 = Game (Right)
       this.mergerNode = this.audioCtx.createChannelMerger(2);
       if (this.micGainNode) this.micGainNode.connect(this.mergerNode, 0, 0);
       if (this.gameGainNode) this.gameGainNode.connect(this.mergerNode, 0, 1);
+      if (this.isBackupMicInMix && this.backupMicGainNode) {
+        this.backupMicGainNode.connect(this.mergerNode, 0, 0);
+      }
       this.mergerNode.connect(this.masterDestinationNode);
     } else {
       // Standard stereo composite mix
       if (this.micGainNode) this.micGainNode.connect(this.masterDestinationNode);
       if (this.gameGainNode) this.gameGainNode.connect(this.masterDestinationNode);
+      if (this.isBackupMicInMix && this.backupMicGainNode) {
+        this.backupMicGainNode.connect(this.masterDestinationNode);
+      }
     }
 
     // Start Level Loop
@@ -640,13 +698,39 @@ export class GamingAudioMixer {
     return {
       mixedStream: this.masterDestinationNode.stream,
       isolatedMicStream: this.micDestinationNode.stream,
-      isolatedGameStream: this.gameDestinationNode.stream
+      isolatedGameStream: this.gameDestinationNode.stream,
+      isolatedBackupMicStream: this.backupMicDestinationNode.stream
     };
   }
 
   public setMicVolume(volume: number) {
     if (this.micGainNode && this.audioCtx) {
       this.micGainNode.gain.setValueAtTime(Math.max(0, volume), this.audioCtx.currentTime);
+    }
+  }
+
+  public setBackupMicVolume(volume: number) {
+    if (this.backupMicGainNode && this.audioCtx) {
+      this.backupMicGainNode.gain.setValueAtTime(Math.max(0, volume), this.audioCtx.currentTime);
+    }
+  }
+
+  public setBackupMicInMix(inMix: boolean) {
+    if (this.isBackupMicInMix === inMix) return;
+    this.isBackupMicInMix = inMix;
+    if (!this.backupMicGainNode || !this.masterDestinationNode) return;
+    try {
+      this.backupMicGainNode.disconnect(this.masterDestinationNode);
+      if (this.mergerNode) this.backupMicGainNode.disconnect(this.mergerNode);
+    } catch {}
+    if (inMix) {
+      try {
+        if (this.isChannelSplit && this.mergerNode) {
+          this.backupMicGainNode.connect(this.mergerNode, 0, 0);
+        } else {
+          this.backupMicGainNode.connect(this.masterDestinationNode);
+        }
+      } catch {}
     }
   }
 
@@ -684,6 +768,10 @@ export class GamingAudioMixer {
     return this.micDestinationNode?.stream || null;
   }
 
+  public getIsolatedBackupMicStream(): MediaStream | null {
+    return this.backupMicDestinationNode?.stream || null;
+  }
+
   public getIsolatedGameStream(): MediaStream | null {
     return this.gameDestinationNode?.stream || null;
   }
@@ -697,10 +785,12 @@ export class GamingAudioMixer {
   private startLevelLoop() {
     const micData = new Uint8Array(32);
     const gameData = new Uint8Array(32);
+    const backupData = new Uint8Array(32);
 
     const check = () => {
       let micLevel = 0;
       let gameLevel = 0;
+      let backupLevel = 0;
 
       if (this.micAnalyser) {
         this.micAnalyser.getByteFrequencyData(micData);
@@ -716,8 +806,15 @@ export class GamingAudioMixer {
         gameLevel = Math.min(100, Math.round((sum / (gameData.length * 255)) * 100 * 2.2));
       }
 
+      if (this.backupMicAnalyser) {
+        this.backupMicAnalyser.getByteFrequencyData(backupData);
+        let sum = 0;
+        for (let i = 0; i < backupData.length; i++) sum += backupData[i];
+        backupLevel = Math.min(100, Math.round((sum / (backupData.length * 255)) * 100 * 2.2));
+      }
+
       if (this.onLevelsChange) {
-        this.onLevelsChange(micLevel, gameLevel);
+        this.onLevelsChange(micLevel, gameLevel, backupLevel);
       }
 
       this.animId = requestAnimationFrame(check);
@@ -754,6 +851,22 @@ export class GamingAudioMixer {
     if (this.micCompressor) {
       try { this.micCompressor.disconnect(); } catch {}
       this.micCompressor = null;
+    }
+    if (this.backupMicSource) {
+      try { this.backupMicSource.disconnect(); } catch {}
+      this.backupMicSource = null;
+    }
+    if (this.backupMicHighPass) {
+      try { this.backupMicHighPass.disconnect(); } catch {}
+      this.backupMicHighPass = null;
+    }
+    if (this.backupMicCompressor) {
+      try { this.backupMicCompressor.disconnect(); } catch {}
+      this.backupMicCompressor = null;
+    }
+    if (this.backupMicGainNode) {
+      try { this.backupMicGainNode.disconnect(); } catch {}
+      this.backupMicGainNode = null;
     }
     if (this.gameSource) {
       try { this.gameSource.disconnect(); } catch {}

@@ -23,7 +23,8 @@ import {
   Cloud,
   Palette,
   Activity,
-  Gamepad2
+  Gamepad2,
+  ShieldAlert
 } from 'lucide-react';
 import AudioEditorAudiogramStudio from '@/components/audio/AudioEditorAudiogramStudio';
 
@@ -32,6 +33,7 @@ interface PostRecordingReviewProps {
   videoBlob: Blob | null;
   audioBlob: Blob | null;
   gameAudioBlob?: Blob | null;
+  backupAudioBlob?: Blob | null;
   videoUrl: string | null;
   durationSeconds: number;
   markers: TimestampMarker[];
@@ -44,6 +46,7 @@ export default function PostRecordingReview({
   videoBlob,
   audioBlob,
   gameAudioBlob,
+  backupAudioBlob,
   videoUrl,
   durationSeconds,
   markers,
@@ -135,6 +138,17 @@ export default function PostRecordingReview({
     const a = document.createElement('a');
     a.href = url;
     a.download = `game-audio-ep${episode.episodeNumber}-${cleanTitle}.${audioExt}`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleDownloadBackupAudio = (audioExt: 'wav' | 'mp3' | 'webm' = 'webm') => {
+    if (!backupAudioBlob) return;
+    const url = URL.createObjectURL(backupAudioBlob);
+    const cleanTitle = (episode.title || 'episode').replace(/[^\w\u0590-\u05FF-]+/g, '_');
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `backup-mic-ep${episode.episodeNumber}-${cleanTitle}.${audioExt}`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -334,6 +348,25 @@ export default function PostRecordingReview({
                     </div>
                   </div>
                   <Download className="w-4 h-4 text-cyan-400 group-hover:translate-y-0.5 transition-transform shrink-0" />
+                </button>
+              )}
+
+              {/* 2c. Isolated Emergency Backup Microphone Download */}
+              {backupAudioBlob && (
+                <button
+                  onClick={() => handleDownloadBackupAudio()}
+                  className="flex items-center justify-between p-3.5 rounded-2xl bg-amber-600/10 hover:bg-amber-600/20 border border-amber-500/30 text-amber-300 hover:text-white transition-all text-right group"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-2 rounded-xl bg-amber-600 text-white shrink-0">
+                      <ShieldAlert className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold text-white">מיקרופון גיבוי (חירום)</p>
+                      <p className="text-[10px] text-slate-400">ערוץ קול גיבוי מבודד</p>
+                    </div>
+                  </div>
+                  <Download className="w-4 h-4 text-amber-400 group-hover:translate-y-0.5 transition-transform shrink-0" />
                 </button>
               )}
 

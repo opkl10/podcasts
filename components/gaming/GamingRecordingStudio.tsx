@@ -55,6 +55,7 @@ import {
   PanelRight,
   RotateCcw,
   StopCircle,
+  ShieldAlert,
 } from 'lucide-react';
 import { 
   getMediaDevices, 
@@ -473,6 +474,20 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
   // Video Container Format Selection (MP4 / WebM / MKV)
   const [videoContainerFormat, setVideoContainerFormat] = useState<'mp4' | 'webm' | 'mkv'>('mp4');
 
+  // Emergency Backup Microphone Channel (Hot-Swap / Redundant Stem)
+  const [isBackupMicEnabled, setIsBackupMicEnabled] = useState<boolean>(false);
+  const [selectedBackupAudioId, setSelectedBackupAudioId] = useState<string>('');
+  const [backupMicStream, setBackupMicStream] = useState<MediaStream | null>(null);
+  const [backupMicMode, setBackupMicMode] = useState<'standby' | 'active'>('standby');
+  const [backupMicGain, setBackupMicGain] = useState<number>(1.0);
+  const [isBackupAudioMuted, setIsBackupAudioMuted] = useState<boolean>(false);
+  const [backupMicAudioLevel, setBackupMicAudioLevel] = useState<number>(0);
+  const [backupMicNoiseSuppression, setBackupMicNoiseSuppression] = useState<boolean>(false);
+  const [isHotSwapped, setIsHotSwapped] = useState<boolean>(false);
+  const [recordedBackupMicBlob, setRecordedBackupMicBlob] = useState<Blob | null>(null);
+  const backupRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordedBackupMicChunksRef = useRef<Blob[]>([]);
+
   // Broadcast Studio Vocal DSP & Noise Filtering States
   const [studioVocalEnhance, setStudioVocalEnhance] = useState<boolean>(true);
   const [micNoiseSuppression, setMicNoiseSuppression] = useState<boolean>(false);
@@ -765,6 +780,80 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
       }
     };
   }, [selectedAudioId, micNoiseSuppression]);
+
+  // 3a-2. Dedicated Emergency Backup Microphone Stream Acquisition (Channel 3)
+  useEffect(() => {
+    let active = true;
+    let streamInstance: MediaStream | null = null;
+
+    async function initBackupMicAudio() {
+      if (!isBackupMicEnabled) {
+        if (backupMicStream) {
+          backupMicStream.getTracks().forEach(t => t.stop());
+          setBackupMicStream(null);
+        }
+        return;
+      }
+
+      try {
+        let stream: MediaStream;
+        const micConstraints: MediaTrackConstraints = {
+          sampleRate: { ideal: 48000, min: 44100 },
+          channelCount: { ideal: 2, min: 1 },
+          echoCancellation: false,
+          autoGainControl: false,
+          noiseSuppression: backupMicNoiseSuppression ? true : false,
+        };
+
+        // Determine backup mic device ID: use explicit selection, or find first device different from primary mic
+        const targetBackupId = selectedBackupAudioId || audioDevices.find(a => a.deviceId !== selectedAudioId)?.deviceId;
+        if (targetBackupId) {
+          micConstraints.deviceId = { ideal: targetBackupId };
+        }
+
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            audio: micConstraints,
+            video: false,
+          });
+        } catch (specificErr) {
+          console.warn('[BackupMic] Ideal constraints failed, trying basic audio:', specificErr);
+          stream = await navigator.mediaDevices.getUserMedia({
+            audio: targetBackupId ? { deviceId: { ideal: targetBackupId } } : true,
+            video: false
+          });
+        }
+
+        if (!active) {
+          stream.getTracks().forEach(t => t.stop());
+          return;
+        }
+
+        if (backupMicStream) {
+          backupMicStream.getTracks().forEach(t => t.stop());
+        }
+
+        streamInstance = stream;
+        setBackupMicStream(stream);
+
+        if (gamingMixerRef.current) {
+          gamingMixerRef.current.resume();
+        }
+      } catch (err) {
+        console.error('[BackupMic] Failed to acquire backup microphone stream:', err);
+        setBackupMicStream(null);
+      }
+    }
+
+    initBackupMicAudio();
+
+    return () => {
+      active = false;
+      if (streamInstance) {
+        streamInstance.getTracks().forEach(t => t.stop());
+      }
+    };
+  }, [isBackupMicEnabled, selectedBackupAudioId, backupMicNoiseSuppression, selectedAudioId, audioDevices]);
 
   // 3b. Initialize or Update Primary Facecam Video Stream (Video Only)
   useEffect(() => {
@@ -1222,12 +1311,13 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
   };
 
 
-  // 5. Dual Audio Mixer Engine (Mic + Gameplay Sound)
+  // 5. Dual/Triple Audio Mixer Engine (Mic + Gameplay Sound + Emergency Backup Mic)
   useEffect(() => {
     if (!gamingMixerRef.current) {
-      gamingMixerRef.current = new GamingAudioMixer((micLvl, gameLvl) => {
+      gamingMixerRef.current = new GamingAudioMixer((micLvl, gameLvl, backupLvl) => {
         setMicAudioLevel(micLvl);
         setGameAudioLevel(gameLvl);
+        setBackupMicAudioLevel(backupLvl || 0);
       });
     }
 
@@ -1237,10 +1327,14 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
     gamingMixerRef.current.setup(activeMicStream, activeGameStream, {
       splitChannels,
       monitorGame: monitorGameAudio,
-      studioVocalDsp: studioVocalEnhance
+      studioVocalDsp: studioVocalEnhance,
+      backupMicStream: isBackupMicEnabled ? backupMicStream : null,
+      backupMicInMix: isBackupMicEnabled && (backupMicMode === 'active' || isHotSwapped) && !isBackupAudioMuted,
+      backupMicVolume: isBackupAudioMuted ? 0 : backupMicGain
     });
     gamingMixerRef.current.setMicVolume(isAudioMuted ? 0 : micGain);
     gamingMixerRef.current.setGameVolume(gameAudioVolume);
+    gamingMixerRef.current.setBackupMicVolume(isBackupAudioMuted ? 0 : backupMicGain);
 
     return () => {
       // Don't stop immediately on every re-render, keep instance alive
@@ -1252,7 +1346,12 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
     gameAudioStream,
     screenStream,
     captureCardStream,
-    splitChannels
+    splitChannels,
+    isBackupMicEnabled,
+    backupMicStream,
+    backupMicMode,
+    isHotSwapped,
+    isBackupAudioMuted
   ]);
 
   useEffect(() => {
@@ -1269,6 +1368,18 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
 
   useEffect(() => {
     if (gamingMixerRef.current) {
+      gamingMixerRef.current.setBackupMicVolume(isBackupAudioMuted ? 0 : backupMicGain);
+    }
+  }, [backupMicGain, isBackupAudioMuted]);
+
+  useEffect(() => {
+    if (gamingMixerRef.current) {
+      gamingMixerRef.current.setBackupMicInMix(isBackupMicEnabled && (backupMicMode === 'active' || isHotSwapped) && !isBackupAudioMuted);
+    }
+  }, [isBackupMicEnabled, backupMicMode, isHotSwapped, isBackupAudioMuted]);
+
+  useEffect(() => {
+    if (gamingMixerRef.current) {
       gamingMixerRef.current.setMonitoringGameAudio(monitorGameAudio);
     }
   }, [monitorGameAudio]);
@@ -1278,6 +1389,33 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
       gamingMixerRef.current.setStudioVocalEnhance(studioVocalEnhance);
     }
   }, [studioVocalEnhance]);
+
+  // Instant Hot-Swap to Emergency Backup Mic (if primary mic disconnects/crackles)
+  const handleEmergencyHotSwap = () => {
+    setIsAudioMuted(true); // mute primary mic
+    setIsBackupMicEnabled(true);
+    setBackupMicMode('active');
+    setIsBackupAudioMuted(false);
+    setBackupMicGain(1.0);
+    setIsHotSwapped(true);
+    if (gamingMixerRef.current) {
+      gamingMixerRef.current.setMicVolume(0);
+      gamingMixerRef.current.setBackupMicInMix(true);
+      gamingMixerRef.current.setBackupMicVolume(1.0);
+      gamingMixerRef.current.resume();
+    }
+  };
+
+  const handleRestorePrimaryMic = () => {
+    setIsAudioMuted(false);
+    setBackupMicMode('standby');
+    setIsHotSwapped(false);
+    if (gamingMixerRef.current) {
+      gamingMixerRef.current.setMicVolume(micGain);
+      gamingMixerRef.current.setBackupMicInMix(false);
+      gamingMixerRef.current.resume();
+    }
+  };
 
   // Global user interaction unblocker for AudioContext (ensures audio plays without browser blocking)
   useEffect(() => {
@@ -1715,7 +1853,10 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
       const audioPipes = gamingMixerRef.current?.setup(activeMicStream, activeGameStream, {
         splitChannels,
         monitorGame: monitorGameAudio,
-        studioVocalDsp: studioVocalEnhance
+        studioVocalDsp: studioVocalEnhance,
+        backupMicStream: isBackupMicEnabled ? backupMicStream : null,
+        backupMicInMix: isBackupMicEnabled && (backupMicMode === 'active' || isHotSwapped) && !isBackupAudioMuted,
+        backupMicVolume: isBackupAudioMuted ? 0 : backupMicGain
       });
 
       const mixedAudioTrack = audioPipes?.mixedStream?.getAudioTracks()[0] || activeMicStream?.getAudioTracks()[0];
@@ -1809,6 +1950,23 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
         }
       }
 
+      // 4. Isolated Emergency Backup Microphone Track (Clean Backup Voice Stem for Rescue)
+      const isolatedBackupMicStream = audioPipes?.isolatedBackupMicStream;
+      if (isBackupMicEnabled && isolatedBackupMicStream && isolatedBackupMicStream.getAudioTracks().length > 0) {
+        try {
+          recordedBackupMicChunksRef.current = [];
+          const backupMime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm';
+          const backupRec = new MediaRecorder(isolatedBackupMicStream, { mimeType: backupMime });
+          backupRec.ondataavailable = (e) => {
+            if (e.data && e.data.size > 0) recordedBackupMicChunksRef.current.push(e.data);
+          };
+          backupRec.start(1000);
+          backupRecorderRef.current = backupRec;
+        } catch (e) {
+          console.warn('Could not start isolated backup mic recorder:', e);
+        }
+      }
+
       recorder.onstop = async () => {
         const fullVideoBlob = new Blob(recordedChunksRef.current, { type: mimeType });
         const videoUrl = URL.createObjectURL(fullVideoBlob);
@@ -1817,10 +1975,12 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
 
         const fullMicBlob = recordedMicChunksRef.current.length > 0 ? new Blob(recordedMicChunksRef.current, { type: 'audio/webm' }) : null;
         const fullGameBlob = recordedGameChunksRef.current.length > 0 ? new Blob(recordedGameChunksRef.current, { type: 'audio/webm' }) : null;
+        const fullBackupMicBlob = recordedBackupMicChunksRef.current.length > 0 ? new Blob(recordedBackupMicChunksRef.current, { type: 'audio/webm' }) : null;
 
         setRecordedMicBlob(fullMicBlob);
         setRecordedAudioBlob(fullMicBlob);
         setRecordedGameAudioBlob(fullGameBlob);
+        setRecordedBackupMicBlob(fullBackupMicBlob);
 
         const finalDuration = recordedSecondsRef.current || recordedSeconds;
         const blobKey = `rec_${episode.id}_${Date.now()}`;
@@ -1829,6 +1989,7 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
           await saveMediaBlob(blobKey, fullVideoBlob);
           if (fullMicBlob) await saveMediaBlob(`${blobKey}_mic`, fullMicBlob);
           if (fullGameBlob) await saveMediaBlob(`${blobKey}_game`, fullGameBlob);
+          if (fullBackupMicBlob) await saveMediaBlob(`${blobKey}_backup_mic`, fullBackupMicBlob);
         } catch (err) {
           console.error('Failed to save gaming video blob:', err);
         }
@@ -1887,6 +2048,9 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
       }
       if (gameRecorderRef.current && gameRecorderRef.current.state !== 'inactive') {
         gameRecorderRef.current.stop();
+      }
+      if (backupRecorderRef.current && backupRecorderRef.current.state !== 'inactive') {
+        backupRecorderRef.current.stop();
       }
       mediaRecorderRef.current.stop();
       setIsRecording(false);
@@ -1953,6 +2117,7 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
         videoBlob={recordedVideoBlob}
         audioBlob={recordedMicBlob || recordedAudioBlob}
         gameAudioBlob={recordedGameAudioBlob}
+        backupAudioBlob={recordedBackupMicBlob}
         videoUrl={recordedVideoUrl}
         durationSeconds={recordedSecondsRef.current || recordedSeconds}
         markers={markersRef.current.length > 0 ? markersRef.current : markers}
@@ -3817,6 +3982,209 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
                   />
                 </div>
               </div>
+            </div>
+
+            {/* CHANNEL 3: EMERGENCY / BACKUP MICROPHONE (HOT-SWAP / RESCUE STEM) */}
+            <div className="p-3.5 rounded-2xl bg-slate-900/90 border border-amber-500/30 space-y-3 relative overflow-hidden shadow-lg shadow-amber-950/20">
+              {/* Header with Enable Switch & Emergency Badge */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-white">
+                  <ShieldAlert className="w-4 h-4 text-amber-400" />
+                  <span>ערוץ 3: מיקרופון גיבוי לחירום (Backup Mic)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsBackupMicEnabled(!isBackupMicEnabled);
+                      gamingMixerRef.current?.resume();
+                    }}
+                    className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border transition-all ${
+                      isBackupMicEnabled
+                        ? 'bg-amber-600/30 border-amber-500 text-amber-200 shadow-sm'
+                        : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    {isBackupMicEnabled ? 'פעיל ✅' : '+ חבר מיקרופון חירום'}
+                  </button>
+                </div>
+              </div>
+
+              {isBackupMicEnabled ? (
+                <>
+                  {/* Emergency Status & 1-Click Hot-Swap Button */}
+                  <div className="p-2.5 rounded-xl bg-slate-950 border border-amber-500/40 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5 text-[11px]">
+                        <span className="relative flex h-2 w-2">
+                          <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
+                            isHotSwapped ? 'bg-rose-400' : 'bg-amber-400'
+                          }`}></span>
+                          <span className={`relative inline-flex rounded-full h-2 w-2 ${
+                            isHotSwapped ? 'bg-rose-500' : 'bg-amber-500'
+                          }`}></span>
+                        </span>
+                        <span className="font-bold text-white">
+                          {isHotSwapped 
+                            ? '🚨 מיקרופון החירום פעיל כעת כראשי!' 
+                            : backupMicMode === 'active' 
+                            ? '🎙️ פעיל במיקס השידור' 
+                            : '🛡️ בכוננות חמה (מוקלט מבודד / שקט במיקס)'}
+                        </span>
+                      </div>
+
+                      {/* Hot-Swap Action Button */}
+                      {!isHotSwapped ? (
+                        <button
+                          type="button"
+                          onClick={handleEmergencyHotSwap}
+                          className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-black text-[10px] shadow-md shadow-rose-900/40 active:scale-95 transition-all flex items-center gap-1"
+                          title="השתק מיד את המיקרופון הראשי והעבר למיקרופון חירום זה"
+                        >
+                          <Zap className="w-3 h-3 text-amber-300" />
+                          <span>🚨 החלף לחירום עכשיו!</span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={handleRestorePrimaryMic}
+                          className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[10px] shadow active:scale-95 transition-all flex items-center gap-1"
+                          title="החזר את המיקרופון הראשי לפעילות"
+                        >
+                          <RotateCcw className="w-3 h-3 text-indigo-300" />
+                          <span>החזר מיקרופון ראשי</span>
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Mode Switcher: Standby vs Active In-Mix */}
+                    <div className="grid grid-cols-2 gap-1.5 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setBackupMicMode('standby');
+                          gamingMixerRef.current?.resume();
+                        }}
+                        className={`py-1 px-2 rounded-lg text-[10px] font-bold border transition-all ${
+                          backupMicMode === 'standby' && !isHotSwapped
+                            ? 'bg-amber-950/60 border-amber-500 text-amber-300'
+                            : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                        }`}
+                        title="דוגם שמע ב-VU ושומר ערוץ גיבוי נפרד, אך מושתק מהמיקס למניעת הד כפול"
+                      >
+                        🛡️ כוננות שקטה (מוקלט בנפרד)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setBackupMicMode('active');
+                          gamingMixerRef.current?.resume();
+                        }}
+                        className={`py-1 px-2 rounded-lg text-[10px] font-bold border transition-all ${
+                          backupMicMode === 'active' || isHotSwapped
+                            ? 'bg-amber-600/30 border-amber-500 text-white'
+                            : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                        }`}
+                        title="משולב ישירות במיקס השידור והווידאו (מתאים גם לאורח נוסף / פרשן)"
+                      >
+                        🎙️ פעיל במיקס (מושמע בווידאו)
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Backup Mic Device Selector */}
+                  <div className="space-y-1">
+                    <label className="text-[10px] text-slate-400 font-bold block">
+                      בחר התקן מיקרופון גיבוי (MacBook Mic / AirPods / אוזניות USB):
+                    </label>
+                    <select
+                      value={selectedBackupAudioId}
+                      onChange={(e) => {
+                        setSelectedBackupAudioId(e.target.value);
+                        gamingMixerRef.current?.resume();
+                      }}
+                      className="w-full px-2.5 py-1.5 rounded-lg bg-slate-950 border border-slate-700/80 text-[11px] text-white focus:outline-none focus:border-amber-500"
+                    >
+                      <option value="">-- אוטומטי (מיקרופון משני זמין) --</option>
+                      {audioDevices.map(a => {
+                        const isPrimary = a.deviceId === selectedAudioId;
+                        return (
+                          <option key={a.deviceId} value={a.deviceId}>
+                            {isPrimary ? `⚠️ ${a.label || 'מיקרופון'} (בשימוש כראשי)` : `🎙️ ${a.label || 'מיקרופון'}`}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </div>
+
+                  {/* Volume Slider + Real-Time Multi-color VU for Backup Mic */}
+                  <div className="space-y-1 pt-1">
+                    <div className="flex items-center justify-between text-[10px]">
+                      <span className="text-slate-400">עוצמת שמע מיקרופון גיבוי:</span>
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-amber-400">{Math.round(backupMicGain * 100)}%</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsBackupAudioMuted(!isBackupAudioMuted);
+                            gamingMixerRef.current?.resume();
+                          }}
+                          className={`p-1 rounded text-xs ${
+                            isBackupAudioMuted ? 'text-rose-400 bg-rose-950/40' : 'text-slate-400 hover:text-white'
+                          }`}
+                          title={isBackupAudioMuted ? 'בטל השתקת גיבוי' : 'השתק גיבוי'}
+                        >
+                          {isBackupAudioMuted ? <MicOff className="w-3 h-3" /> : <Mic className="w-3 h-3" />}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="range"
+                        min="0"
+                        max="2"
+                        step="0.05"
+                        value={backupMicGain}
+                        onChange={(e) => {
+                          setBackupMicGain(parseFloat(e.target.value));
+                          gamingMixerRef.current?.resume();
+                        }}
+                        className="flex-1 accent-amber-500 cursor-pointer h-1.5 bg-slate-800 rounded-lg"
+                      />
+                      <div className="w-24 h-3 rounded-full bg-slate-950 overflow-hidden border border-slate-700/80" title="מד עוצמת מיקרופון חירום">
+                        <div
+                          className={`h-full transition-all duration-75 ${
+                            backupMicAudioLevel > 80
+                              ? 'bg-rose-500'
+                              : backupMicAudioLevel > 50
+                              ? 'bg-amber-400'
+                              : 'bg-gradient-to-r from-amber-500 to-yellow-300'
+                          }`}
+                          style={{ width: `${Math.min(100, backupMicAudioLevel)}%` }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="p-3 rounded-xl bg-slate-950/60 border border-dashed border-slate-800 text-center space-y-1.5">
+                  <p className="text-[11px] text-slate-400">
+                    חבר מיקרופון משני (כמו המיקרופון המובנה של המק, AirPods או אוזניות) שישמש כרשת ביטחון במקרה של תקלה.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsBackupMicEnabled(true);
+                      gamingMixerRef.current?.resume();
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-600/20 hover:bg-amber-600/30 border border-amber-500/40 text-amber-300 text-xs font-bold transition-all"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>הפעל מיקרופון חירום לגיבוי</span>
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* SEPARATION & WORKFLOW CONTROLS */}
