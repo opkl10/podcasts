@@ -42,17 +42,19 @@ export async function getMediaDevices(): Promise<{
     devices.forEach(device => {
       if (device.kind === 'audioinput') {
         const labelLower = (device.label || '').toLowerCase();
+        // Console / Elgato HDMI audio is strictly capture hardware (NEVER USB Audio CODEC!)
         const isGameAudio = 
-          labelLower.includes('elgato') || 
-          labelLower.includes('cam link') || 
-          labelLower.includes('camlink') || 
-          labelLower.includes('hd60') || 
-          labelLower.includes('4k') || 
-          labelLower.includes('capture') || 
-          labelLower.includes('hdmi') || 
-          labelLower.includes('digital audio') || 
-          labelLower.includes('game') ||
-          (labelLower.includes('usb audio codec') && !labelLower.includes('mic'));
+          !labelLower.includes('codec') && (
+            labelLower.includes('elgato') || 
+            labelLower.includes('cam link') || 
+            labelLower.includes('camlink') || 
+            labelLower.includes('hd60') || 
+            labelLower.includes('4k s') ||
+            labelLower.includes('4k x') ||
+            labelLower.includes('4k60') ||
+            (labelLower.includes('capture') && !labelLower.includes('mic')) || 
+            labelLower.includes('hdmi audio')
+          );
 
         audioInputs.push({
           deviceId: device.deviceId,

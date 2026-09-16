@@ -1261,17 +1261,17 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
       setVideoResolution(desiredRes);
     }
 
-    // Find any matching audio input for the capture card (e.g. "Elgato", "Cam Link", "Capture")
+    // Find dedicated audio input for the capture card (strictly Elgato hardware, NEVER USB Audio CODEC!)
     const cardLabelLower = cardLabel.toLowerCase();
     const matchingAudio = audioDevices.find(a => {
       const aLabel = (a.label || '').toLowerCase();
+      if (aLabel.includes('codec')) return false; // Strictly NEVER USB Audio CODEC!
       return (
         (cardLabelLower.includes('elgato') && aLabel.includes('elgato')) ||
-        (cardLabelLower.includes('cam link') && (aLabel.includes('cam link') || aLabel.includes('elgato'))) ||
-        (cardLabelLower.includes('hd60') && (aLabel.includes('hd60') || aLabel.includes('elgato'))) ||
-        (cardLabelLower.includes('4k') && aLabel.includes('4k')) ||
-        (cardLabelLower.includes('hdmi') && aLabel.includes('hdmi')) ||
-        (cardLabelLower.includes('usb video') && (aLabel.includes('usb audio') || aLabel.includes('usb video')))
+        (cardLabelLower.includes('cam link') && aLabel.includes('cam link')) ||
+        (cardLabelLower.includes('hd60') && aLabel.includes('hd60')) ||
+        (cardLabelLower.includes('4k s') && aLabel.includes('4k s')) ||
+        (cardLabelLower.includes('4k x') && aLabel.includes('4k x'))
       );
     });
 
@@ -1281,42 +1281,24 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
     }
     gamingMixerRef.current?.resume();
 
+    // Acquire video-only stream from capture card (avoids locking CoreAudio / AVFoundation)
     const requestUserMedia = async (videoConstraints: MediaTrackConstraints): Promise<MediaStream> => {
-      // 1. Try with exact deviceId
       try {
-        if (matchingAudio) {
-          try {
-            return await navigator.mediaDevices.getUserMedia({
-              video: videoConstraints,
-              audio: { deviceId: { exact: matchingAudio.deviceId } }
-            });
-          } catch (e) {}
-        }
         return await navigator.mediaDevices.getUserMedia({
           video: videoConstraints,
-          audio: true
+          audio: false
         });
-      } catch (e) {}
-
-      // 2. If exact deviceId failed (e.g. Chrome deviceId changed or exact constraint rejected), try with ideal deviceId
-      const relaxedVideo = { ...videoConstraints };
-      if (relaxedVideo.deviceId && typeof relaxedVideo.deviceId === 'object' && 'exact' in relaxedVideo.deviceId) {
-        relaxedVideo.deviceId = { ideal: (relaxedVideo.deviceId as any).exact };
+      } catch (e) {
+        // Fallback with ideal deviceId
+        const relaxedVideo = { ...videoConstraints };
+        if (relaxedVideo.deviceId && typeof relaxedVideo.deviceId === 'object' && 'exact' in relaxedVideo.deviceId) {
+          relaxedVideo.deviceId = { ideal: (relaxedVideo.deviceId as any).exact };
+        }
+        return await navigator.mediaDevices.getUserMedia({
+          video: relaxedVideo,
+          audio: false
+        });
       }
-
-      if (matchingAudio) {
-        try {
-          return await navigator.mediaDevices.getUserMedia({
-            video: relaxedVideo,
-            audio: { deviceId: { ideal: matchingAudio.deviceId } }
-          });
-        } catch (e) {}
-      }
-
-      return await navigator.mediaDevices.getUserMedia({
-        video: relaxedVideo,
-        audio: false
-      });
     };
 
     let stream: MediaStream | null = null;
@@ -1688,6 +1670,55 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
       gamingMixerRef.current.setMicVolume(micGain);
       gamingMixerRef.current.setBackupMicInMix(false);
       gamingMixerRef.current.resume();
+    }
+  };
+
+  // Comprehensive Audio Subsystem Reset
+  const handleMasterAudioReset = async () => {
+    try {
+      console.log('[Audio System] 🔄 מבצע איפוס סאונד מוחלט ושחרור נעילות חומרה...');
+      
+      // 1. Stop all active audio streams
+      if (micStream) micStream.getTracks().forEach(t => t.stop());
+      if (gameAudioStream) gameAudioStream.getTracks().forEach(t => t.stop());
+      if (backupMicStream) backupMicStream.getTracks().forEach(t => t.stop());
+      setMicStream(null);
+      setGameAudioStream(null);
+      setBackupMicStream(null);
+
+      // 2. Clear stored preferences from localStorage
+      try {
+        localStorage.removeItem('gaming_studio_preferred_mic');
+        localStorage.removeItem('gaming_studio_preferred_game_audio');
+        localStorage.removeItem('gaming_studio_preferred_backup_audio');
+      } catch {}
+
+      // 3. Reset all audio state
+      setSelectedAudioId('');
+      setSelectedGameAudioId('');
+      setSelectedBackupAudioId('');
+      setIsAudioMuted(false);
+      setIsBackupAudioMuted(false);
+      setMicGain(1.0);
+      setGameAudioVolume(1.0);
+      setBackupMicGain(1.0);
+      setMonitorGameAudio(true);
+      setIsBackupMicEnabled(false);
+      setBackupMicMode('standby');
+      setIsHotSwapped(false);
+
+      // 4. Cooldown for CoreAudio and AVFoundation release
+      await new Promise(r => setTimeout(r, 400));
+
+      // 5. Re-run device discovery
+      await refreshDevices();
+      gamingMixerRef.current?.resume();
+      if (gameAudioMonitorRef.current) {
+        gameAudioMonitorRef.current.play().catch(() => {});
+      }
+      console.log('[Audio System] ✅ איפוס סאונדים הושלם בהצלחה!');
+    } catch (err) {
+      console.error('[Audio System] ❌ שגיאה במהלך איפוס סאונדים:', err);
     }
   };
 
@@ -4227,9 +4258,20 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
                   <p className="text-[11px] text-slate-400">מיקרופון נפרד + סאונד קונסולה מאלגטו</p>
                 </div>
               </div>
-              <span className="text-[10px] font-mono font-bold text-teal-400 bg-teal-950/60 px-2 py-0.5 rounded border border-teal-800">
-                Dual-Track Audio
-              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleMasterAudioReset}
+                  className="px-2.5 py-1 rounded-xl bg-rose-950/60 hover:bg-rose-900/80 text-rose-300 hover:text-white border border-rose-700/50 text-[11px] font-bold transition-all flex items-center gap-1.5 shadow-sm"
+                  title="איפוס מוחלט של כל חיבורי השמע, שחרור נעילות חומרה, ומחיקת הגדרות ישנות"
+                >
+                  <RotateCcw className="w-3.5 h-3.5 text-rose-400" />
+                  <span>🔄 איפוס סאונד</span>
+                </button>
+                <span className="text-[10px] font-mono font-bold text-teal-400 bg-teal-950/60 px-2 py-0.5 rounded border border-teal-800">
+                  Dual-Track
+                </span>
+              </div>
             </div>
 
             {/* CHANNEL 1: GAMER / STREAMER MICROPHONE (BROADCAST STUDIO DSP) */}
