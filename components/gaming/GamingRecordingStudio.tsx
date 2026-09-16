@@ -57,6 +57,7 @@ import {
   StopCircle,
   ShieldAlert,
   Pencil,
+  Unlock,
 } from 'lucide-react';
 import { 
   getMediaDevices, 
@@ -118,9 +119,36 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
   // Primary Audio & Video Streams
   const [micStream, setMicStream] = useState<MediaStream | null>(null);
   const [facecamStream, setFacecamStream] = useState<MediaStream | null>(null);
+  const [isFacecamInitializing, setIsFacecamInitializing] = useState<boolean>(false);
+  const [facecamError, setFacecamError] = useState<string | null>(null);
+  const [facecamDetails, setFacecamDetails] = useState<{ width: number; height: number; fps: number; label: string } | null>(null);
+  const facecamStreamRef = useRef<MediaStream | null>(null);
+  const deckBPreviewRef = useRef<HTMLVideoElement | null>(null);
   const [isVideoMuted, setIsVideoMuted] = useState(false);
   const [isAudioMuted, setIsAudioMuted] = useState(false);
   const [isMirrored, setIsMirrored] = useState(true);
+
+  // Sync Deck B miniature preview with facecamStream
+  useEffect(() => {
+    if (deckBPreviewRef.current) {
+      if (facecamStream) {
+        deckBPreviewRef.current.srcObject = facecamStream;
+        deckBPreviewRef.current.play().catch(() => {});
+      } else {
+        deckBPreviewRef.current.srcObject = null;
+      }
+    }
+  }, [facecamStream]);
+
+  // Load preferred camera on initial mount
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('gaming_studio_preferred_camera');
+      if (saved) {
+        setSelectedVideoId(saved);
+      }
+    } catch {}
+  }, []);
 
   // Wireless iPhone RemoteCam (WebRTC)
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
@@ -559,9 +587,10 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
         setSelectedGameAudioId(elgatoAudioDev.deviceId);
       }
 
-      // Detect iPhone Continuity or normal cameras for Facecam
+      // Detect physical webcams / built-in FaceTime HD camera vs iPhone Continuity
       const normalCams = videoInputs.filter(v => !v.isCaptureCard);
-      const iphoneCam = videoInputs.find(v => v.isIPhone || v.isContinuity);
+      const builtInOrWebcam = normalCams.find(v => !v.isIPhone && !v.isContinuity);
+      const iphoneCam = normalCams.find(v => v.isIPhone || v.isContinuity);
 
       // If Elgato 4K is present, auto-enable 4K Ultra HD resolution immediately!
       const elgatoCard = videoInputs.find(v => v.isCaptureCard);
@@ -573,9 +602,23 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
         setVideoResolution('4k');
       }
 
-      if (normalCams.length > 0 && !selectedVideoId) {
-        // Prioritize iPhone if connected!
-        setSelectedVideoId(iphoneCam ? iphoneCam.deviceId : normalCams[0].deviceId);
+      // Check saved preference first
+      let savedCamId = '';
+      try {
+        savedCamId = localStorage.getItem('gaming_studio_preferred_camera') || '';
+      } catch {}
+
+      if (!selectedVideoId) {
+        if (savedCamId && normalCams.some(c => c.deviceId === savedCamId)) {
+          setSelectedVideoId(savedCamId);
+        } else if (builtInOrWebcam) {
+          // Prioritize built-in Mac FaceTime HD camera / direct USB webcam so it always works immediately without stalling!
+          setSelectedVideoId(builtInOrWebcam.deviceId);
+        } else if (iphoneCam) {
+          setSelectedVideoId(iphoneCam.deviceId);
+        } else if (normalCams.length > 0) {
+          setSelectedVideoId(normalCams[0].deviceId);
+        }
       }
 
       return { audioInputs, videoInputs };
@@ -887,36 +930,138 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
     };
   }, [isBackupMicEnabled, selectedBackupAudioId, backupMicNoiseSuppression, selectedAudioId, audioDevices]);
 
-  // 3b. Initialize or Update Primary Facecam Video Stream (Video Only)
+  // 3b. Initialize or Update Primary Facecam Video Stream (Video Only) with Progressive Fallback
   useEffect(() => {
     let active = true;
 
     async function initFacecam() {
-      if (isUsingRemoteCam && remoteStream) return;
-      if (!selectedVideoId) {
-        setFacecamStream(null);
+      if (isUsingRemoteCam && remoteStream) {
+        setFacecamError(null);
         return;
       }
 
+      if (!selectedVideoId) {
+        if (facecamStreamRef.current) {
+          facecamStreamRef.current.getTracks().forEach(t => t.stop());
+          facecamStreamRef.current = null;
+        }
+        setFacecamStream(null);
+        setFacecamDetails(null);
+        setFacecamError(null);
+        return;
+      }
+
+      setIsFacecamInitializing(true);
+      setFacecamError(null);
+
+      // Cleanly stop any existing facecam tracks before acquiring a new stream
+      if (facecamStreamRef.current) {
+        facecamStreamRef.current.getTracks().forEach(t => t.stop());
+        facecamStreamRef.current = null;
+      }
+
+      let stream: MediaStream | null = null;
+      let errorReason: string | null = null;
+
+      // Stage 1: Try requested resolution & device (1080p / 720p with ideal deviceId)
       try {
         const constraints: MediaStreamConstraints = {
           audio: false,
           video: getVideoConstraints(videoResolution === '4k' ? '1080p' : videoResolution, selectedVideoId)
         };
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
+      } catch (err1: any) {
+        console.warn('[Facecam] Stage 1 (Strict/HD) failed, trying Stage 2 (720p @ 30fps):', err1?.message || err1);
+        errorReason = err1?.name === 'NotReadableError' 
+          ? 'המצלמה תפוסה על ידי תוכנה אחרת (כמו FaceTime / Zoom / OBS) או דורשת אישור' 
+          : err1?.message || 'שגיאה באיתחול';
 
-        const stream = await navigator.mediaDevices.getUserMedia(constraints);
-        if (!active) {
+        // Stage 2: Try 720p fallback with ideal deviceId
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            audio: false,
+            video: {
+              deviceId: { ideal: selectedVideoId },
+              width: { ideal: 1280 },
+              height: { ideal: 720 },
+              frameRate: { ideal: 30 }
+            }
+          });
+        } catch (err2: any) {
+          console.warn('[Facecam] Stage 2 (720p) failed, trying Stage 3 (Driver Native):', err2?.message || err2);
+          
+          // Stage 3: Try driver default constraints with deviceId
+          try {
+            stream = await navigator.mediaDevices.getUserMedia({
+              audio: false,
+              video: { deviceId: { ideal: selectedVideoId } }
+            });
+          } catch (err3: any) {
+            console.warn('[Facecam] Stage 3 (Device Native) failed. Checking alternative camera fallback:', err3?.message || err3);
+            
+            // Stage 4: If selected camera (e.g. sleeping iPhone) failed, try fallback to physical Mac camera
+            try {
+              const normalCams = videoDevices.filter(v => !v.isCaptureCard);
+              const altCam = normalCams.find(v => v.deviceId !== selectedVideoId && !v.isIPhone);
+              if (altCam) {
+                stream = await navigator.mediaDevices.getUserMedia({
+                  audio: false,
+                  video: { deviceId: { ideal: altCam.deviceId } }
+                });
+                if (stream) {
+                  setSelectedVideoId(altCam.deviceId);
+                  try { localStorage.setItem('gaming_studio_preferred_camera', altCam.deviceId); } catch {}
+                  console.log(`[Facecam] 🔄 Switched automatically to working camera: ${altCam.label}`);
+                }
+              } else {
+                // Final attempt: any working video device
+                stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: true });
+              }
+            } catch (err4: any) {
+              console.error('[Facecam] ❌ All fallback acquisition attempts failed:', err4);
+              errorReason = err4?.name === 'NotReadableError'
+                ? 'המצלמה תפוסה על ידי תוכנה אחרת (כמו FaceTime או Zoom) או דורשת אישור'
+                : 'לא ניתן לפתוח את המצלמה שנבחרה';
+            }
+          }
+        }
+      }
+
+      if (!active) {
+        if (stream) {
           stream.getTracks().forEach(t => t.stop());
-          return;
         }
+        return;
+      }
 
-        if (facecamStream) {
-          facecamStream.getTracks().forEach(t => t.stop());
-        }
+      setIsFacecamInitializing(false);
 
+      if (stream) {
+        facecamStreamRef.current = stream;
         setFacecamStream(stream);
-      } catch (err) {
-        console.warn('Facecam initialization failed:', err);
+        setFacecamError(null);
+
+        const vt = stream.getVideoTracks()[0];
+        if (vt) {
+          const s = vt.getSettings();
+          const dev = videoDevices.find(v => v.deviceId === selectedVideoId);
+          setFacecamDetails({
+            width: s.width || 1280,
+            height: s.height || 720,
+            fps: Math.round(s.frameRate || 30),
+            label: dev?.label || vt.label || 'מצלמת פנים'
+          });
+
+          vt.onended = () => {
+            console.warn('[Facecam] Video track ended unexpectedly');
+            setFacecamStream(null);
+            setFacecamDetails(null);
+          };
+        }
+      } else {
+        setFacecamStream(null);
+        setFacecamDetails(null);
+        setFacecamError(errorReason || 'המצלמה לא מגיבה');
       }
     }
 
@@ -924,17 +1069,110 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
 
     return () => {
       active = false;
+      if (facecamStreamRef.current) {
+        facecamStreamRef.current.getTracks().forEach(t => t.stop());
+        facecamStreamRef.current = null;
+      }
     };
-  }, [selectedVideoId, isUsingRemoteCam, videoResolution]);
+  }, [selectedVideoId, isUsingRemoteCam, videoResolution, videoDevices]);
 
   // Connect facecamStream to hidden video element
   useEffect(() => {
     const activeStream = isUsingRemoteCam && remoteStream ? remoteStream : facecamStream;
-    if (facecamVideoRef.current && activeStream) {
-      facecamVideoRef.current.srcObject = activeStream;
-      facecamVideoRef.current.play().catch(() => {});
+    if (facecamVideoRef.current) {
+      if (activeStream) {
+        facecamVideoRef.current.srcObject = activeStream;
+        facecamVideoRef.current.onloadedmetadata = () => {
+          facecamVideoRef.current?.play().catch(() => {});
+        };
+        facecamVideoRef.current.play().catch(() => {});
+      } else {
+        facecamVideoRef.current.srcObject = null;
+      }
     }
   }, [facecamStream, remoteStream, isUsingRemoteCam]);
+
+  // Dedicated Facecam Lock Release & Hardware Session Re-sync
+  const handleReleaseFacecamLock = async () => {
+    setIsFacecamInitializing(true);
+    setFacecamError(null);
+
+    // 1. Force stop active facecam tracks
+    if (facecamStreamRef.current) {
+      facecamStreamRef.current.getTracks().forEach(t => t.stop());
+      facecamStreamRef.current = null;
+    }
+    if (facecamStream) {
+      facecamStream.getTracks().forEach(t => t.stop());
+    }
+    setFacecamStream(null);
+    setFacecamDetails(null);
+
+    // 2. Kill locks via Electron IPC if running in desktop app
+    const electronAPI = (window as any).electronAPI;
+    if (electronAPI?.releaseCameraLock) {
+      try {
+        await electronAPI.releaseCameraLock();
+      } catch (e) {}
+    }
+
+    // 3. Pause 800ms for macOS AVFoundation to deallocate device session cleanly
+    await new Promise(r => setTimeout(r, 800));
+
+    // 4. Refresh device enumeration
+    const { videoInputs } = await refreshDevices();
+
+    // 5. Re-open target camera
+    const targetId = selectedVideoId || (videoInputs.length > 0 ? videoInputs[0].deviceId : '');
+    if (targetId) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: {
+            deviceId: { ideal: targetId },
+            width: { ideal: 1920, min: 1280 },
+            height: { ideal: 1080, min: 720 },
+            frameRate: { ideal: 30, max: 60 }
+          }
+        });
+
+        facecamStreamRef.current = stream;
+        setFacecamStream(stream);
+        setFacecamError(null);
+
+        const vt = stream.getVideoTracks()[0];
+        if (vt) {
+          const s = vt.getSettings();
+          const dev = videoInputs.find(v => v.deviceId === targetId);
+          setFacecamDetails({
+            width: s.width || 1280,
+            height: s.height || 720,
+            fps: Math.round(s.frameRate || 30),
+            label: dev?.label || vt.label || 'מצלמת פנים'
+          });
+        }
+      } catch (err: any) {
+        console.warn('Facecam re-open failed with standard constraints, trying generic:', err);
+        try {
+          const fallbackStream = await navigator.mediaDevices.getUserMedia({
+            audio: false,
+            video: { deviceId: { ideal: targetId } }
+          });
+          facecamStreamRef.current = fallbackStream;
+          setFacecamStream(fallbackStream);
+          setFacecamError(null);
+        } catch (err2: any) {
+          console.error('Facecam re-open failed completely:', err2);
+          setFacecamError(
+            err2?.name === 'NotReadableError'
+              ? 'המצלמה תפוסה על ידי תוכנה אחרת (FaceTime/Zoom) — סגור אותה ונסה שוב'
+              : 'לא ניתן לפתוח את המצלמה. בדוק הרשאות מצלמה'
+          );
+        }
+      }
+    }
+    setIsFacecamInitializing(false);
+  };
 
   // Connect gameplay stream (screen capture or capture card) to hidden video element
   useEffect(() => {
@@ -1610,7 +1848,7 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
 
       // --- LAYER 2: Facecam Multi-Cam (Webcam / iPhone / Cam Link / Remote Cam) ---
       const faceVideo = facecamVideoRef.current;
-      const isVideoReady = faceVideo && faceVideo.readyState >= 2;
+      const isVideoReady = faceVideo && faceVideo.readyState >= 2 && faceVideo.videoWidth > 0;
       const remoteImg = remoteImageRef.current;
       const isRemoteImgReady = isUsingRemoteCam && remoteImg && remoteImg.complete && remoteImg.naturalWidth > 0;
       const hasFacecam = (isVideoReady || isRemoteImgReady) && facecamLayout !== 'solo_game' && !isVideoMuted;
@@ -3437,10 +3675,117 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
               </button>
             </div>
 
-            {/* 1-Click Fast Connect for iPhone */}
+            {/* Live Camera Miniature Monitor & Real-Time Status */}
+            <div className="relative w-full aspect-video rounded-2xl bg-black/80 border border-slate-800 overflow-hidden shadow-inner flex items-center justify-center group">
+              {facecamStream && !isVideoMuted ? (
+                <video
+                  ref={deckBPreviewRef}
+                  playsInline
+                  autoPlay
+                  muted
+                  className={`w-full h-full object-cover ${isMirrored ? 'scale-x-[-1]' : ''}`}
+                />
+              ) : isUsingRemoteCam && remoteFrame ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={remoteFrame}
+                  alt="Remote Facecam"
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <div className="flex flex-col items-center justify-center p-3 text-center space-y-1.5 z-10">
+                  {isFacecamInitializing ? (
+                    <>
+                      <RotateCw className="w-6 h-6 text-indigo-400 animate-spin" />
+                      <span className="text-xs font-bold text-slate-200">מתחבר למצלמה...</span>
+                      <span className="text-[10px] text-slate-400">מאמת אות וידאו ב-HD</span>
+                    </>
+                  ) : facecamError ? (
+                    <>
+                      <AlertTriangle className="w-6 h-6 text-rose-400" />
+                      <span className="text-xs font-bold text-rose-300">תקלת זיהוי מצלמה</span>
+                      <span className="text-[10px] text-slate-400 max-w-[240px] leading-relaxed">{facecamError}</span>
+                      <button
+                        type="button"
+                        onClick={handleReleaseFacecamLock}
+                        className="mt-1.5 px-3 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-[10px] font-bold transition-all flex items-center gap-1.5 shadow active:scale-95 cursor-pointer"
+                      >
+                        <Unlock className="w-3 h-3" />
+                        <span>שחרר נעילה ונסה שוב</span>
+                      </button>
+                    </>
+                  ) : isVideoMuted ? (
+                    <>
+                      <VideoOff className="w-6 h-6 text-slate-500" />
+                      <span className="text-xs font-bold text-slate-300">מצלמת הפנים מושתקת</span>
+                      <button
+                        type="button"
+                        onClick={toggleCam}
+                        className="mt-1 px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-bold transition-all cursor-pointer"
+                      >
+                        הפעל מצלמה (V)
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <Video className="w-6 h-6 text-slate-600" />
+                      <span className="text-xs font-bold text-slate-400">לא נבחרה מצלמה פעילה</span>
+                      <span className="text-[10px] text-slate-500">בחר מצלמה מהרשימה מטה</span>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {/* Status Badge in Corner */}
+              <div className="absolute top-2 right-2 z-10 flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-black/75 backdrop-blur-md border border-white/10 text-[10px] font-bold">
+                {facecamStream && !isVideoMuted ? (
+                  <>
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                    <span className="text-emerald-300">
+                      {facecamDetails ? `${facecamDetails.width}×${facecamDetails.height} @ ${facecamDetails.fps}FPS` : 'מצלמה פעילה'}
+                    </span>
+                  </>
+                ) : isFacecamInitializing ? (
+                  <>
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
+                    <span className="text-amber-300">מתחבר...</span>
+                  </>
+                ) : facecamError ? (
+                  <>
+                    <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
+                    <span className="text-rose-300">תקלה</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="w-1.5 h-1.5 rounded-full bg-slate-500" />
+                    <span className="text-slate-400">כבוי</span>
+                  </>
+                )}
+              </div>
+
+              {/* Quick unlock button on top-left of monitor */}
+              {facecamStream && (
+                <div className="absolute top-2 left-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <button
+                    type="button"
+                    onClick={handleReleaseFacecamLock}
+                    disabled={isFacecamInitializing}
+                    title="שחרר נעילת מצלמה ורענן חיבור (לתקלות תקיעות)"
+                    className="p-1 rounded-lg bg-black/80 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-700 text-[10px] flex items-center gap-1 cursor-pointer"
+                  >
+                    <Unlock className="w-3 h-3 text-amber-400" />
+                    <span className="text-[9px]">שחרר נעילה</span>
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* 1-Click Fast Connect for iPhone or Switch to Mac FaceTime */}
             {(() => {
               const iphoneDev = videoDevices.find(v => v.isIPhone || v.isContinuity);
+              const builtInDev = videoDevices.find(v => !v.isIPhone && !v.isContinuity && !v.isCaptureCard);
               const isIPhoneSelected = iphoneDev && selectedVideoId === iphoneDev.deviceId && !isUsingRemoteCam;
+              const isFacecamActuallyStreaming = !!facecamStream;
 
               if (iphoneDev) {
                 return (
@@ -3449,31 +3794,65 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
                       <div className="flex items-center gap-2">
                         <Smartphone className="w-4 h-4 text-emerald-400" />
                         <span className="text-xs font-black text-emerald-200">
-                          {isIPhoneSelected ? 'אייפון מחובר כ-Facecam' : 'זוהה אייפון במערכת!'}
+                          {isIPhoneSelected && isFacecamActuallyStreaming 
+                            ? 'אייפון מחובר כ-Facecam' 
+                            : 'זוהה iPhone במערכת'}
                         </span>
                       </div>
                       <span className="text-[10px] font-bold text-emerald-400 bg-emerald-900/60 px-2 py-0.5 rounded border border-emerald-700">
-                        {iphoneDev.label.slice(0, 22)}
+                        {deviceNicknames[iphoneDev.deviceId] || iphoneDev.label.slice(0, 22)}
                       </span>
                     </div>
 
-                    {isIPhoneSelected ? (
-                      <div className="text-[11px] text-emerald-300 flex items-center gap-1.5 font-medium">
-                        <Check className="w-3.5 h-3.5 text-emerald-400" />
-                        <span>מצלמת האייפון פעילה באיכות צילום גבוהה (Continuity Camera).</span>
+                    {isIPhoneSelected && isFacecamActuallyStreaming ? (
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-[11px] text-emerald-300 flex items-center gap-1.5 font-medium">
+                          <Check className="w-3.5 h-3.5 text-emerald-400" />
+                          <span>מצלמת האייפון פעילה באיכות צילום גבוהה.</span>
+                        </div>
+                        {builtInDev && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsUsingRemoteCam(false);
+                              setSelectedVideoId(builtInDev.deviceId);
+                              try { localStorage.setItem('gaming_studio_preferred_camera', builtInDev.deviceId); } catch {}
+                            }}
+                            className="text-[10px] text-slate-400 hover:text-white underline cursor-pointer"
+                          >
+                            עבור למצלמת המקבוק
+                          </button>
+                        )}
                       </div>
                     ) : (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsUsingRemoteCam(false);
-                          setSelectedVideoId(iphoneDev.deviceId);
-                        }}
-                        className="w-full py-2 px-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-black transition-all shadow-md flex items-center justify-center gap-2"
-                      >
-                        <Smartphone className="w-3.5 h-3.5" />
-                        <span>התחבר למצלמת ה-iPhone שלך בלחיצה אחת</span>
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsUsingRemoteCam(false);
+                            setSelectedVideoId(iphoneDev.deviceId);
+                            try { localStorage.setItem('gaming_studio_preferred_camera', iphoneDev.deviceId); } catch {}
+                          }}
+                          className="flex-1 py-2 px-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-black transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer"
+                        >
+                          <Smartphone className="w-3.5 h-3.5" />
+                          <span>הפעל מצלמת iPhone</span>
+                        </button>
+                        {builtInDev && selectedVideoId !== builtInDev.deviceId && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsUsingRemoteCam(false);
+                              setSelectedVideoId(builtInDev.deviceId);
+                              try { localStorage.setItem('gaming_studio_preferred_camera', builtInDev.deviceId); } catch {}
+                            }}
+                            className="py-2 px-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold border border-slate-700 cursor-pointer"
+                            title="עבור למצלמת המקבוק המובנית"
+                          >
+                            מצלמת מקבוק
+                          </button>
+                        )}
+                      </div>
                     )}
                   </div>
                 );
@@ -3481,16 +3860,16 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
               
               // iPhone Assistant when not yet detected
               return (
-                <div className="p-3.5 rounded-2xl bg-gradient-to-r from-slate-900 via-indigo-950/40 to-slate-900 border border-indigo-500/30 space-y-3">
+                <div className="p-3 rounded-2xl bg-gradient-to-r from-slate-900 via-indigo-950/40 to-slate-900 border border-indigo-500/30 space-y-2.5">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <Smartphone className="w-4 h-4 text-indigo-400" />
-                      <span className="text-xs font-black text-indigo-200">לא זוהה iPhone כמצלמה מקומית?</span>
+                      <span className="text-xs font-black text-indigo-200">חיבור אייפון כ-Facecam</span>
                     </div>
                     <button
                       type="button"
                       onClick={() => setShowIPhoneGuide(prev => !prev)}
-                      className="text-[10px] text-indigo-400 hover:text-white flex items-center gap-1 font-bold underline"
+                      className="text-[10px] text-indigo-400 hover:text-white flex items-center gap-1 font-bold underline cursor-pointer"
                     >
                       <HelpCircle className="w-3 h-3" />
                       <span>{showIPhoneGuide ? 'סגור מדריך' : 'איך לחבר?'}</span>
@@ -3501,7 +3880,7 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
                     <button
                       type="button"
                       onClick={() => setIsRemoteModalOpen(true)}
-                      className="py-2 px-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-bold transition-all shadow-md flex items-center justify-center gap-1.5"
+                      className="py-1.5 px-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-bold transition-all shadow-md flex items-center justify-center gap-1.5 cursor-pointer"
                     >
                       <Smartphone className="w-3.5 h-3.5" />
                       <span>סרוק קוד QR</span>
@@ -3510,10 +3889,10 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
                     <button
                       type="button"
                       onClick={refreshDevices}
-                      className="py-2 px-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white text-xs font-bold border border-slate-700 transition-all flex items-center justify-center gap-1.5"
+                      className="py-1.5 px-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white text-xs font-bold border border-slate-700 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
                     >
                       <RotateCw className="w-3.5 h-3.5 text-indigo-400" />
-                      <span>הער מצלמת המשכיות</span>
+                      <span>רענן חיבור</span>
                     </button>
                   </div>
 
@@ -3532,18 +3911,44 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
             })()}
 
             {/* Camera Selector Dropdown */}
-            <div className="space-y-1">
+            <div className="space-y-1.5">
               <div className="flex items-center justify-between">
                 <label className="text-xs font-bold text-slate-300">בחר מצלמה:</label>
-                <button
-                  type="button"
-                  onClick={refreshDevices}
-                  className="text-[10px] text-indigo-400 hover:text-indigo-300 flex items-center gap-1"
-                  title="רענן זיהוי מצלמות ואייפון"
-                >
-                  <RotateCw className="w-3 h-3" />
-                  <span>רענן זיהוי</span>
-                </button>
+                <div className="flex items-center gap-1.5">
+                  {selectedVideoId && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const cur = videoDevices.find(v => v.deviceId === selectedVideoId);
+                        handleRenameDevice(selectedVideoId, cur?.label || 'מצלמת פנים');
+                      }}
+                      className="text-[10px] text-slate-400 hover:text-white flex items-center gap-0.5 bg-slate-800/80 px-2 py-0.5 rounded-lg border border-slate-700 cursor-pointer"
+                      title="שנה שם תצוגה למצלמה"
+                    >
+                      <Pencil className="w-2.5 h-2.5 text-amber-400" />
+                      <span>שנה שם</span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleReleaseFacecamLock}
+                    disabled={isFacecamInitializing}
+                    className="text-[10px] text-amber-400 hover:text-amber-300 flex items-center gap-1 bg-amber-500/10 px-2 py-0.5 rounded-lg border border-amber-500/30 cursor-pointer"
+                    title="שחרר נעילת AVFoundation ופתח את המצלמה מחדש"
+                  >
+                    <Unlock className="w-2.5 h-2.5" />
+                    <span>שחרר נעילה</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={refreshDevices}
+                    className="text-[10px] text-indigo-400 hover:text-indigo-300 flex items-center gap-1 bg-indigo-500/10 px-2 py-0.5 rounded-lg border border-indigo-500/30 cursor-pointer"
+                    title="רענן זיהוי מצלמות ואייפון"
+                  >
+                    <RotateCw className="w-2.5 h-2.5" />
+                    <span>רענן</span>
+                  </button>
+                </div>
               </div>
 
               <div className="flex items-center gap-2">
@@ -3555,9 +3960,10 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
                     } else {
                       setIsUsingRemoteCam(false);
                       setSelectedVideoId(e.target.value);
+                      try { localStorage.setItem('gaming_studio_preferred_camera', e.target.value); } catch {}
                     }
                   }}
-                  className="flex-1 px-3 py-2.5 rounded-xl bg-slate-900 border border-slate-700/80 text-xs text-white focus:outline-none focus:border-indigo-500 transition-colors"
+                  className="flex-1 px-3 py-2.5 rounded-xl bg-slate-900 border border-slate-700/80 text-xs text-white focus:outline-none focus:border-indigo-500 transition-colors cursor-pointer"
                 >
                   {(remoteStream || remoteFrame) && (
                     <option value="remote-iphone">📱 iPhone Remote Camera (חיבור WebRTC אלחוטי)</option>
@@ -3568,7 +3974,7 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
                         .filter(v => (v.isIPhone || v.isContinuity) && v.deviceId !== selectedCaptureCardId)
                         .map(v => (
                           <option key={v.deviceId} value={v.deviceId}>
-                            📱 {v.label}
+                            📱 {deviceNicknames[v.deviceId] ? `${deviceNicknames[v.deviceId]} (${v.label})` : v.label}
                           </option>
                         ))}
                     </optgroup>
@@ -3578,7 +3984,7 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
                       .filter(v => !v.isIPhone && !v.isContinuity && v.deviceId !== selectedCaptureCardId)
                       .map(v => (
                         <option key={v.deviceId} value={v.deviceId}>
-                          {v.label}
+                          {deviceNicknames[v.deviceId] ? `${deviceNicknames[v.deviceId]} (${v.label})` : v.label}
                         </option>
                       ))}
                   </optgroup>
@@ -3587,10 +3993,10 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
                 <button
                   type="button"
                   onClick={toggleCam}
-                  className={`p-2.5 rounded-xl border transition-all ${
+                  className={`p-2.5 rounded-xl border transition-all cursor-pointer ${
                     isVideoMuted ? 'bg-rose-600 border-rose-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-300 hover:text-white'
                   }`}
-                  title={isVideoMuted ? 'הפעל מצלמה' : 'הסתר מצלמת פנים'}
+                  title={isVideoMuted ? 'הפעל מצלמה (V)' : 'הסתר מצלמת פנים (V)'}
                 >
                   {isVideoMuted ? <VideoOff className="w-4 h-4" /> : <Video className="w-4 h-4" />}
                 </button>
