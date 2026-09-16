@@ -3801,21 +3801,45 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
                 </div>
               </div>
 
-              {/* Mic Device Selector */}
-              <select
-                value={selectedAudioId}
-                onChange={(e) => {
-                  setSelectedAudioId(e.target.value);
-                  gamingMixerRef.current?.resume();
-                }}
-                className="w-full px-2.5 py-1.5 rounded-lg bg-slate-950 border border-slate-700/80 text-[11px] text-white focus:outline-none focus:border-indigo-500"
-              >
-                {audioDevices.map(a => (
-                  <option key={a.deviceId} value={a.deviceId}>
-                    🎙️ {a.label || 'מיקרופון'}
-                  </option>
-                ))}
-              </select>
+              {/* Mic Device Selector with Quick Refresh */}
+              <div className="space-y-1">
+                <div className="flex items-center gap-1.5">
+                  <select
+                    value={selectedAudioId}
+                    onChange={(e) => {
+                      setSelectedAudioId(e.target.value);
+                      gamingMixerRef.current?.resume();
+                    }}
+                    className="flex-1 px-2.5 py-1.5 rounded-lg bg-slate-950 border border-slate-700/80 text-[11px] text-white focus:outline-none focus:border-indigo-500 truncate"
+                  >
+                    {audioDevices.map(a => {
+                      const l = a.label.toLowerCase();
+                      const isUsbCodec = l.includes('usb audio codec') || l.includes('burr-brown');
+                      const display = isUsbCodec 
+                        ? `🎙️ ${a.label} (מיקרופון דש / תחנת עגינה USB)` 
+                        : `🎙️ ${a.label || 'מיקרופון'}`;
+                      return (
+                        <option key={a.deviceId} value={a.deviceId}>
+                          {display}
+                        </option>
+                      );
+                    })}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={refreshDevices}
+                    className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 hover:text-white transition-all shrink-0"
+                    title="סרוק וזהה מחדש מיקרופון שחובר זה עתה"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                {audioDevices.some(a => a.label.toLowerCase().includes('usb audio codec')) && (
+                  <p className="text-[9px] text-indigo-300/80">
+                    💡 זוהה התקן USB Audio CODEC מתחנת העגינה (מיקרופון דש / כרטיס שמע).
+                  </p>
+                )}
+              </div>
 
               {/* Studio Broadcast Vocal DSP & AI Noise Filter Toggles */}
               <div className="grid grid-cols-2 gap-1.5 pt-1">
@@ -4094,23 +4118,37 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
 
                   {/* Backup Mic Device Selector */}
                   <div className="space-y-1">
-                    <label className="text-[10px] text-slate-400 font-bold block">
-                      בחר התקן מיקרופון גיבוי (MacBook Mic / AirPods / אוזניות USB):
-                    </label>
+                    <div className="flex items-center justify-between">
+                      <label className="text-[10px] text-slate-400 font-bold block">
+                        בחר התקן מיקרופון גיבוי (MacBook Mic / AirPods / אוזניות USB):
+                      </label>
+                      <button
+                        type="button"
+                        onClick={refreshDevices}
+                        className="text-[10px] text-amber-400 hover:text-amber-300 flex items-center gap-1 font-semibold"
+                        title="סרוק מחדש התקני שמע"
+                      >
+                        <RefreshCw className="w-3 h-3" />
+                        <span>רענן</span>
+                      </button>
+                    </div>
                     <select
                       value={selectedBackupAudioId}
                       onChange={(e) => {
                         setSelectedBackupAudioId(e.target.value);
                         gamingMixerRef.current?.resume();
                       }}
-                      className="w-full px-2.5 py-1.5 rounded-lg bg-slate-950 border border-slate-700/80 text-[11px] text-white focus:outline-none focus:border-amber-500"
+                      className="w-full px-2.5 py-1.5 rounded-lg bg-slate-950 border border-slate-700/80 text-[11px] text-white focus:outline-none focus:border-amber-500 truncate"
                     >
                       <option value="">-- אוטומטי (מיקרופון משני זמין) --</option>
                       {audioDevices.map(a => {
                         const isPrimary = a.deviceId === selectedAudioId;
+                        const l = a.label.toLowerCase();
+                        const isUsbCodec = l.includes('usb audio codec') || l.includes('burr-brown');
+                        const note = isUsbCodec ? ' (מיקרופון דש / תחנת עגינה)' : '';
                         return (
                           <option key={a.deviceId} value={a.deviceId}>
-                            {isPrimary ? `⚠️ ${a.label || 'מיקרופון'} (בשימוש כראשי)` : `🎙️ ${a.label || 'מיקרופון'}`}
+                            {isPrimary ? `⚠️ ${a.label || 'מיקרופון'}${note} (בשימוש כראשי)` : `🎙️ ${a.label || 'מיקרופון'}${note}`}
                           </option>
                         );
                       })}
