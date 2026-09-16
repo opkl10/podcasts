@@ -496,6 +496,19 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
   // Streamer Microphone Live Monitoring (Sidetone / Pre-recording check)
   const [isMonitoringMic, setIsMonitoringMic] = useState<boolean>(false);
   const [micMonitorVolume, setMicMonitorVolume] = useState<number>(1.0);
+
+  // Pre-recording Mic Soundcheck / Test Take Recorder & Instant Playback
+  const [isTestRecording, setIsTestRecording] = useState<boolean>(false);
+  const [testRecordingDuration, setTestRecordingDuration] = useState<number>(0);
+  const [testAudioUrl, setTestAudioUrl] = useState<string | null>(null);
+  const [isPlayingTestAudio, setIsPlayingTestAudio] = useState<boolean>(false);
+  const [testAudioProgress, setTestAudioProgress] = useState<number>(0);
+  const [testAudioDuration, setTestAudioDuration] = useState<number>(0);
+  const testMediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const testAudioChunksRef = useRef<Blob[]>([]);
+  const testAudioTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const testAudioPlayerRef = useRef<HTMLAudioElement | null>(null);
+
   const [splitChannels, setSplitChannels] = useState<boolean>(false);
   const [separateStems, setSeparateStems] = useState<boolean>(true);
   const [recordedMicBlob, setRecordedMicBlob] = useState<Blob | null>(null);
@@ -1658,6 +1671,128 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
       gamingMixerRef.current.setStudioVocalEnhance(studioVocalEnhance);
     }
   }, [studioVocalEnhance]);
+
+  // Pre-recording Soundcheck Take: Record Mic Test (5-30s) and Playback
+  const startMicTest = () => {
+    if (testAudioPlayerRef.current) {
+      testAudioPlayerRef.current.pause();
+      testAudioPlayerRef.current.currentTime = 0;
+    }
+    if (testAudioUrl) {
+      URL.revokeObjectURL(testAudioUrl);
+    }
+    setTestAudioUrl(null);
+    setIsPlayingTestAudio(false);
+    setTestAudioProgress(0);
+    setTestAudioDuration(0);
+
+    const activeStream = gamingMixerRef.current?.getIsolatedMicStream()?.getAudioTracks().length
+      ? gamingMixerRef.current.getIsolatedMicStream()
+      : (micStream || (isUsingRemoteCam && remoteStream ? remoteStream : null));
+
+    if (!activeStream || activeStream.getAudioTracks().length === 0) {
+      alert('לא זוהה אות שמע מהמיקרופון. אנא ודא שהמיקרופון פועל ומחובר.');
+      return;
+    }
+
+    try {
+      gamingMixerRef.current?.resume();
+
+      let mimeType = 'audio/webm;codecs=opus';
+      if (typeof MediaRecorder !== 'undefined') {
+        if (!MediaRecorder.isTypeSupported(mimeType)) {
+          mimeType = MediaRecorder.isTypeSupported('audio/webm') 
+            ? 'audio/webm' 
+            : (MediaRecorder.isTypeSupported('audio/mp4') ? 'audio/mp4' : '');
+        }
+      }
+
+      const recorder = new MediaRecorder(activeStream, mimeType ? { mimeType } : undefined);
+      testMediaRecorderRef.current = recorder;
+      testAudioChunksRef.current = [];
+
+      recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) {
+          testAudioChunksRef.current.push(e.data);
+        }
+      };
+
+      recorder.onstop = () => {
+        const finalBlob = new Blob(testAudioChunksRef.current, { type: mimeType || 'audio/webm' });
+        if (finalBlob.size > 0) {
+          const url = URL.createObjectURL(finalBlob);
+          setTestAudioUrl(url);
+          // Autoplay immediately so the user hears their recording right away!
+          setTimeout(() => {
+            if (testAudioPlayerRef.current) {
+              testAudioPlayerRef.current.currentTime = 0;
+              testAudioPlayerRef.current.play().then(() => {
+                setIsPlayingTestAudio(true);
+              }).catch(() => {});
+            }
+          }, 150);
+        }
+      };
+
+      recorder.start(100);
+      setIsTestRecording(true);
+      setTestRecordingDuration(0);
+
+      if (testAudioTimerRef.current) clearInterval(testAudioTimerRef.current);
+      testAudioTimerRef.current = setInterval(() => {
+        setTestRecordingDuration(prev => {
+          if (prev >= 29) {
+            stopMicTest();
+            return 30;
+          }
+          return prev + 1;
+        });
+      }, 1000);
+    } catch (err) {
+      console.error('Failed to start mic test recording:', err);
+      alert('שגיאה באתחול הקלטת הניסיון של המיקרופון.');
+    }
+  };
+
+  const stopMicTest = () => {
+    if (testAudioTimerRef.current) {
+      clearInterval(testAudioTimerRef.current);
+      testAudioTimerRef.current = null;
+    }
+    setIsTestRecording(false);
+    if (testMediaRecorderRef.current && testMediaRecorderRef.current.state !== 'inactive') {
+      try {
+        testMediaRecorderRef.current.stop();
+      } catch (err) {
+        console.warn('Error stopping test recorder:', err);
+      }
+    }
+  };
+
+  const togglePlayTestAudio = () => {
+    if (!testAudioPlayerRef.current) return;
+    if (isPlayingTestAudio) {
+      testAudioPlayerRef.current.pause();
+      setIsPlayingTestAudio(false);
+    } else {
+      testAudioPlayerRef.current.play().then(() => {
+        setIsPlayingTestAudio(true);
+      }).catch(() => {});
+    }
+  };
+
+  const discardTestAudio = () => {
+    if (testAudioPlayerRef.current) {
+      testAudioPlayerRef.current.pause();
+      testAudioPlayerRef.current.currentTime = 0;
+    }
+    if (testAudioUrl) {
+      URL.revokeObjectURL(testAudioUrl);
+    }
+    setTestAudioUrl(null);
+    setIsPlayingTestAudio(false);
+    setTestAudioProgress(0);
+  };
 
   // Instant Hot-Swap to Emergency Backup Mic (if primary mic disconnects/crackles)
   const handleEmergencyHotSwap = () => {
@@ -4415,29 +4550,156 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
                 </div>
               </div>
 
-              {/* Pre-recording Mic Quality & Volume Live Headphone Monitoring (Sidetone) */}
-              <div className="pt-2 border-t border-slate-800/80 space-y-1.5">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsMonitoringMic(prev => !prev);
-                    gamingMixerRef.current?.resume();
+              {/* Pre-recording Soundcheck Take: Record Mic Test (5-30s) & Instant Playback */}
+              <div className="pt-2 border-t border-slate-800/80 space-y-2">
+                {/* Audio element for instant playback */}
+                <audio
+                  ref={testAudioPlayerRef}
+                  src={testAudioUrl || undefined}
+                  onTimeUpdate={() => {
+                    if (testAudioPlayerRef.current) {
+                      setTestAudioProgress(testAudioPlayerRef.current.currentTime);
+                      setTestAudioDuration(testAudioPlayerRef.current.duration || 0);
+                    }
                   }}
-                  className={`w-full px-2.5 py-1.5 rounded-xl text-xs font-bold border flex items-center justify-center gap-1.5 transition-all ${
-                    isMonitoringMic
-                      ? 'bg-emerald-600/30 border-emerald-500 text-emerald-200 shadow-md ring-1 ring-emerald-500/50'
-                      : 'bg-slate-950/80 border-slate-700/70 text-slate-300 hover:text-white hover:border-slate-600'
-                  }`}
-                  title="האזנה עצמית חיה למיקרופון דרך האוזניות לבדיקת איכות, צלילות וקומפרסור לפני הקלטה"
-                >
-                  <Headphones className="w-3.5 h-3.5" />
-                  <span>{isMonitoringMic ? '🟢 האזנה חיה פעילה (בדיקת סאונד באוזניות)' : '🎧 האזנה חיה לבדיקת מיקרופון באוזניות'}</span>
-                </button>
+                  onEnded={() => {
+                    setIsPlayingTestAudio(false);
+                    setTestAudioProgress(0);
+                  }}
+                  onLoadedMetadata={() => {
+                    if (testAudioPlayerRef.current) {
+                      setTestAudioDuration(testAudioPlayerRef.current.duration || 0);
+                    }
+                  }}
+                />
 
-                {isMonitoringMic && (
+                {/* Main Action Buttons (When not actively recording test) */}
+                {!isTestRecording && !testAudioUrl && (
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <button
+                      type="button"
+                      onClick={startMicTest}
+                      className="px-2.5 py-2 rounded-xl text-xs font-bold border border-indigo-500/60 bg-gradient-to-r from-indigo-900/60 to-purple-900/60 hover:from-indigo-800/80 hover:to-purple-800/80 text-white flex items-center justify-center gap-1.5 shadow-md transition-all active:scale-95"
+                      title="הקלט 5-10 שניות בדיקה כדי לשמוע בדיוק איך הקול שלך נשמע עם כל הפילטרים והווליום"
+                    >
+                      <CircleDot className="w-3.5 h-3.5 text-rose-400 fill-rose-500/40" />
+                      <span>🎙️ הקלט ניסיון והשמע</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsMonitoringMic(prev => !prev);
+                        gamingMixerRef.current?.resume();
+                      }}
+                      className={`px-2 py-2 rounded-xl text-xs font-bold border flex items-center justify-center gap-1.5 transition-all ${
+                        isMonitoringMic
+                          ? 'bg-emerald-600/30 border-emerald-500 text-emerald-200 shadow-md ring-1 ring-emerald-500/50'
+                          : 'bg-slate-950/80 border-slate-700/70 text-slate-300 hover:text-white hover:border-slate-600'
+                      }`}
+                      title="האזנה עצמית חיה ורציפה באוזניות בזמן שאתה מדבר"
+                    >
+                      <Headphones className="w-3.5 h-3.5" />
+                      <span>{isMonitoringMic ? '🟢 האזנה חיה' : '🎧 האזנה רציפה'}</span>
+                    </button>
+                  </div>
+                )}
+
+                {/* ACTIVE TEST RECORDING STATE */}
+                {isTestRecording && (
+                  <div className="p-3 rounded-xl bg-rose-950/50 border border-rose-500/70 space-y-2 shadow-lg animate-pulse">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 text-rose-200 font-bold text-xs">
+                        <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping" />
+                        <span>מקליט ניסיון... דבר למיקרופון!</span>
+                      </div>
+                      <span className="font-mono text-xs font-bold text-rose-300 bg-rose-900/80 px-2 py-0.5 rounded border border-rose-700">
+                        00:{testRecordingDuration.toString().padStart(2, '0')} / 00:30
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={stopMicTest}
+                      className="w-full py-2 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs shadow-md flex items-center justify-center gap-1.5 transition-all active:scale-95"
+                    >
+                      <Square className="w-3.5 h-3.5 fill-current" />
+                      <span>עצור והשמע מיד את ההקלטה 🔊</span>
+                    </button>
+                  </div>
+                )}
+
+                {/* PLAYBACK STATE AFTER TEST RECORDING */}
+                {testAudioUrl && !isTestRecording && (
+                  <div className="p-2.5 rounded-xl bg-slate-950/95 border border-indigo-500/50 space-y-2 shadow-xl">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5 text-xs font-bold text-indigo-300">
+                        <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+                        <span>תוצאת הקלטת הניסיון (כך יישמע המיקרופון):</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={discardTestAudio}
+                        className="text-slate-500 hover:text-slate-300 p-1 rounded hover:bg-slate-800"
+                        title="סגור נגן"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+
+                    {/* Compact Audio Player Bar */}
+                    <div className="flex items-center gap-2 bg-slate-900/90 p-2 rounded-lg border border-slate-800">
+                      <button
+                        type="button"
+                        onClick={togglePlayTestAudio}
+                        className="w-8 h-8 rounded-full bg-indigo-600 hover:bg-indigo-500 text-white flex items-center justify-center shrink-0 shadow transition-all active:scale-90"
+                      >
+                        {isPlayingTestAudio ? <Pause className="w-3.5 h-3.5 fill-current" /> : <Play className="w-3.5 h-3.5 fill-current ml-0.5" />}
+                      </button>
+                      <div className="flex-1 flex flex-col justify-center gap-1">
+                        <input
+                          type="range"
+                          min="0"
+                          max={testAudioDuration || 1}
+                          step="0.05"
+                          value={testAudioProgress}
+                          onChange={(e) => {
+                            const val = parseFloat(e.target.value);
+                            setTestAudioProgress(val);
+                            if (testAudioPlayerRef.current) {
+                              testAudioPlayerRef.current.currentTime = val;
+                            }
+                          }}
+                          className="w-full accent-indigo-400 h-1 bg-slate-800 rounded cursor-pointer"
+                        />
+                        <div className="flex justify-between text-[10px] font-mono text-slate-400">
+                          <span>00:{Math.floor(testAudioProgress).toString().padStart(2, '0')}</span>
+                          <span>00:{Math.floor(testAudioDuration).toString().padStart(2, '0')}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between text-[10px]">
+                      <span className="text-emerald-400 flex items-center gap-1 font-medium">
+                        <Check className="w-3 h-3" />
+                        <span>איכות אולפן מלאה (DSP + Gain)</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={startMicTest}
+                        className="text-indigo-300 hover:text-white flex items-center gap-1 bg-indigo-950/80 hover:bg-indigo-900 px-2 py-1 rounded border border-indigo-800/80 transition-all font-bold"
+                      >
+                        <RotateCcw className="w-3 h-3" />
+                        <span>הקלט שוב</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Sidetone Live Volume Slider (if active) */}
+                {isMonitoringMic && !isTestRecording && (
                   <div className="p-2 rounded-xl bg-slate-950/90 border border-emerald-500/30 space-y-1.5">
                     <div className="flex items-center justify-between text-[10px]">
-                      <span className="text-emerald-400 font-medium">🔊 עוצמת האזנה באוזניות:</span>
+                      <span className="text-emerald-400 font-medium">🔊 עוצמת האזנה רציפה באוזניות:</span>
                       <span className="font-mono text-emerald-300 font-bold">{Math.round(micMonitorVolume * 100)}%</span>
                     </div>
                     <input
