@@ -56,6 +56,7 @@ import {
   RotateCcw,
   StopCircle,
   ShieldAlert,
+  Pencil,
 } from 'lucide-react';
 import { 
   getMediaDevices, 
@@ -487,6 +488,37 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
   const [recordedBackupMicBlob, setRecordedBackupMicBlob] = useState<Blob | null>(null);
   const backupRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedBackupMicChunksRef = useRef<Blob[]>([]);
+
+  // Device Custom Nicknames (allows renaming USB Audio CODEC to "מיקרופון ראשי" or "מיקרופון דש")
+  const [deviceNicknames, setDeviceNicknames] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('gaming_studio_device_nicknames');
+      if (saved) setDeviceNicknames(JSON.parse(saved));
+    } catch {}
+  }, []);
+
+  const handleRenameDevice = (deviceId: string, currentLabel: string) => {
+    if (!deviceId) return;
+    const currentName = deviceNicknames[deviceId] || currentLabel;
+    const newName = prompt('הזן כינוי מותאם אישית למיקרופון זה (למשל: "מיקרופון ראשי", "מיקרופון דש"):', currentName);
+    if (newName !== null) {
+      const trimmed = newName.trim();
+      setDeviceNicknames(prev => {
+        const updated = { ...prev };
+        if (trimmed) {
+          updated[deviceId] = trimmed;
+        } else {
+          delete updated[deviceId];
+        }
+        try {
+          localStorage.setItem('gaming_studio_device_nicknames', JSON.stringify(updated));
+        } catch {}
+        return updated;
+      });
+    }
+  };
 
   // Broadcast Studio Vocal DSP & Noise Filtering States
   const [studioVocalEnhance, setStudioVocalEnhance] = useState<boolean>(true);
@@ -3801,7 +3833,7 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
                 </div>
               </div>
 
-              {/* Mic Device Selector with Quick Refresh */}
+              {/* Mic Device Selector with Quick Refresh & Rename */}
               <div className="space-y-1">
                 <div className="flex items-center gap-1.5">
                   <select
@@ -3813,10 +3845,9 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
                     className="flex-1 px-2.5 py-1.5 rounded-lg bg-slate-950 border border-slate-700/80 text-[11px] text-white focus:outline-none focus:border-indigo-500 truncate"
                   >
                     {audioDevices.map(a => {
-                      const l = a.label.toLowerCase();
-                      const isUsbCodec = l.includes('usb audio codec') || l.includes('burr-brown');
-                      const display = isUsbCodec 
-                        ? `🎙️ ${a.label} (מיקרופון דש / תחנת עגינה USB)` 
+                      const customName = deviceNicknames[a.deviceId];
+                      const display = customName 
+                        ? `🎙️ ${customName} (${a.label})` 
                         : `🎙️ ${a.label || 'מיקרופון'}`;
                       return (
                         <option key={a.deviceId} value={a.deviceId}>
@@ -3827,6 +3858,17 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
                   </select>
                   <button
                     type="button"
+                    onClick={() => {
+                      const currentDev = audioDevices.find(a => a.deviceId === selectedAudioId);
+                      handleRenameDevice(selectedAudioId, currentDev?.label || 'מיקרופון');
+                    }}
+                    className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-indigo-300 hover:text-white transition-all shrink-0"
+                    title="שנה שם / כינוי מותאם אישית למיקרופון זה (למשל: 'מיקרופון ראשי')"
+                  >
+                    <Pencil className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
                     onClick={refreshDevices}
                     className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 hover:text-white transition-all shrink-0"
                     title="סרוק וזהה מחדש מיקרופון שחובר זה עתה"
@@ -3834,11 +3876,6 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
                     <RefreshCw className="w-3.5 h-3.5" />
                   </button>
                 </div>
-                {audioDevices.some(a => a.label.toLowerCase().includes('usb audio codec')) && (
-                  <p className="text-[9px] text-indigo-300/80">
-                    💡 זוהה התקן USB Audio CODEC מתחנת העגינה (מיקרופון דש / כרטיס שמע).
-                  </p>
-                )}
               </div>
 
               {/* Studio Broadcast Vocal DSP & AI Noise Filter Toggles */}
@@ -4122,15 +4159,33 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
                       <label className="text-[10px] text-slate-400 font-bold block">
                         בחר התקן מיקרופון גיבוי (MacBook Mic / AirPods / אוזניות USB):
                       </label>
-                      <button
-                        type="button"
-                        onClick={refreshDevices}
-                        className="text-[10px] text-amber-400 hover:text-amber-300 flex items-center gap-1 font-semibold"
-                        title="סרוק מחדש התקני שמע"
-                      >
-                        <RefreshCw className="w-3 h-3" />
-                        <span>רענן</span>
-                      </button>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const currentDev = audioDevices.find(a => a.deviceId === selectedBackupAudioId);
+                            if (selectedBackupAudioId) {
+                              handleRenameDevice(selectedBackupAudioId, currentDev?.label || 'מיקרופון גיבוי');
+                            } else {
+                              alert('בחר תחילה מיקרופון ספציפי כדי לשנות את שמו');
+                            }
+                          }}
+                          className="text-[10px] text-amber-400 hover:text-amber-300 flex items-center gap-0.5 font-semibold"
+                          title="שנה שם מותאם אישית למיקרופון גיבוי זה"
+                        >
+                          <Pencil className="w-3 h-3" />
+                          <span>שנה שם</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={refreshDevices}
+                          className="text-[10px] text-amber-400 hover:text-amber-300 flex items-center gap-0.5 font-semibold"
+                          title="סרוק מחדש התקני שמע"
+                        >
+                          <RefreshCw className="w-3 h-3" />
+                          <span>רענן</span>
+                        </button>
+                      </div>
                     </div>
                     <select
                       value={selectedBackupAudioId}
@@ -4143,16 +4198,20 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
                       <option value="">-- אוטומטי (מיקרופון משני זמין) --</option>
                       {audioDevices.map(a => {
                         const isPrimary = a.deviceId === selectedAudioId;
-                        const l = a.label.toLowerCase();
-                        const isUsbCodec = l.includes('usb audio codec') || l.includes('burr-brown');
-                        const note = isUsbCodec ? ' (מיקרופון דש / תחנת עגינה)' : '';
+                        const customName = deviceNicknames[a.deviceId];
+                        const display = customName 
+                          ? `${customName} (${a.label})` 
+                          : (a.label || 'מיקרופון');
                         return (
                           <option key={a.deviceId} value={a.deviceId}>
-                            {isPrimary ? `⚠️ ${a.label || 'מיקרופון'}${note} (בשימוש כראשי)` : `🎙️ ${a.label || 'מיקרופון'}${note}`}
+                            {isPrimary ? `⚠️ ${display} (בשימוש כראשי)` : `🎙️ ${display}`}
                           </option>
                         );
                       })}
                     </select>
+                    <p className="text-[9px] text-amber-300/80 leading-relaxed pt-0.5">
+                      💡 מיקרופון דש ב-USB-C לא מופיע? שקעי USB-C בחלק מתחנות העגינה מיועדים להטענה בלבד (PD). חבר אותו ישירות לשקע ה-USB-C של המקבוק.
+                    </p>
                   </div>
 
                   {/* Volume Slider + Real-Time Multi-color VU for Backup Mic */}
