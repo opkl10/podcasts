@@ -203,6 +203,7 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
   const facecamVideoRef = useRef<HTMLVideoElement | null>(null);
   const remoteImageRef = useRef<HTMLImageElement | null>(null);
   const gameplayVideoRef = useRef<HTMLVideoElement | null>(null);
+  const gameAudioMonitorRef = useRef<HTMLAudioElement | null>(null);
   const gamingCompositeStreamRef = useRef<MediaStream | null>(null);
 
   // Recording State Machine
@@ -560,32 +561,18 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
       setAudioDevices(audioInputs);
       setVideoDevices(videoInputs);
 
-      // Auto-select microphone if not selected
-      const activeMicId = selectedAudioId || (audioInputs.length > 0 ? audioInputs[0].deviceId : '');
-      if (audioInputs.length > 0 && !selectedAudioId) {
+      // Auto-select microphone: Must be a true voice mic, NEVER a capture card / console audio device!
+      const voiceMics = audioInputs.filter(a => !a.isGameAudio);
+      const activeMicId = selectedAudioId || (voiceMics.length > 0 ? voiceMics[0].deviceId : (audioInputs.length > 0 ? audioInputs[0].deviceId : ''));
+      if (audioInputs.length > 0 && !selectedAudioId && activeMicId) {
         setSelectedAudioId(activeMicId);
       }
 
       // Auto-detect Elgato / Console audio input device (PlayStation / Xbox via HDMI)
-      // Must NOT be the same as the microphone!
-      const elgatoAudioDev = audioInputs.find(a => {
-        if (a.deviceId === activeMicId) return false;
-        const l = a.label.toLowerCase();
-        return (
-          l.includes('elgato') ||
-          l.includes('cam link') ||
-          l.includes('camlink') ||
-          l.includes('hd60') ||
-          l.includes('4k') ||
-          l.includes('capture') ||
-          l.includes('hdmi') ||
-          l.includes('digital audio') ||
-          l.includes('game')
-        );
-      });
-
-      if (elgatoAudioDev && !selectedGameAudioId) {
+      const elgatoAudioDev = audioInputs.find(a => a.isGameAudio && a.deviceId !== activeMicId);
+      if (elgatoAudioDev && (!selectedGameAudioId || !audioInputs.some(a => a.deviceId === selectedGameAudioId))) {
         setSelectedGameAudioId(elgatoAudioDev.deviceId);
+        console.log(`[Audio Init] 🎮 זוהה שמע קונסולה אוטומטית: "${elgatoAudioDev.label}"`);
       }
 
       // Detect physical webcams / built-in FaceTime HD camera vs iPhone Continuity
@@ -646,25 +633,10 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
     let streamInstance: MediaStream | null = null;
 
     async function initGameAudio() {
-      // Auto-detect matching capture card audio device if not explicitly picked
+      // Auto-detect matching capture card audio device if not explicitly picked or if stale
       let targetId = selectedGameAudioId;
-      if (!targetId && selectedCaptureCardId) {
-        const cardDev = videoDevices.find(v => v.deviceId === selectedCaptureCardId);
-        const cardLabelLower = (cardDev?.label || '').toLowerCase();
-        const matching = audioDevices.find(a => {
-          if (a.deviceId === selectedAudioId) return false;
-          const al = (a.label || '').toLowerCase();
-          return (
-            (cardLabelLower.includes('elgato') && al.includes('elgato')) ||
-            (cardLabelLower.includes('cam link') && (al.includes('cam link') || al.includes('elgato'))) ||
-            (cardLabelLower.includes('hd60') && (al.includes('hd60') || al.includes('elgato'))) ||
-            al.includes('hdmi') ||
-            al.includes('digital audio') ||
-            al.includes('usb audio') ||
-            al.includes('capture') ||
-            al.includes('game')
-          );
-        });
+      if (!targetId || !audioDevices.some(a => a.deviceId === targetId)) {
+        const matching = audioDevices.find(a => a.isGameAudio && a.deviceId !== selectedAudioId);
         if (matching) {
           targetId = matching.deviceId;
           setSelectedGameAudioId(targetId);
@@ -674,9 +646,10 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
       // 1. If explicit or detected game audio device selected (Elgato HDMI / USB Audio / Line-In)
       if (targetId) {
         try {
+          // Attempt 1: Exact deviceId with high-fidelity 48kHz stereo
           streamInstance = await navigator.mediaDevices.getUserMedia({
             audio: {
-              deviceId: { ideal: targetId },
+              deviceId: { exact: targetId },
               sampleRate: { ideal: 48000 },
               channelCount: { ideal: 2 },
               echoCancellation: false,
@@ -685,32 +658,41 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
             },
             video: false
           });
+        } catch (e1) {
+          try {
+            // Attempt 2: Ideal deviceId with standard constraints
+            streamInstance = await navigator.mediaDevices.getUserMedia({
+              audio: {
+                deviceId: { ideal: targetId },
+                sampleRate: { ideal: 48000 },
+                channelCount: { ideal: 2 },
+                echoCancellation: false,
+                noiseSuppression: false,
+                autoGainControl: false,
+              },
+              video: false
+            });
+          } catch (e2) {
+            try {
+              // Attempt 3: Basic audio with ideal deviceId
+              streamInstance = await navigator.mediaDevices.getUserMedia({
+                audio: { deviceId: { ideal: targetId } },
+                video: false
+              });
+            } catch (e3) {
+              console.warn('[Game Audio] Could not open dedicated game audio:', e3);
+            }
+          }
+        }
 
+        if (streamInstance) {
           if (!active) {
             streamInstance.getTracks().forEach(t => t.stop());
             return;
           }
-
           setGameAudioStream(streamInstance);
           gamingMixerRef.current?.resume();
           return;
-        } catch (err) {
-          console.warn('Failed to open dedicated game audio device with ideal constraints, trying basic audio:', err);
-          try {
-            streamInstance = await navigator.mediaDevices.getUserMedia({
-              audio: { deviceId: { ideal: targetId } },
-              video: false
-            });
-            if (!active) {
-              streamInstance.getTracks().forEach(t => t.stop());
-              return;
-            }
-            setGameAudioStream(streamInstance);
-            gamingMixerRef.current?.resume();
-            return;
-          } catch (e2) {
-            console.warn('Could not open dedicated game audio:', e2);
-          }
         }
       }
 
@@ -1709,10 +1691,32 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
     }
   };
 
+  // Real-time Console Sound Monitor (Direct HTML5 audio pipeline for zero-latency headphone/speaker output)
+  useEffect(() => {
+    const audioEl = gameAudioMonitorRef.current;
+    if (!audioEl) return;
+
+    const activeStream = gameAudioStream || (captureCardStream?.getAudioTracks().length ? captureCardStream : null);
+
+    if (activeStream && activeStream.getAudioTracks().length > 0 && monitorGameAudio) {
+      if (audioEl.srcObject !== activeStream) {
+        audioEl.srcObject = activeStream;
+      }
+      audioEl.volume = Math.min(1, Math.max(0, gameAudioVolume));
+      audioEl.muted = !monitorGameAudio;
+      audioEl.play().catch(() => {});
+    } else {
+      audioEl.srcObject = null;
+    }
+  }, [gameAudioStream, captureCardStream, monitorGameAudio, gameAudioVolume]);
+
   // Global user interaction unblocker for AudioContext (ensures audio plays without browser blocking)
   useEffect(() => {
     const handleInteraction = () => {
       gamingMixerRef.current?.resume();
+      if (gameAudioMonitorRef.current && gameAudioMonitorRef.current.paused) {
+        gameAudioMonitorRef.current.play().catch(() => {});
+      }
     };
     window.addEventListener('click', handleInteraction, { passive: true });
     window.addEventListener('keydown', handleInteraction, { passive: true });
@@ -2465,6 +2469,13 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
         width={3840}
         height={2160}
         style={{ position: 'fixed', top: -9999, left: -9999, width: 3840, height: 2160, opacity: 0, pointerEvents: 'none' }}
+      />
+      {/* Dedicated Console Audio Monitor Element */}
+      <audio
+        ref={gameAudioMonitorRef}
+        autoPlay
+        playsInline
+        style={{ display: 'none' }}
       />
       {/* Off-screen Image decoder for live remote iPhone camera frames */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -4397,33 +4408,63 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
               </div>
 
               {/* Game Audio Device Selector (Captures HDMI audio from Elgato) */}
-              <div className="space-y-1">
-                <label className="text-[10px] text-slate-400 font-bold block">
-                  מקור סאונד הקונסולה (Elgato HDMI / שמע מחשב):
-                </label>
-                <select
-                  value={selectedGameAudioId}
-                  onChange={(e) => {
-                    setSelectedGameAudioId(e.target.value);
-                    gamingMixerRef.current?.resume();
-                  }}
-                  className="w-full px-2.5 py-1.5 rounded-lg bg-slate-950 border border-slate-700/80 text-[11px] text-white focus:outline-none focus:border-purple-500"
-                >
-                  <option value="">-- אוטומטי (זוהה מלוכד מסך / אלגטו) --</option>
-                  {audioDevices.map(a => {
-                    const isElgatoAudio = a.label.toLowerCase().includes('elgato') ||
-                      a.label.toLowerCase().includes('cam link') ||
-                      a.label.toLowerCase().includes('camlink') ||
-                      a.label.toLowerCase().includes('capture') ||
-                      a.label.toLowerCase().includes('hdmi') ||
-                      a.label.toLowerCase().includes('game');
-                    return (
-                      <option key={a.deviceId} value={a.deviceId}>
-                        {isElgatoAudio ? `🎮 ${a.label} (HDMI אלגטו)` : `🔊 ${a.label}`}
-                      </option>
-                    );
-                  })}
-                </select>
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-[10px] text-slate-400 font-bold block">
+                    מקור סאונד הקונסולה (Elgato HDMI / שמע מחשב):
+                  </label>
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                    gameAudioStream && gameAudioStream.getAudioTracks().length > 0
+                      ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
+                      : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                  }`}>
+                    {gameAudioStream && gameAudioStream.getAudioTracks().length > 0 ? '🟢 שמע קונסולה מחובר' : '⚠️ שמע קונסולה ממתין'}
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-1.5">
+                  <select
+                    value={selectedGameAudioId}
+                    onChange={(e) => {
+                      setSelectedGameAudioId(e.target.value);
+                      gamingMixerRef.current?.resume();
+                    }}
+                    className="flex-1 px-2.5 py-1.5 rounded-lg bg-slate-950 border border-slate-700/80 text-[11px] text-white focus:outline-none focus:border-purple-500"
+                  >
+                    <option value="">-- אוטומטי (זוהה מלוכד מסך / אלגטו) --</option>
+                    {audioDevices.map(a => {
+                      const isElgatoAudio = a.isGameAudio ||
+                        a.label.toLowerCase().includes('elgato') ||
+                        a.label.toLowerCase().includes('cam link') ||
+                        a.label.toLowerCase().includes('camlink') ||
+                        a.label.toLowerCase().includes('capture') ||
+                        a.label.toLowerCase().includes('hdmi') ||
+                        a.label.toLowerCase().includes('game');
+                      return (
+                        <option key={a.deviceId} value={a.deviceId}>
+                          {isElgatoAudio ? `🎮 ${a.label} (HDMI אלגטו)` : `🔊 ${a.label}`}
+                        </option>
+                      );
+                    })}
+                  </select>
+
+                  {audioDevices.some(a => a.isGameAudio || a.label.toLowerCase().includes('elgato')) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const elgatoDev = audioDevices.find(a => a.isGameAudio || a.label.toLowerCase().includes('elgato'));
+                        if (elgatoDev) {
+                          setSelectedGameAudioId(elgatoDev.deviceId);
+                          gamingMixerRef.current?.resume();
+                        }
+                      }}
+                      className="px-2 py-1.5 rounded-lg bg-purple-950/70 hover:bg-purple-900 text-purple-300 hover:text-white text-[10px] font-bold border border-purple-700/50 transition-all shrink-0"
+                      title="חיבור מיידי לערוץ שמע Elgato שנמצא"
+                    >
+                      🎮 חבר Elgato
+                    </button>
+                  )}
+                </div>
               </div>
 
               {/* Game Audio Slider + Real-Time VU */}

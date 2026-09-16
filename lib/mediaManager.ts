@@ -41,9 +41,23 @@ export async function getMediaDevices(): Promise<{
 
     devices.forEach(device => {
       if (device.kind === 'audioinput') {
+        const labelLower = (device.label || '').toLowerCase();
+        const isGameAudio = 
+          labelLower.includes('elgato') || 
+          labelLower.includes('cam link') || 
+          labelLower.includes('camlink') || 
+          labelLower.includes('hd60') || 
+          labelLower.includes('4k') || 
+          labelLower.includes('capture') || 
+          labelLower.includes('hdmi') || 
+          labelLower.includes('digital audio') || 
+          labelLower.includes('game') ||
+          (labelLower.includes('usb audio codec') && !labelLower.includes('mic'));
+
         audioInputs.push({
           deviceId: device.deviceId,
-          label: device.label || `מיקרופון (${audioInputs.length + 1})`
+          label: device.label || (isGameAudio ? `שמע קונסולה / אלגטו (${audioInputs.length + 1})` : `מיקרופון (${audioInputs.length + 1})`),
+          isGameAudio
         });
       } else if (device.kind === 'videoinput') {
         const labelLower = (device.label || '').toLowerCase();

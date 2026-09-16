@@ -151,6 +151,7 @@ export interface Episode {
 export interface AudioInputDevice {
   deviceId: string;
   label: string;
+  isGameAudio?: boolean;
 }
 
 export interface VideoInputDevice {
