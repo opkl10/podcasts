@@ -493,6 +493,9 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
   const [selectedGameAudioId, setSelectedGameAudioId] = useState<string>('');
   const [gameAudioStream, setGameAudioStream] = useState<MediaStream | null>(null);
   const [monitorGameAudio, setMonitorGameAudio] = useState<boolean>(true);
+  // Streamer Microphone Live Monitoring (Sidetone / Pre-recording check)
+  const [isMonitoringMic, setIsMonitoringMic] = useState<boolean>(false);
+  const [micMonitorVolume, setMicMonitorVolume] = useState<number>(1.0);
   const [splitChannels, setSplitChannels] = useState<boolean>(false);
   const [separateStems, setSeparateStems] = useState<boolean>(true);
   const [recordedMicBlob, setRecordedMicBlob] = useState<Blob | null>(null);
@@ -1583,6 +1586,8 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
     gamingMixerRef.current.setup(activeMicStream, activeGameStream, {
       splitChannels,
       monitorGame: monitorGameAudio,
+      monitorMic: isMonitoringMic,
+      micMonitorVolume,
       studioVocalDsp: studioVocalEnhance,
       backupMicStream: isBackupMicEnabled ? backupMicStream : null,
       backupMicInMix: isBackupMicEnabled && (backupMicMode === 'active' || isHotSwapped) && !isBackupAudioMuted,
@@ -1639,6 +1644,14 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
       gamingMixerRef.current.setMonitoringGameAudio(monitorGameAudio);
     }
   }, [monitorGameAudio]);
+
+  useEffect(() => {
+    if (gamingMixerRef.current) {
+      gamingMixerRef.current.setMonitoringMic(isMonitoringMic);
+      gamingMixerRef.current.setMicMonitorVolume(micMonitorVolume);
+      if (isMonitoringMic) gamingMixerRef.current.resume();
+    }
+  }, [isMonitoringMic, micMonitorVolume]);
 
   useEffect(() => {
     if (gamingMixerRef.current) {
@@ -2202,6 +2215,8 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
       const audioPipes = gamingMixerRef.current?.setup(activeMicStream, activeGameStream, {
         splitChannels,
         monitorGame: monitorGameAudio,
+        monitorMic: isMonitoringMic,
+        micMonitorVolume,
         studioVocalDsp: studioVocalEnhance,
         backupMicStream: isBackupMicEnabled ? backupMicStream : null,
         backupMicInMix: isBackupMicEnabled && (backupMicMode === 'active' || isHotSwapped) && !isBackupAudioMuted,
@@ -4398,6 +4413,50 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
                     style={{ width: `${Math.min(100, micAudioLevel)}%` }}
                   />
                 </div>
+              </div>
+
+              {/* Pre-recording Mic Quality & Volume Live Headphone Monitoring (Sidetone) */}
+              <div className="pt-2 border-t border-slate-800/80 space-y-1.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsMonitoringMic(prev => !prev);
+                    gamingMixerRef.current?.resume();
+                  }}
+                  className={`w-full px-2.5 py-1.5 rounded-xl text-xs font-bold border flex items-center justify-center gap-1.5 transition-all ${
+                    isMonitoringMic
+                      ? 'bg-emerald-600/30 border-emerald-500 text-emerald-200 shadow-md ring-1 ring-emerald-500/50'
+                      : 'bg-slate-950/80 border-slate-700/70 text-slate-300 hover:text-white hover:border-slate-600'
+                  }`}
+                  title="האזנה עצמית חיה למיקרופון דרך האוזניות לבדיקת איכות, צלילות וקומפרסור לפני הקלטה"
+                >
+                  <Headphones className="w-3.5 h-3.5" />
+                  <span>{isMonitoringMic ? '🟢 האזנה חיה פעילה (בדיקת סאונד באוזניות)' : '🎧 האזנה חיה לבדיקת מיקרופון באוזניות'}</span>
+                </button>
+
+                {isMonitoringMic && (
+                  <div className="p-2 rounded-xl bg-slate-950/90 border border-emerald-500/30 space-y-1.5">
+                    <div className="flex items-center justify-between text-[10px]">
+                      <span className="text-emerald-400 font-medium">🔊 עוצמת האזנה באוזניות:</span>
+                      <span className="font-mono text-emerald-300 font-bold">{Math.round(micMonitorVolume * 100)}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0"
+                      max="1.5"
+                      step="0.05"
+                      value={micMonitorVolume}
+                      onChange={(e) => {
+                        setMicMonitorVolume(parseFloat(e.target.value));
+                        gamingMixerRef.current?.resume();
+                      }}
+                      className="w-full accent-emerald-500 cursor-pointer h-1.5 bg-slate-800 rounded-lg"
+                    />
+                    <div className="text-[10px] text-emerald-400/80 leading-tight">
+                      💡 מומלץ להאזין עם אוזניות למניעת פידבק. אתה שומע את הסאונד בדיוק כפי שיוקלט (כולל DSP, קומפרסור וסינון רעשים).
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 

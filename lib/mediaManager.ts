@@ -520,14 +520,16 @@ export class GamingAudioMixer {
   private isBackupMicInMix: boolean = false;
 
   // Broadcast Studio Vocal DSP Chain (Professional Radio / Streaming Voice)
+  private isStudioVocalDspEnabled: boolean = true;
   private micHighPass: BiquadFilterNode | null = null;
   private micDeMud: BiquadFilterNode | null = null;
   private micPresence: BiquadFilterNode | null = null;
   private micAir: BiquadFilterNode | null = null;
   private micCompressor: DynamicsCompressorNode | null = null;
-  private isStudioVocalDspEnabled: boolean = true;
-
   private isMonitoringGame: boolean = true;
+  private isMonitoringMic: boolean = false;
+  private micMonitorVolume: number = 1.0;
+  private micMonitorGainNode: GainNode | null = null;
   private isChannelSplit: boolean = false;
   private onLevelsChange?: (micLevel: number, gameLevel: number, backupMicLevel?: number) => void;
 
@@ -541,6 +543,8 @@ export class GamingAudioMixer {
     options?: { 
       splitChannels?: boolean; 
       monitorGame?: boolean; 
+      monitorMic?: boolean;
+      micMonitorVolume?: number;
       studioVocalDsp?: boolean;
       backupMicStream?: MediaStream | null;
       backupMicInMix?: boolean;
@@ -557,6 +561,8 @@ export class GamingAudioMixer {
     if (options) {
       if (options.splitChannels !== undefined) this.isChannelSplit = options.splitChannels;
       if (options.monitorGame !== undefined) this.isMonitoringGame = options.monitorGame;
+      if (options.monitorMic !== undefined) this.isMonitoringMic = options.monitorMic;
+      if (options.micMonitorVolume !== undefined) this.micMonitorVolume = options.micMonitorVolume;
       if (options.studioVocalDsp !== undefined) this.isStudioVocalDspEnabled = options.studioVocalDsp;
       if (options.backupMicInMix !== undefined) this.isBackupMicInMix = options.backupMicInMix;
     }
@@ -628,6 +634,12 @@ export class GamingAudioMixer {
         
         // Connect to isolated mic track destination
         this.micGainNode.connect(this.micDestinationNode);
+
+        // Live Audio Output for Streamer Mic Sidetone / Headphone Monitoring (bypasses to output)
+        this.micMonitorGainNode = this.audioCtx.createGain();
+        this.micMonitorGainNode.gain.setValueAtTime(this.isMonitoringMic ? this.micMonitorVolume : 0.0, this.audioCtx.currentTime);
+        this.micGainNode.connect(this.micMonitorGainNode);
+        this.micMonitorGainNode.connect(this.audioCtx.destination);
       } catch (err) {
         console.warn('Could not connect mic track to mixer:', err);
       }
@@ -764,6 +776,20 @@ export class GamingAudioMixer {
     }
   }
 
+  public setMonitoringMic(enabled: boolean) {
+    this.isMonitoringMic = enabled;
+    if (this.micMonitorGainNode && this.audioCtx) {
+      this.micMonitorGainNode.gain.setValueAtTime(enabled ? this.micMonitorVolume : 0.0, this.audioCtx.currentTime);
+    }
+  }
+
+  public setMicMonitorVolume(volume: number) {
+    this.micMonitorVolume = Math.max(0, volume);
+    if (this.micMonitorGainNode && this.audioCtx && this.isMonitoringMic) {
+      this.micMonitorGainNode.gain.setValueAtTime(this.micMonitorVolume, this.audioCtx.currentTime);
+    }
+  }
+
   public setStudioVocalEnhance(enabled: boolean) {
     this.isStudioVocalDspEnabled = enabled;
     if (!this.audioCtx) return;
@@ -892,6 +918,10 @@ export class GamingAudioMixer {
     if (this.monitorGainNode) {
       try { this.monitorGainNode.disconnect(); } catch {}
       this.monitorGainNode = null;
+    }
+    if (this.micMonitorGainNode) {
+      try { this.micMonitorGainNode.disconnect(); } catch {}
+      this.micMonitorGainNode = null;
     }
     if (this.mergerNode) {
       try { this.mergerNode.disconnect(); } catch {}
