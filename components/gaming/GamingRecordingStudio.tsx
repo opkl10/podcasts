@@ -961,6 +961,13 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
         facecamStreamRef.current = null;
       }
 
+      const targetDev = videoDevices.find(v => v.deviceId === selectedVideoId);
+      const isTargetIPhone = Boolean(
+        targetDev?.isIPhone || 
+        targetDev?.isContinuity || 
+        (targetDev?.label && targetDev.label.toLowerCase().includes('iphone'))
+      );
+
       let stream: MediaStream | null = null;
       let errorReason: string | null = null;
 
@@ -974,8 +981,13 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
       } catch (err1: any) {
         console.warn('[Facecam] Stage 1 (Strict/HD) failed, trying Stage 2 (720p @ 30fps):', err1?.message || err1);
         errorReason = err1?.name === 'NotReadableError' 
-          ? 'המצלמה תפוסה על ידי תוכנה אחרת (כמו FaceTime / Zoom / OBS) או דורשת אישור' 
+          ? 'המצלמה תפוסה או מתחברת' 
           : err1?.message || 'שגיאה באיתחול';
+
+        // For iPhone Continuity: give AVFoundation 1000ms to wake up the bridge before next attempt
+        if (isTargetIPhone) {
+          await new Promise(r => setTimeout(r, 1000));
+        }
 
         // Stage 2: Try 720p fallback with ideal deviceId
         try {
@@ -991,6 +1003,10 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
         } catch (err2: any) {
           console.warn('[Facecam] Stage 2 (720p) failed, trying Stage 3 (Driver Native):', err2?.message || err2);
           
+          if (isTargetIPhone) {
+            await new Promise(r => setTimeout(r, 1000));
+          }
+
           // Stage 3: Try driver default constraints with deviceId
           try {
             stream = await navigator.mediaDevices.getUserMedia({
@@ -998,31 +1014,36 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
               video: { deviceId: { ideal: selectedVideoId } }
             });
           } catch (err3: any) {
-            console.warn('[Facecam] Stage 3 (Device Native) failed. Checking alternative camera fallback:', err3?.message || err3);
+            console.warn('[Facecam] Stage 3 (Device Native) failed:', err3?.message || err3);
             
-            // Stage 4: If selected camera (e.g. sleeping iPhone) failed, try fallback to physical Mac camera
-            try {
-              const normalCams = videoDevices.filter(v => !v.isCaptureCard);
-              const altCam = normalCams.find(v => v.deviceId !== selectedVideoId && !v.isIPhone);
-              if (altCam) {
-                stream = await navigator.mediaDevices.getUserMedia({
-                  audio: false,
-                  video: { deviceId: { ideal: altCam.deviceId } }
-                });
-                if (stream) {
-                  setSelectedVideoId(altCam.deviceId);
-                  try { localStorage.setItem('gaming_studio_preferred_camera', altCam.deviceId); } catch {}
-                  console.log(`[Facecam] 🔄 Switched automatically to working camera: ${altCam.label}`);
+            // If the user explicitly chose an iPhone, DO NOT hijack and switch to Mac camera!
+            if (isTargetIPhone) {
+              console.warn('[Facecam] iPhone Continuity camera did not respond yet. Keeping iPhone selected for user retry.');
+              errorReason = 'לא התקבל אות וידאו מ-iPhone. ודא שהאייפון לא נעול, מחובר בכבל USB או נמצא בקרבת מקום, ולחץ "שחרר נעילה / אתחל".';
+            } else {
+              // Stage 4: For generic webcam failures, try alternative physical camera fallback
+              try {
+                const normalCams = videoDevices.filter(v => !v.isCaptureCard);
+                const altCam = normalCams.find(v => v.deviceId !== selectedVideoId && !v.isIPhone);
+                if (altCam) {
+                  stream = await navigator.mediaDevices.getUserMedia({
+                    audio: false,
+                    video: { deviceId: { ideal: altCam.deviceId } }
+                  });
+                  if (stream) {
+                    setSelectedVideoId(altCam.deviceId);
+                    try { localStorage.setItem('gaming_studio_preferred_camera', altCam.deviceId); } catch {}
+                    console.log(`[Facecam] 🔄 Switched automatically to working camera: ${altCam.label}`);
+                  }
+                } else {
+                  stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: true });
                 }
-              } else {
-                // Final attempt: any working video device
-                stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: true });
+              } catch (err4: any) {
+                console.error('[Facecam] ❌ All fallback acquisition attempts failed:', err4);
+                errorReason = err4?.name === 'NotReadableError'
+                  ? 'המצלמה תפוסה על ידי תוכנה אחרת (כמו FaceTime או Zoom) או דורשת אישור'
+                  : 'לא ניתן לפתוח את המצלמה שנבחרה';
               }
-            } catch (err4: any) {
-              console.error('[Facecam] ❌ All fallback acquisition attempts failed:', err4);
-              errorReason = err4?.name === 'NotReadableError'
-                ? 'המצלמה תפוסה על ידי תוכנה אחרת (כמו FaceTime או Zoom) או דורשת אישור'
-                : 'לא ניתן לפתוח את המצלמה שנבחרה';
             }
           }
         }
@@ -3728,7 +3749,9 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
                         type="button"
                         onClick={() => {
                           setIsUsingRemoteCam(false);
+                          setFacecamError(null);
                           setSelectedVideoId(iphoneDev.deviceId);
+                          try { localStorage.setItem('gaming_studio_preferred_camera', iphoneDev.deviceId); } catch {}
                         }}
                         className="w-full py-2 px-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-black transition-all shadow-md flex items-center justify-center gap-2"
                       >
