@@ -10,23 +10,30 @@ export async function getMediaDevices(): Promise<{
   }
 
   try {
-    let stream: MediaStream | null = null;
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
-    } catch {
+    // Check if device labels are already available (permissions already granted)
+    let devices = await navigator.mediaDevices.enumerateDevices();
+    const hasLabels = devices.some(d => (d.kind === 'videoinput' || d.kind === 'audioinput') && d.label && d.label.trim().length > 0);
+
+    if (!hasLabels) {
+      let stream: MediaStream | null = null;
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
       } catch {
         try {
-          stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        } catch {}
+          stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        } catch {
+          try {
+            stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          } catch {}
+        }
       }
-    }
 
-    const devices = await navigator.mediaDevices.enumerateDevices();
+      devices = await navigator.mediaDevices.enumerateDevices();
 
-    if (stream) {
-      stream.getTracks().forEach(track => track.stop());
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+        await new Promise(r => setTimeout(r, 200));
+      }
     }
 
     const audioInputs: AudioInputDevice[] = [];
@@ -41,22 +48,16 @@ export async function getMediaDevices(): Promise<{
       } else if (device.kind === 'videoinput') {
         const labelLower = (device.label || '').toLowerCase();
         
-        // Comprehensive iPhone / Continuity Camera matching (Hebrew + English + 3rd-party companion apps)
+        // Accurate iPhone / Continuity matching (do NOT match 'apple' or general terms that include MacBook webcam)
         const isIPhone = 
           labelLower.includes('iphone') || 
           labelLower.includes('אייפון') || 
-          labelLower.includes('continuity') || 
-          labelLower.includes('המשכיות') || 
-          labelLower.includes('desk view') || 
-          labelLower.includes('center stage') || 
-          labelLower.includes('במה מרכזית') ||
+          labelLower.includes('continuity camera') || 
+          labelLower.includes('מצלמת המשכיות') || 
           labelLower.includes('camo') || 
           labelLower.includes('epoccam') || 
           labelLower.includes('iriun') || 
-          labelLower.includes('droidcam') || 
-          labelLower.includes('apple') || 
-          labelLower.includes('phone') || 
-          labelLower.includes('ios');
+          labelLower.includes('droidcam');
 
         const isContinuity = 
           labelLower.includes('continuity') || 
@@ -210,15 +211,15 @@ export function getVideoConstraints(resolution: VideoResolution = '1080p', devic
         width: { ideal: 3840, min: 1920 },
         height: { ideal: 2160, min: 1080 },
         aspectRatio: { ideal: 1.7777777778 },
-        frameRate: { ideal: 60 }
+        frameRate: { ideal: 60, min: 24 }
       };
     case '1080p':
       return {
         ...base,
-        width: { ideal: 1920 },
-        height: { ideal: 1080 },
+        width: { ideal: 1920, min: 1280 },
+        height: { ideal: 1080, min: 720 },
         aspectRatio: { ideal: 1.7777777778 },
-        frameRate: { ideal: 60 }
+        frameRate: { ideal: 30, max: 60, min: 24 }
       };
     case '720p':
     default:
@@ -227,7 +228,7 @@ export function getVideoConstraints(resolution: VideoResolution = '1080p', devic
         width: { ideal: 1280 },
         height: { ideal: 720 },
         aspectRatio: { ideal: 1.7777777778 },
-        frameRate: { ideal: 60 }
+        frameRate: { ideal: 30, min: 24 }
       };
   }
 }
