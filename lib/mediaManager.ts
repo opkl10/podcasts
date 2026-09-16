@@ -10,32 +10,23 @@ export async function getMediaDevices(): Promise<{
   }
 
   try {
-    // Fast path: Check if permissions have already been granted and labels are available
-    let devices = await navigator.mediaDevices.enumerateDevices();
-    const hasLabels = devices.some(d => (d.kind === 'videoinput' || d.kind === 'audioinput') && d.label && d.label.trim().length > 0);
-
-    // Only request a temporary stream to prompt permissions if labels are missing
-    if (!hasLabels) {
-      let stream: MediaStream | null = null;
+    let stream: MediaStream | null = null;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+    } catch {
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+        stream = await navigator.mediaDevices.getUserMedia({ video: true });
       } catch {
         try {
-          stream = await navigator.mediaDevices.getUserMedia({ video: true });
-        } catch {
-          try {
-            stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-          } catch {}
-        }
+          stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        } catch {}
       }
+    }
 
-      devices = await navigator.mediaDevices.enumerateDevices();
+    const devices = await navigator.mediaDevices.enumerateDevices();
 
-      if (stream) {
-        stream.getTracks().forEach(track => track.stop());
-        // Small pause to let macOS AVFoundation release the hardware session cleanly
-        await new Promise(r => setTimeout(r, 250));
-      }
+    if (stream) {
+      stream.getTracks().forEach(track => track.stop());
     }
 
     const audioInputs: AudioInputDevice[] = [];
@@ -219,15 +210,15 @@ export function getVideoConstraints(resolution: VideoResolution = '1080p', devic
         width: { ideal: 3840, min: 1920 },
         height: { ideal: 2160, min: 1080 },
         aspectRatio: { ideal: 1.7777777778 },
-        frameRate: { ideal: 60, min: 24 }
+        frameRate: { ideal: 60 }
       };
     case '1080p':
       return {
         ...base,
-        width: { ideal: 1920, min: 1280 },
-        height: { ideal: 1080, min: 720 },
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
         aspectRatio: { ideal: 1.7777777778 },
-        frameRate: { ideal: 60, min: 24 }
+        frameRate: { ideal: 60 }
       };
     case '720p':
     default:
@@ -236,7 +227,7 @@ export function getVideoConstraints(resolution: VideoResolution = '1080p', devic
         width: { ideal: 1280 },
         height: { ideal: 720 },
         aspectRatio: { ideal: 1.7777777778 },
-        frameRate: { ideal: 30, min: 24 }
+        frameRate: { ideal: 60 }
       };
   }
 }
