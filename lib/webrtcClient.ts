@@ -58,24 +58,48 @@ export class StudioWebRTCReceiver {
   private answerSent = false;
   private lastCloudTimestamp = 0;
   private remoteStream: MediaStream | null = null;
+  private localStream: MediaStream | null = null;
 
   constructor(
     roomId: string,
     onStreamReceived: (stream: MediaStream) => void,
-    onStatusChange: (status: 'idle' | 'connecting' | 'connected' | 'disconnected') => void
+    onStatusChange: (status: 'idle' | 'connecting' | 'connected' | 'disconnected') => void,
+    localStream?: MediaStream | null
   ) {
     this.roomId = roomId;
     this.onStreamReceived = onStreamReceived;
     this.onStatusChange = onStatusChange;
     this.lastCloudTimestamp = Math.floor(Date.now() / 1000) - 10;
+    this.localStream = localStream || null;
   }
 
   public getPeerConnection(): RTCPeerConnection | null {
     return this.peer;
   }
 
-  public async start() {
+  public setLocalStream(stream: MediaStream | null) {
+    this.localStream = stream;
+    if (!this.peer || !stream) return;
+    try {
+      const senders = this.peer.getSenders();
+      stream.getTracks().forEach(track => {
+        const sender = senders.find(s => s.track?.kind === track.kind);
+        if (sender) {
+          sender.replaceTrack(track).catch(() => {});
+        } else {
+          try {
+            this.peer?.addTrack(track, stream);
+          } catch (e) {}
+        }
+      });
+    } catch (e) {}
+  }
+
+  public async start(localStream?: MediaStream | null) {
     this.stop();
+    if (localStream) {
+      this.localStream = localStream;
+    }
     this.onStatusChange('connecting');
     this.answerSent = false;
     this.processedCandidates.clear();
@@ -83,6 +107,17 @@ export class StudioWebRTCReceiver {
 
     try {
       this.peer = new RTCPeerConnection(RTC_CONFIG);
+
+      // Transmit host audio & video to remote guest so they can hear and see the host
+      if (this.localStream) {
+        this.localStream.getTracks().forEach(track => {
+          if (this.peer && this.localStream) {
+            try {
+              this.peer.addTrack(track, this.localStream);
+            } catch (e) {}
+          }
+        });
+      }
 
       // Track handler: When remote guest's video or audio track is received
       this.peer.ontrack = (event) => {

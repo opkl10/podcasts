@@ -227,6 +227,7 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
   const guestAudioRef = useRef<HTMLAudioElement | null>(null);
   const guestFallbackAudioPlayerRef = useRef<HTMLAudioElement | null>(null);
   const lastGuestAudioTimeRef = useRef<number>(0);
+  const recordingAudioMixerRef = useRef<{ mixCtx: AudioContext; dest: MediaStreamAudioDestinationNode; nodes: any[] } | null>(null);
   const [guestFrame, setGuestFrame] = useState<string | null>(null);
 
   const isPeerCoHost = Boolean(guestInfo?.isCoHost || currentEpisode.episodeFormat === 'duo' || currentEpisode.coHost);
@@ -274,6 +275,7 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
     const startGuestReceiver = () => {
       if (guestReceiverRef.current) return;
 
+      const hostStream = processedStreamRef.current || currentStream;
       guestReceiverRef.current = new StudioWebRTCReceiver(
         guestRoomId,
         (stream) => {
@@ -290,9 +292,10 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
         },
         (status) => {
           setGuestConnectionStatus(status === 'disconnected' ? 'error' : status);
-        }
+        },
+        hostStream
       );
-      guestReceiverRef.current.start();
+      guestReceiverRef.current.start(hostStream);
     };
 
     startGuestReceiver();
@@ -393,6 +396,14 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
       window.removeEventListener('keydown', unlockAudio);
     };
   }, [guestStream]);
+
+  // Continuously feed Host Stream to Remote Guest WebRTC Peer
+  useEffect(() => {
+    const hostStream = processedStreamRef.current || currentStream;
+    if (guestReceiverRef.current && hostStream) {
+      guestReceiverRef.current.setLocalStream(hostStream);
+    }
+  }, [currentStream]);
 
   // Multi-Monitor Second Screen Detection & Auto-Launch
   useEffect(() => {
@@ -1180,7 +1191,7 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
   const lastSpokenTimestampRef = useRef<number>(0);
 
   // 5. Start Recording (Dual Stream: HD Video + Isolated Master Audio + Real-time Speech-to-Text)
-  const startRecording = () => {
+  const startRecording = async () => {
     if (!currentStream) {
       alert('אין זרם וידאו/אודיו זמין להקלטה');
       return;
@@ -1253,23 +1264,32 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
       if (guestStream && guestStream.getAudioTracks().length > 0) {
         try {
           const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-          const mixCtx = new AudioCtx();
+          const mixCtx = new AudioCtx({ sampleRate: 48000 });
+          if (mixCtx.state === 'suspended') {
+            await mixCtx.resume();
+          }
           const dest = mixCtx.createMediaStreamDestination();
+          const activeNodes: any[] = [];
 
           const hostTracks = recordStream.getAudioTracks();
           if (hostTracks.length > 0) {
             const hostSource = mixCtx.createMediaStreamSource(new MediaStream(hostTracks));
             hostSource.connect(dest);
+            activeNodes.push(hostSource);
           }
 
           const guestTracks = guestStream.getAudioTracks();
           if (guestTracks.length > 0) {
             const guestSource = mixCtx.createMediaStreamSource(new MediaStream(guestTracks));
             const guestGain = mixCtx.createGain();
-            guestGain.gain.value = guestVolume;
+            guestGain.gain.value = Math.max(0.1, guestVolume);
             guestSource.connect(guestGain);
             guestGain.connect(dest);
+            activeNodes.push(guestSource, guestGain);
           }
+
+          // Retain references to prevent V8 garbage collection!
+          recordingAudioMixerRef.current = { mixCtx, dest, nodes: activeNodes };
 
           recordStream = new MediaStream([
             ...recordStream.getVideoTracks(),
@@ -1318,6 +1338,14 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
             speechRecognitionRef.current.stop();
           } catch (e) {}
           speechRecognitionRef.current = null;
+        }
+
+        // Close recording audio mixer context
+        if (recordingAudioMixerRef.current) {
+          try {
+            recordingAudioMixerRef.current.mixCtx.close();
+          } catch (e) {}
+          recordingAudioMixerRef.current = null;
         }
 
         const fullVideoBlob = new Blob(recordedChunksRef.current, { type: mimeType });

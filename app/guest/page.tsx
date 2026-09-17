@@ -55,6 +55,8 @@ function GuestBroadcastContent() {
   const localStreamRef = useRef<MediaStream | null>(null);
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
+  const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
+  const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   const peerRef = useRef<RTCPeerConnection | null>(null);
   const guestSenderRef = useRef<RemoteGuestSender | null>(null);
   const frameSuccessCountRef = useRef<number>(0);
@@ -175,6 +177,11 @@ function GuestBroadcastContent() {
     setConnectionStatus('connecting');
     frameSuccessCountRef.current = 0;
 
+    // Pre-unlock audio element for mobile browser autoplay policy
+    if (remoteAudioRef.current) {
+      remoteAudioRef.current.play().catch(() => {});
+    }
+
     const participantInfo = { 
       name: guestName.trim() || (isCoHost ? 'מנחה שותף/ה' : 'אורח/ת'), 
       role: guestRole.trim() || (isCoHost ? 'מנחה שותף/ה' : undefined), 
@@ -199,9 +206,15 @@ function GuestBroadcastContent() {
               }
             }
           },
-          (remoteStream) => {
+          (stream) => {
+            setRemoteStream(stream);
             if (remoteVideoRef.current) {
-              remoteVideoRef.current.srcObject = remoteStream;
+              remoteVideoRef.current.srcObject = stream;
+            }
+            if (remoteAudioRef.current) {
+              remoteAudioRef.current.srcObject = stream;
+              remoteAudioRef.current.volume = 1.0;
+              remoteAudioRef.current.play().catch(() => {});
             }
           }
         );
@@ -313,8 +326,37 @@ function GuestBroadcastContent() {
     }
   };
 
+  // Sync Remote Host Stream with Dedicated Audio Player
+  useEffect(() => {
+    if (remoteAudioRef.current && remoteStream) {
+      if (remoteAudioRef.current.srcObject !== remoteStream) {
+        remoteAudioRef.current.srcObject = remoteStream;
+      }
+      remoteAudioRef.current.volume = 1.0;
+      remoteAudioRef.current.play().catch(() => {});
+    }
+  }, [remoteStream]);
+
+  // Mobile Audio Touch Unlocker (for iOS Safari and mobile Chrome autoplay restriction)
+  useEffect(() => {
+    const unlock = () => {
+      if (remoteAudioRef.current && remoteAudioRef.current.srcObject && remoteAudioRef.current.paused) {
+        remoteAudioRef.current.play().catch(() => {});
+      }
+    };
+    window.addEventListener('pointerdown', unlock, { passive: true });
+    window.addEventListener('touchstart', unlock, { passive: true });
+    return () => {
+      window.removeEventListener('pointerdown', unlock);
+      window.removeEventListener('touchstart', unlock);
+    };
+  }, []);
+
   return (
     <div className="min-h-screen bg-[#07090e] text-white flex flex-col font-sans select-none">
+      {/* Permanent Dedicated Host Audio Player */}
+      <audio ref={remoteAudioRef} autoPlay playsInline className="hidden" />
+
       {/* Header */}
       <header className="p-4 sm:p-5 border-b border-slate-800 bg-slate-950/80 backdrop-blur-md flex items-center justify-between sticky top-0 z-30">
         <div className="flex items-center gap-3">
@@ -496,6 +538,7 @@ function GuestBroadcastContent() {
                   ref={remoteVideoRef}
                   autoPlay
                   playsInline
+                  muted
                   className="w-full h-full object-cover"
                 />
                 <div className="absolute top-3 left-3 z-10 px-2.5 py-1 rounded-lg bg-black/70 backdrop-blur-md border border-white/10 text-[10px] font-bold text-indigo-300 flex items-center gap-1.5">
