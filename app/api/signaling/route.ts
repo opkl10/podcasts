@@ -9,8 +9,10 @@ interface RoomState {
   lastActive: number;
   lastFrame?: string; // base64 JPEG live fallback frame
   lastFrameTime?: number;
-  lastAudioChunk?: string; // base64 audio live fallback chunk
+  lastAudioChunk?: string; // base64 audio live fallback chunk (guest -> host)
   lastAudioTime?: number;
+  lastHostAudioChunk?: string; // base64 audio live fallback chunk (host -> guest)
+  lastHostAudioTime?: number;
   guestInfo?: { name: string; role?: string; isCoHost?: boolean };
 }
 
@@ -125,7 +127,29 @@ export async function POST(req: NextRequest) {
           room.lastAudioChunk = body.audioChunk;
           room.lastAudioTime = Date.now();
         }
-        return NextResponse.json({ status: 'frame-received' });
+        if (body.hostAudioChunk) {
+          room.lastHostAudioChunk = body.hostAudioChunk;
+          room.lastHostAudioTime = Date.now();
+        }
+        return NextResponse.json({ 
+          status: 'frame-received',
+          hostAudioChunk: room.lastHostAudioChunk || null,
+          hostAudioTime: room.lastHostAudioTime || 0
+        });
+
+      case 'push-host-audio':
+        if (body.audioChunk || body.hostAudioChunk) {
+          room.lastHostAudioChunk = body.audioChunk || body.hostAudioChunk;
+          room.lastHostAudioTime = Date.now();
+        }
+        return NextResponse.json({ status: 'host-audio-received' });
+
+      case 'pull-host-audio':
+        return NextResponse.json({
+          audioChunk: room.lastHostAudioChunk || null,
+          audioTime: room.lastHostAudioTime || 0,
+          isFresh: room.lastHostAudioTime ? (Date.now() - room.lastHostAudioTime < 6000) : false
+        });
 
       case 'pull-frame':
         return NextResponse.json({ 
@@ -133,6 +157,8 @@ export async function POST(req: NextRequest) {
           frameTime: room.lastFrameTime || 0,
           audioChunk: room.lastAudioChunk || null,
           audioTime: room.lastAudioTime || 0,
+          hostAudioChunk: room.lastHostAudioChunk || null,
+          hostAudioTime: room.lastHostAudioTime || 0,
           isFresh: room.lastFrameTime ? (Date.now() - room.lastFrameTime < 6000) : false,
           guestInfo: room.guestInfo || null
         });

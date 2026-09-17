@@ -15,6 +15,7 @@ import CloudIntegrationsModal from '@/components/dashboard/CloudIntegrationsModa
 import MovieFactPrompterCockpit from './MovieFactPrompterCockpit';
 import StudioHardwareDiagnosticsModal from './StudioHardwareDiagnosticsModal';
 import StudioAudioSettingsModal from './StudioAudioSettingsModal';
+import DiscordVoiceBar from './DiscordVoiceBar';
 import GuestInviteModal from './GuestInviteModal';
 import AudioStageBackgroundModal, { AUDIO_STAGE_PRESETS, WAVEFORM_GRADIENT_PRESETS } from './AudioStageBackgroundModal';
 import { StudioClockBroadcaster } from '@/lib/clockSync';
@@ -233,6 +234,9 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
   const lastGuestAudioTimeRef = useRef<number>(0);
   const recordingAudioMixerRef = useRef<{ mixCtx: AudioContext; dest: MediaStreamAudioDestinationNode; nodes: any[] } | null>(null);
   const [guestFrame, setGuestFrame] = useState<string | null>(null);
+  const [guestAudioLevel, setGuestAudioLevel] = useState<number>(0);
+  const [isGuestSpeaking, setIsGuestSpeaking] = useState<boolean>(false);
+  const isHostSpeaking = audioLevel > 12 && !isAudioMuted;
 
   const isPeerCoHost = Boolean(guestInfo?.isCoHost || currentEpisode.episodeFormat === 'duo' || currentEpisode.coHost);
 
@@ -422,6 +426,98 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
       guestReceiverRef.current.setLocalStream(hostStream);
     }
   }, [currentStream]);
+
+  // Discord-Style Voice Activity Detection (VAD) for Co-Host
+  useEffect(() => {
+    if (!guestStream || guestStream.getAudioTracks().length === 0) {
+      setGuestAudioLevel(0);
+      setIsGuestSpeaking(false);
+      return;
+    }
+    let animId: number;
+    let audioCtx: AudioContext | null = null;
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      audioCtx = new AudioCtx();
+      if (audioCtx.state === 'suspended') {
+        audioCtx.resume().catch(() => {});
+      }
+      const source = audioCtx.createMediaStreamSource(guestStream);
+      const analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 256;
+      analyser.smoothingTimeConstant = 0.3;
+      source.connect(analyser);
+
+      const dataArray = new Uint8Array(analyser.frequencyBinCount);
+      const checkVolume = () => {
+        analyser.getByteFrequencyData(dataArray);
+        let sum = 0;
+        for (let i = 0; i < dataArray.length; i++) {
+          sum += dataArray[i];
+        }
+        const avg = sum / dataArray.length;
+        const level = Math.min(100, Math.round((avg / 128) * 100));
+        setGuestAudioLevel(level);
+        setIsGuestSpeaking(level > 10);
+        animId = requestAnimationFrame(checkVolume);
+      };
+      animId = requestAnimationFrame(checkVolume);
+    } catch (e) {}
+
+    return () => {
+      if (animId) cancelAnimationFrame(animId);
+      if (audioCtx) audioCtx.close().catch(() => {});
+    };
+  }, [guestStream]);
+
+  // Host Audio Chunk Streaming Fallback (Transmits host voice so co-host always hears host)
+  useEffect(() => {
+    const guestRoomId = `guest_${episode.id}`;
+    const stream = processedStreamRef.current || currentStream;
+    if (!stream || isAudioMuted) return;
+
+    let hostRecorder: MediaRecorder | null = null;
+    try {
+      const audioTracks = stream.getAudioTracks();
+      if (audioTracks.length > 0 && typeof MediaRecorder !== 'undefined') {
+        const audioOnlyStream = new MediaStream(audioTracks);
+        let mimeType = 'audio/webm;codecs=opus';
+        if (!MediaRecorder.isTypeSupported(mimeType)) {
+          mimeType = MediaRecorder.isTypeSupported('audio/mp4') ? 'audio/mp4' : '';
+        }
+        hostRecorder = mimeType ? new MediaRecorder(audioOnlyStream, { mimeType }) : new MediaRecorder(audioOnlyStream);
+        hostRecorder.ondataavailable = async (e) => {
+          if (e.data && e.data.size > 0 && !isAudioMuted) {
+            try {
+              const reader = new FileReader();
+              reader.onloadend = () => {
+                const base64Audio = reader.result as string;
+                if (base64Audio) {
+                  fetch('/api/signaling', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      action: 'push-host-audio',
+                      roomId: guestRoomId,
+                      hostAudioChunk: base64Audio
+                    })
+                  }).catch(() => {});
+                }
+              };
+              reader.readAsDataURL(e.data);
+            } catch {}
+          }
+        };
+        hostRecorder.start(750);
+      }
+    } catch (e) {}
+
+    return () => {
+      if (hostRecorder && hostRecorder.state !== 'inactive') {
+        try { hostRecorder.stop(); } catch {}
+      }
+    };
+  }, [currentStream, isAudioMuted, episode.id]);
 
   // Multi-Monitor Second Screen Detection & Auto-Launch
   useEffect(() => {
@@ -1882,7 +1978,11 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
             ) : !isAudioOnly && guestConnectionStatus === 'connected' && guestLayout === 'split' ? (
               <div className="w-full h-full grid grid-cols-2 gap-2 p-2 bg-slate-950">
                 {/* Host Feed */}
-                <div className="relative rounded-2xl overflow-hidden bg-black border border-indigo-500/40">
+                <div className={`relative rounded-2xl overflow-hidden bg-black border transition-all duration-150 ${
+                  isHostSpeaking
+                    ? 'border-emerald-400 ring-4 ring-emerald-500/80 shadow-[0_0_25px_rgba(16,185,129,0.6)]'
+                    : 'border-indigo-500/40'
+                }`}>
                   <video
                     ref={videoElementRef}
                     autoPlay
@@ -1890,14 +1990,22 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
                     muted
                     className={`w-full h-full object-cover ${isMirrored ? 'scale-x-[-1]' : ''}`}
                   />
-                  <div className="absolute bottom-2 right-2 px-2.5 py-1 rounded-xl bg-black/75 backdrop-blur-md text-[10px] font-bold text-indigo-300 border border-white/10 flex items-center gap-1">
+                  <div className="absolute bottom-2 right-2 px-2.5 py-1 rounded-xl bg-black/75 backdrop-blur-md text-[10px] font-bold text-indigo-300 border border-white/10 flex items-center gap-1.5">
                     <span>👤 מארח האולפן</span>
+                    {isHostSpeaking && (
+                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 animate-pulse flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                        <span>מדבר...</span>
+                      </span>
+                    )}
                   </div>
                 </div>
 
                 {/* Guest / Co-Host Feed */}
-                <div className={`relative rounded-2xl overflow-hidden bg-black border ${
-                  isPeerCoHost ? 'border-emerald-500/50' : 'border-purple-500/40'
+                <div className={`relative rounded-2xl overflow-hidden bg-black border transition-all duration-150 ${
+                  isGuestSpeaking
+                    ? 'border-emerald-400 ring-4 ring-emerald-500/80 shadow-[0_0_25px_rgba(16,185,129,0.6)]'
+                    : isPeerCoHost ? 'border-emerald-500/50' : 'border-purple-500/40'
                 }`}>
                   <video
                     ref={guestVideoRef}
@@ -1918,6 +2026,12 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
                       <Volume2 className="w-3 h-3 text-cyan-400" />
                       <span>{Math.round(guestVolume * 100)}%</span>
                     </button>
+                    {isGuestSpeaking && (
+                      <span className="px-2 py-0.5 rounded-lg bg-emerald-500 text-white font-bold text-[10px] flex items-center gap-1 shadow-md shadow-emerald-500/30 animate-pulse">
+                        <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping" />
+                        <span>מדבר/ת עכשיו</span>
+                      </span>
+                    )}
                   </div>
                   <div className={`absolute bottom-2 right-2 px-2.5 py-1 rounded-xl bg-black/75 backdrop-blur-md text-[10px] font-bold border border-white/10 flex items-center gap-1.5 ${
                     isPeerCoHost ? 'text-emerald-300' : 'text-purple-300'
@@ -1949,6 +2063,12 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
                     <Volume2 className="w-3.5 h-3.5 text-cyan-400" />
                     <span>עוצמה: {Math.round(guestVolume * 100)}%</span>
                   </button>
+                  {isGuestSpeaking && (
+                    <span className="px-2.5 py-1 rounded-xl bg-emerald-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-md shadow-emerald-500/40 animate-pulse">
+                      <span className="w-2 h-2 rounded-full bg-white animate-ping" />
+                      <span>מדבר/ת עכשיו</span>
+                    </span>
+                  )}
                 </div>
                 <div className={`absolute bottom-4 right-4 px-3 py-1.5 rounded-xl bg-black/80 backdrop-blur-md text-xs font-bold border border-white/10 flex items-center gap-1.5 ${
                   isPeerCoHost ? 'text-emerald-300' : 'text-purple-300'
@@ -2336,6 +2456,27 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
               </button>
             </div>
           </div>
+
+          {/* Discord-Grade Voice Chat HUD (Live Two-Way Voice Channel with Co-Host) */}
+          <DiscordVoiceBar
+            isHostSpeaking={isHostSpeaking}
+            isHostMuted={isAudioMuted}
+            onToggleHostMute={toggleMic}
+            hostAudioLevel={audioLevel}
+            guestName={guestInfo?.name || episode.coHost?.name}
+            guestRole={guestInfo?.role || episode.coHost?.role}
+            isCoHost={isPeerCoHost || Boolean(currentEpisode.coHost?.name)}
+            guestStatus={guestConnectionStatus}
+            isGuestSpeaking={isGuestSpeaking}
+            guestAudioLevel={guestAudioLevel}
+            guestVolume={guestVolume}
+            onChangeGuestVolume={setGuestVolume}
+            onOpenAudioSettings={() => setIsAudioSettingsOpen(true)}
+            onOpenInviteModal={() => {
+              setGuestModalRole('cohost');
+              setIsGuestModalOpen(true);
+            }}
+          />
 
           {/* Audio & Video DSP Studio Controls - Clean Balanced Broadcast Layout */}
             <div className="p-4 sm:p-5 rounded-3xl bg-[#121620]/95 border border-slate-800/90 shadow-2xl space-y-4">

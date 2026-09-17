@@ -59,6 +59,7 @@ export class StudioWebRTCReceiver {
   private lastCloudTimestamp = 0;
   private remoteStream: MediaStream | null = null;
   private localStream: MediaStream | null = null;
+  private lastOfferSdp: string | null = null;
 
   constructor(
     roomId: string,
@@ -83,7 +84,7 @@ export class StudioWebRTCReceiver {
     try {
       const senders = this.peer.getSenders();
       stream.getTracks().forEach(track => {
-        const sender = senders.find(s => s.track?.kind === track.kind);
+        const sender = senders.find(s => s.track?.kind === track.kind || (s as any).kind === track.kind);
         if (sender) {
           sender.replaceTrack(track).catch(() => {});
         } else {
@@ -102,18 +103,29 @@ export class StudioWebRTCReceiver {
     }
     this.onStatusChange('connecting');
     this.answerSent = false;
+    this.lastOfferSdp = null;
     this.processedCandidates.clear();
     this.remoteStream = null;
 
     try {
       this.peer = new RTCPeerConnection(RTC_CONFIG);
 
+      // Pre-add transceivers for bi-directional audio & video negotiation
+      try {
+        this.peer.addTransceiver('audio', { direction: 'sendrecv' });
+        this.peer.addTransceiver('video', { direction: 'sendrecv' });
+      } catch (e) {}
+
       // Transmit host audio & video to remote guest so they can hear and see the host
       if (this.localStream) {
+        const senders = this.peer.getSenders();
         this.localStream.getTracks().forEach(track => {
-          if (this.peer && this.localStream) {
+          const sender = senders.find(s => s.track?.kind === track.kind || (s as any).kind === track.kind);
+          if (sender) {
+            sender.replaceTrack(track).catch(() => {});
+          } else {
             try {
-              this.peer.addTrack(track, this.localStream);
+              this.peer?.addTrack(track, this.localStream!);
             } catch (e) {}
           }
         });
@@ -173,62 +185,79 @@ export class StudioWebRTCReceiver {
       this.pollInterval = setInterval(async () => {
         if (!this.peer) return;
 
-        // 1. Check for Offer from iPhone (Sender)
-        if (!this.answerSent && this.peer.signalingState === 'stable') {
-          let offerData: any = null;
+        // 1. Check for Offer from Client (Remote Guest / iPhone)
+        let offerData: any = null;
 
-          // Check local signaling first
+        // Check local signaling first
+        try {
+          const res = await fetch('/api/signaling', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'get-offer', roomId: this.roomId })
+          });
+          const json = await res.json();
+          if (json.offer) offerData = json.offer;
+        } catch (e) {}
+
+        // Check cloud relay if local didn't return
+        if (!offerData) {
           try {
-            const res = await fetch('/api/signaling', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ action: 'get-offer', roomId: this.roomId })
-            });
-            const json = await res.json();
-            if (json.offer) offerData = json.offer;
-          } catch (e) {}
-
-          // Check cloud relay if local didn't return
-          if (!offerData) {
-            try {
-              const topic = getCloudTopic(this.roomId);
-              const cloudRes = await fetch(`https://ntfy.sh/${topic}/json?poll=1&since=${this.lastCloudTimestamp}`);
-              const text = await cloudRes.text();
-              const lines = text.trim().split('\n');
-              for (const line of lines) {
-                if (!line) continue;
-                try {
-                  const item = JSON.parse(line);
-                  if (item.time) this.lastCloudTimestamp = Math.max(this.lastCloudTimestamp, item.time);
-                  if (item.message) {
-                    const parsed = JSON.parse(item.message);
-                    if (parsed.action === 'send-offer' && parsed.data) {
-                      offerData = parsed.data;
-                      break;
-                    }
+            const topic = getCloudTopic(this.roomId);
+            const cloudRes = await fetch(`https://ntfy.sh/${topic}/json?poll=1&since=${this.lastCloudTimestamp}`);
+            const text = await cloudRes.text();
+            const lines = text.trim().split('\n');
+            for (const line of lines) {
+              if (!line) continue;
+              try {
+                const item = JSON.parse(line);
+                if (item.time) this.lastCloudTimestamp = Math.max(this.lastCloudTimestamp, item.time);
+                if (item.message) {
+                  const parsed = JSON.parse(item.message);
+                  if (parsed.action === 'send-offer' && parsed.data) {
+                    offerData = parsed.data;
+                    break;
                   }
-                } catch (pe) {}
-              }
-            } catch (ce) {}
-          }
-
-          if (offerData && this.peer && this.peer.signalingState === 'stable') {
-            try {
-              await this.peer.setRemoteDescription(new RTCSessionDescription(offerData));
-              const answer = await this.peer.createAnswer();
-              await this.peer.setLocalDescription(answer);
-
-              publishSignal(this.roomId, {
-                action: 'send-answer',
-                roomId: this.roomId,
-                role: 'host',
-                data: answer
-              });
-
-              this.answerSent = true;
-            } catch (oe) {
-              console.warn('Error handling incoming offer on host:', oe);
+                }
+              } catch (pe) {}
             }
+          } catch (ce) {}
+        }
+
+        const offerKey = offerData ? (offerData.sdp || JSON.stringify(offerData)) : null;
+        const isNewOffer = offerKey && offerKey !== this.lastOfferSdp;
+
+        if (offerData && (isNewOffer || (!this.answerSent && this.peer.signalingState === 'stable'))) {
+          try {
+            // Guarantee host tracks are bound to senders before creating answer!
+            if (this.localStream) {
+              const senders = this.peer.getSenders();
+              this.localStream.getTracks().forEach(track => {
+                const sender = senders.find(s => s.track?.kind === track.kind || (s as any).kind === track.kind);
+                if (sender) {
+                  sender.replaceTrack(track).catch(() => {});
+                } else {
+                  try {
+                    this.peer?.addTrack(track, this.localStream!);
+                  } catch (e) {}
+                }
+              });
+            }
+
+            await this.peer.setRemoteDescription(new RTCSessionDescription(offerData));
+            const answer = await this.peer.createAnswer();
+            await this.peer.setLocalDescription(answer);
+
+            publishSignal(this.roomId, {
+              action: 'send-answer',
+              roomId: this.roomId,
+              role: 'host',
+              data: answer
+            });
+
+            this.lastOfferSdp = offerKey;
+            this.answerSent = true;
+          } catch (oe) {
+            console.warn('Error handling incoming offer on host:', oe);
           }
         }
 
@@ -514,17 +543,47 @@ export class RemoteGuestSender {
     try {
       this.peer = new RTCPeerConnection(RTC_CONFIG);
 
+      // Pre-add sendrecv transceivers for bi-directional audio & video
+      try {
+        this.peer.addTransceiver('audio', { direction: 'sendrecv' });
+        this.peer.addTransceiver('video', { direction: 'sendrecv' });
+      } catch (e) {}
+
       // Add local guest audio & video tracks
+      const guestSenders = this.peer.getSenders();
       stream.getTracks().forEach(track => {
         if (this.peer && this.stream) {
-          this.peer.addTrack(track, this.stream);
+          const sender = guestSenders.find(s => s.track?.kind === track.kind || (s as any).kind === track.kind);
+          if (sender) {
+            sender.replaceTrack(track).catch(() => {});
+          } else {
+            try {
+              this.peer.addTrack(track, this.stream);
+            } catch (e) {}
+          }
         }
       });
 
       // Receive host return stream if host is broadcasting back
+      let incomingRemoteStream: MediaStream | null = null;
       this.peer.ontrack = (event) => {
-        if (event.streams && event.streams[0] && this.onRemoteStream) {
-          this.onRemoteStream(event.streams[0]);
+        if (!incomingRemoteStream) {
+          incomingRemoteStream = new MediaStream();
+        }
+        if (event.track) {
+          if (!incomingRemoteStream.getTracks().some(t => t.id === event.track.id)) {
+            incomingRemoteStream.addTrack(event.track);
+          }
+        }
+        if (event.streams && event.streams[0]) {
+          event.streams[0].getTracks().forEach(t => {
+            if (incomingRemoteStream && !incomingRemoteStream.getTracks().some(existing => existing.id === t.id)) {
+              incomingRemoteStream.addTrack(t);
+            }
+          });
+        }
+        if (this.onRemoteStream && incomingRemoteStream.getTracks().length > 0) {
+          this.onRemoteStream(incomingRemoteStream);
         }
       };
 

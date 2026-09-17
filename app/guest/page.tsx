@@ -55,11 +55,18 @@ function GuestBroadcastContent() {
   const [connectionStatus, setConnectionStatus] = useState<'idle' | 'connecting' | 'connected' | 'error'>('idle');
   const [hasHeadphones, setHasHeadphones] = useState(true);
 
+  const [hostVolume, setHostVolume] = useState<number>(1.0);
+  const [hostAudioLevel, setHostAudioLevel] = useState<number>(0);
+  const [isHostSpeaking, setIsHostSpeaking] = useState<boolean>(false);
+  const isCoHostSpeaking = audioLevel > 10 && !isAudioMuted;
+
   // Media Streams & WebRTC Refs
   const localStreamRef = useRef<MediaStream | null>(null);
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
   const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
+  const hostFallbackAudioPlayerRef = useRef<HTMLAudioElement | null>(null);
+  const lastHostAudioTimeRef = useRef<number>(0);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   const peerRef = useRef<RTCPeerConnection | null>(null);
   const guestSenderRef = useRef<RemoteGuestSender | null>(null);
@@ -336,6 +343,24 @@ function GuestBroadcastContent() {
               if (frameSuccessCountRef.current >= 2) {
                 setConnectionStatus('connected');
               }
+              try {
+                const json = await res.json();
+                if (json.hostAudioChunk && json.hostAudioTime && json.hostAudioTime > lastHostAudioTimeRef.current) {
+                  lastHostAudioTimeRef.current = json.hostAudioTime;
+                  const hasLiveWebRTCAudio = remoteStream && remoteStream.getAudioTracks().some(t => t.readyState === 'live' && t.enabled);
+                  if (!hasLiveWebRTCAudio) {
+                    if (!hostFallbackAudioPlayerRef.current) {
+                      hostFallbackAudioPlayerRef.current = new Audio();
+                    }
+                    hostFallbackAudioPlayerRef.current.src = json.hostAudioChunk;
+                    hostFallbackAudioPlayerRef.current.volume = hostVolume;
+                    if (selectedAudioOutputId && 'setSinkId' in hostFallbackAudioPlayerRef.current) {
+                      (hostFallbackAudioPlayerRef.current as any).setSinkId(selectedAudioOutputId).catch(() => {});
+                    }
+                    hostFallbackAudioPlayerRef.current.play().catch(() => {});
+                  }
+                }
+              } catch {}
             }
           } catch {}
         }
@@ -380,21 +405,74 @@ function GuestBroadcastContent() {
     }
   };
 
-  // Sync Remote Host Stream with Dedicated Audio Player
+  // Sync Remote Host Stream with Dedicated Audio Player & Web Audio Pipeline
   useEffect(() => {
     if (remoteAudioRef.current && remoteStream) {
       if (remoteAudioRef.current.srcObject !== remoteStream) {
         remoteAudioRef.current.srcObject = remoteStream;
       }
-      remoteAudioRef.current.volume = 1.0;
+      remoteAudioRef.current.volume = hostVolume;
       remoteAudioRef.current.play().catch(() => {});
     }
-  }, [remoteStream]);
+  }, [remoteStream, hostVolume]);
+
+  // Analyze and Play Host Audio with Web Audio pipeline (Fail-Safe Dual Playback + Discord VAD)
+  useEffect(() => {
+    if (!remoteStream || remoteStream.getAudioTracks().length === 0) {
+      setHostAudioLevel(0);
+      setIsHostSpeaking(false);
+      return;
+    }
+
+    let animId: number;
+    let audioCtx: AudioContext | null = null;
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      audioCtx = new AudioCtx();
+      if (audioCtx.state === 'suspended') {
+        audioCtx.resume().catch(() => {});
+      }
+
+      const source = audioCtx.createMediaStreamSource(remoteStream);
+      const gainNode = audioCtx.createGain();
+      gainNode.gain.value = hostVolume;
+      const analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 256;
+      analyser.smoothingTimeConstant = 0.3;
+
+      source.connect(analyser);
+      source.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+
+      const dataArray = new Uint8Array(analyser.frequencyBinCount);
+      const checkHostLevel = () => {
+        analyser.getByteFrequencyData(dataArray);
+        let sum = 0;
+        for (let i = 0; i < dataArray.length; i++) {
+          sum += dataArray[i];
+        }
+        const avg = sum / dataArray.length;
+        const level = Math.min(100, Math.round((avg / 128) * 100));
+        setHostAudioLevel(level);
+        setIsHostSpeaking(level > 10);
+        animId = requestAnimationFrame(checkHostLevel);
+      };
+      animId = requestAnimationFrame(checkHostLevel);
+    } catch (e) {}
+
+    return () => {
+      if (animId) cancelAnimationFrame(animId);
+      if (audioCtx) audioCtx.close().catch(() => {});
+    };
+  }, [remoteStream, hostVolume]);
 
   // Sync Audio Output (Headphones / Speakers) using setSinkId
   useEffect(() => {
     if (remoteAudioRef.current && selectedAudioOutputId && 'setSinkId' in remoteAudioRef.current) {
       (remoteAudioRef.current as any).setSinkId(selectedAudioOutputId).catch(() => {});
+    }
+    if (hostFallbackAudioPlayerRef.current && selectedAudioOutputId && 'setSinkId' in hostFallbackAudioPlayerRef.current) {
+      (hostFallbackAudioPlayerRef.current as any).setSinkId(selectedAudioOutputId).catch(() => {});
     }
   }, [selectedAudioOutputId, remoteStream]);
 
@@ -655,7 +733,11 @@ function GuestBroadcastContent() {
             {/* Live Dual Stage Viewport */}
             <div className="relative aspect-video rounded-3xl overflow-hidden bg-black border border-slate-800 shadow-2xl grid grid-cols-1 sm:grid-cols-2 gap-2 p-2 bg-slate-950">
               {/* Host Program Feed */}
-              <div className="relative rounded-2xl overflow-hidden bg-slate-900 border border-slate-800 flex items-center justify-center">
+              <div className={`relative rounded-2xl overflow-hidden bg-slate-900 border flex items-center justify-center transition-all duration-150 ${
+                isHostSpeaking
+                  ? 'border-emerald-400 ring-4 ring-emerald-500/80 shadow-[0_0_25px_rgba(16,185,129,0.6)]'
+                  : 'border-slate-800'
+              }`}>
                 <video
                   ref={remoteVideoRef}
                   autoPlay
@@ -666,12 +748,36 @@ function GuestBroadcastContent() {
                 <div className="absolute top-3 left-3 z-10 px-2.5 py-1 rounded-lg bg-black/70 backdrop-blur-md border border-white/10 text-[10px] font-bold text-indigo-300 flex items-center gap-1.5">
                   <Radio className="w-3 h-3 text-indigo-400" />
                   <span>שידור מארח האולפן (Host Studio)</span>
+                  {isHostSpeaking && (
+                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-500 text-white animate-pulse flex items-center gap-1 shadow">
+                      <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping" />
+                      <span>מדבר/ת...</span>
+                    </span>
+                  )}
+                </div>
+
+                {/* Host Volume Slider in feed */}
+                <div className="absolute bottom-3 left-3 z-10 flex items-center gap-1.5 bg-black/75 backdrop-blur-md px-2.5 py-1 rounded-xl border border-white/10">
+                  <Volume2 className="w-3 h-3 text-cyan-400" />
+                  <input
+                    type="range"
+                    min="0"
+                    max="2.0"
+                    step="0.05"
+                    value={hostVolume}
+                    onChange={(e) => setHostVolume(parseFloat(e.target.value))}
+                    className="w-16 sm:w-24 h-1 bg-slate-700 rounded accent-cyan-400 cursor-pointer"
+                    title={`עוצמת שמע מארח: ${Math.round(hostVolume * 100)}%`}
+                  />
+                  <span className="text-[10px] font-mono text-cyan-300 font-bold">{Math.round(hostVolume * 100)}%</span>
                 </div>
               </div>
 
               {/* Guest / Co-Host Self Return Feed */}
-              <div className={`relative rounded-2xl overflow-hidden bg-slate-900 flex items-center justify-center border ${
-                isCoHost ? 'border-emerald-500/50' : 'border-indigo-500/50'
+              <div className={`relative rounded-2xl overflow-hidden bg-slate-900 flex items-center justify-center border transition-all duration-150 ${
+                isCoHostSpeaking
+                  ? 'border-emerald-400 ring-4 ring-emerald-500/80 shadow-[0_0_25px_rgba(16,185,129,0.6)]'
+                  : isCoHost ? 'border-emerald-500/50' : 'border-indigo-500/50'
               }`}>
                 <video
                   ref={localVideoRef}
@@ -683,6 +789,12 @@ function GuestBroadcastContent() {
                 <div className="absolute top-3 left-3 z-10 px-2.5 py-1 rounded-lg bg-black/70 backdrop-blur-md border border-white/10 text-[10px] font-bold text-emerald-300 flex items-center gap-1.5">
                   <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
                   <span>{isCoHost ? `👥 מנחה שותף: ${guestName || 'אתה'}` : `אתה בשידור: ${guestName}`}</span>
+                  {isCoHostSpeaking && (
+                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-500 text-white animate-pulse flex items-center gap-1 shadow">
+                      <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping" />
+                      <span>מדבר/ת...</span>
+                    </span>
+                  )}
                 </div>
               </div>
             </div>
