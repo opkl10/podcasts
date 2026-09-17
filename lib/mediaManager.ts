@@ -1,12 +1,13 @@
-import { AudioInputDevice, VideoInputDevice } from './types';
+import { AudioInputDevice, AudioOutputDevice, VideoInputDevice } from './types';
 
 // Detect and enumerate media devices with special flag for iPhone / Continuity Camera / Capture Cards
 export async function getMediaDevices(): Promise<{
   audioInputs: AudioInputDevice[];
   videoInputs: VideoInputDevice[];
+  audioOutputs: AudioOutputDevice[];
 }> {
   if (typeof navigator === 'undefined' || !navigator.mediaDevices) {
-    return { audioInputs: [], videoInputs: [] };
+    return { audioInputs: [], videoInputs: [], audioOutputs: [] };
   }
 
   try {
@@ -38,6 +39,7 @@ export async function getMediaDevices(): Promise<{
 
     const audioInputs: AudioInputDevice[] = [];
     const videoInputs: VideoInputDevice[] = [];
+    const audioOutputs: AudioOutputDevice[] = [];
 
     devices.forEach(device => {
       if (device.kind === 'audioinput') {
@@ -78,8 +80,7 @@ export async function getMediaDevices(): Promise<{
         const isContinuity = 
           labelLower.includes('continuity') || 
           labelLower.includes('המשכיות') || 
-          labelLower.includes('iphone') || 
-          labelLower.includes('אייפון');
+          (labelLower.includes('apple') && labelLower.includes('camera') && !labelLower.includes('facetime') && !labelLower.includes('built-in'));
 
         // Comprehensive Capture Card matching (Elgato, Cam Link, HD60, 4K X/Pro, HDMI, USB Video, OBS Virtual Camera)
         const isCaptureCard = 
@@ -109,14 +110,45 @@ export async function getMediaDevices(): Promise<{
           isContinuity,
           isCaptureCard
         });
+      } else if (device.kind === 'audiooutput') {
+        const labelLower = (device.label || '').toLowerCase();
+        const isHeadphones = 
+          labelLower.includes('headphone') || 
+          labelLower.includes('אוזניות') || 
+          labelLower.includes('airpod') || 
+          labelLower.includes('buds') || 
+          labelLower.includes('ear') ||
+          labelLower.includes('beats') ||
+          labelLower.includes('bose') ||
+          labelLower.includes('sony');
+
+        audioOutputs.push({
+          deviceId: device.deviceId,
+          label: device.label || (isHeadphones ? `אוזניות (${audioOutputs.length + 1})` : `רמקולים / התקן שמע (${audioOutputs.length + 1})`),
+          isDefault: device.deviceId === 'default'
+        });
       }
     });
 
-    return { audioInputs, videoInputs };
+    return { audioInputs, videoInputs, audioOutputs };
   } catch (err) {
     console.error('Error enumerating devices', err);
-    return { audioInputs: [], videoInputs: [] };
+    return { audioInputs: [], videoInputs: [], audioOutputs: [] };
   }
+}
+
+// Helper to set audio output device on media elements (Chrome, Edge, Safari 17+)
+export async function setElementSinkId(element: HTMLMediaElement | null, sinkId: string): Promise<boolean> {
+  if (!element || !sinkId) return false;
+  try {
+    if (typeof (element as any).setSinkId === 'function') {
+      await (element as any).setSinkId(sinkId);
+      return true;
+    }
+  } catch (err) {
+    console.warn('setSinkId not supported or failed:', err);
+  }
+  return false;
 }
 
 export type VideoResolution = '720p' | '1080p' | '4k';

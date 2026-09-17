@@ -2,8 +2,8 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
-import { Episode, EpisodeFormat, TimestampMarker, AudioInputDevice, VideoInputDevice, TopicItem, LiveOverlayState, SubtitleItem, MovieFactCard } from '@/lib/types';
-import { getMediaDevices, StudioAudioProcessor, getVideoConstraints, VideoResolution, getScreenCaptureStream } from '@/lib/mediaManager';
+import { Episode, EpisodeFormat, TimestampMarker, AudioInputDevice, AudioOutputDevice, VideoInputDevice, TopicItem, LiveOverlayState, SubtitleItem, MovieFactCard } from '@/lib/types';
+import { getMediaDevices, StudioAudioProcessor, getVideoConstraints, VideoResolution, getScreenCaptureStream, setElementSinkId } from '@/lib/mediaManager';
 import { StudioWebRTCReceiver } from '@/lib/webrtcClient';
 import { saveMediaBlob, getMediaBlob, deleteMediaBlob, saveEpisode, formatTime, getPermanentLogo, getAudioStageConfig, saveAudioStageConfig, AudioStageConfig } from '@/lib/storage';
 import RemoteCamModal from './RemoteCamModal';
@@ -14,6 +14,7 @@ import GiantStudioClock from './GiantStudioClock';
 import CloudIntegrationsModal from '@/components/dashboard/CloudIntegrationsModal';
 import MovieFactPrompterCockpit from './MovieFactPrompterCockpit';
 import StudioHardwareDiagnosticsModal from './StudioHardwareDiagnosticsModal';
+import StudioAudioSettingsModal from './StudioAudioSettingsModal';
 import GuestInviteModal from './GuestInviteModal';
 import AudioStageBackgroundModal, { AUDIO_STAGE_PRESETS, WAVEFORM_GRADIENT_PRESETS } from './AudioStageBackgroundModal';
 import { StudioClockBroadcaster } from '@/lib/clockSync';
@@ -79,7 +80,10 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
   // Device & Stream States
   const [audioDevices, setAudioDevices] = useState<AudioInputDevice[]>([]);
   const [videoDevices, setVideoDevices] = useState<VideoInputDevice[]>([]);
+  const [audioOutputs, setAudioOutputs] = useState<AudioOutputDevice[]>([]);
   const [selectedAudioId, setSelectedAudioId] = useState<string>('');
+  const [selectedAudioOutputId, setSelectedAudioOutputId] = useState<string>('');
+  const [isAudioSettingsOpen, setIsAudioSettingsOpen] = useState(false);
   const [audioChannelMode, setAudioChannelMode] = useState<'stereo' | 'mono'>('stereo');
   const [selectedVideoId, setSelectedVideoId] = useState<string>('');
   const [currentStream, setCurrentStream] = useState<MediaStream | null>(null);
@@ -379,6 +383,20 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
     }
   }, [guestStream, guestVolume]);
 
+  // Sync Audio Output (Headphones / Speakers) using setElementSinkId
+  useEffect(() => {
+    if (!selectedAudioOutputId) return;
+    if (guestAudioRef.current) {
+      setElementSinkId(guestAudioRef.current, selectedAudioOutputId);
+    }
+    if (guestFallbackAudioPlayerRef.current) {
+      setElementSinkId(guestFallbackAudioPlayerRef.current, selectedAudioOutputId);
+    }
+    if (testAudioPlayerRef.current) {
+      setElementSinkId(testAudioPlayerRef.current, selectedAudioOutputId);
+    }
+  }, [selectedAudioOutputId]);
+
   // Audio Gesture Unlocker: Automatically unblocks audio autoplay on user interaction
   useEffect(() => {
     const unlockAudio = () => {
@@ -497,11 +515,12 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
     let mounted = true;
 
     async function initDevices() {
-      const { audioInputs, videoInputs } = await getMediaDevices();
+      const { audioInputs, videoInputs, audioOutputs: foundOutputs } = await getMediaDevices();
       if (!mounted) return;
 
       setAudioDevices(audioInputs);
       setVideoDevices(videoInputs);
+      setAudioOutputs(foundOutputs || []);
 
       // Prefer iPhone / Continuity Camera if available
       const iPhoneCam = videoInputs.find(v => v.isIPhone || v.isContinuity);
@@ -513,6 +532,10 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
 
       if (audioInputs.length > 0) {
         setSelectedAudioId(audioInputs[0].deviceId);
+      }
+
+      if (foundOutputs && foundOutputs.length > 0) {
+        setSelectedAudioOutputId(foundOutputs[0].deviceId);
       }
     }
 
@@ -1671,6 +1694,16 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
             <span>🔬 בדיקת סאונד ווידאו</span>
           </button>
 
+          {/* Dedicated Studio Audio & Sound Settings Button */}
+          <button
+            onClick={() => setIsAudioSettingsOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-2xl bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/40 text-cyan-300 hover:text-white text-xs font-bold transition-all shadow-md active:scale-95"
+            title="הגדרות סאונד, אוזניות, רמקולים ומיקרופונים"
+          >
+            <Volume2 className="w-4 h-4 text-cyan-400" />
+            <span>🔊 הגדרות סאונד ושמע</span>
+          </button>
+
           {/* Second Screen Indicator / Launcher */}
           <button
             onClick={launchSecondScreenClockManually}
@@ -1876,6 +1909,16 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
                   {guestFrame && (
                     <img src={guestFrame} alt="Guest Stream" className="w-full h-full object-cover" />
                   )}
+                  <div className="absolute top-2 left-2 flex items-center gap-1.5 z-10">
+                    <button
+                      onClick={() => setIsAudioSettingsOpen(true)}
+                      className="px-2 py-0.5 rounded-lg bg-black/75 hover:bg-black/90 backdrop-blur-md text-[10px] font-mono font-bold text-cyan-300 hover:text-white border border-cyan-500/30 flex items-center gap-1 transition-all shadow-md active:scale-95"
+                      title="עוצמת שמע מנחה / פתח הגדרות סאונד"
+                    >
+                      <Volume2 className="w-3 h-3 text-cyan-400" />
+                      <span>{Math.round(guestVolume * 100)}%</span>
+                    </button>
+                  </div>
                   <div className={`absolute bottom-2 right-2 px-2.5 py-1 rounded-xl bg-black/75 backdrop-blur-md text-[10px] font-bold border border-white/10 flex items-center gap-1.5 ${
                     isPeerCoHost ? 'text-emerald-300' : 'text-purple-300'
                   }`}>
@@ -1897,6 +1940,16 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
                 {guestFrame && (
                   <img src={guestFrame} alt="Guest Stream" className="w-full h-full object-cover" />
                 )}
+                <div className="absolute top-4 left-4 flex items-center gap-1.5 z-10">
+                  <button
+                    onClick={() => setIsAudioSettingsOpen(true)}
+                    className="px-2.5 py-1 rounded-xl bg-black/80 hover:bg-black backdrop-blur-md text-xs font-mono font-bold text-cyan-300 hover:text-white border border-cyan-500/30 flex items-center gap-1.5 transition-all shadow-md active:scale-95"
+                    title="עוצמת שמע מנחה / פתח הגדרות סאונד"
+                  >
+                    <Volume2 className="w-3.5 h-3.5 text-cyan-400" />
+                    <span>עוצמה: {Math.round(guestVolume * 100)}%</span>
+                  </button>
+                </div>
                 <div className={`absolute bottom-4 right-4 px-3 py-1.5 rounded-xl bg-black/80 backdrop-blur-md text-xs font-bold border border-white/10 flex items-center gap-1.5 ${
                   isPeerCoHost ? 'text-emerald-300' : 'text-purple-300'
                 }`}>
@@ -2308,9 +2361,10 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
                     <div className="flex items-center gap-1.5">
                       <button
                         onClick={async () => {
-                          const { audioInputs, videoInputs } = await getMediaDevices();
+                          const { audioInputs, videoInputs, audioOutputs: foundOutputs } = await getMediaDevices();
                           setAudioDevices(audioInputs);
                           setVideoDevices(videoInputs);
+                          setAudioOutputs(foundOutputs || []);
                         }}
                         className="text-[10px] font-medium text-slate-400 hover:text-white flex items-center gap-1 bg-slate-900 px-2 py-1 rounded-lg border border-slate-800 transition-colors"
                         title="רענן רשימת התקנים"
@@ -2743,6 +2797,16 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
                         </div>
                       </div>
                     )}
+
+                    {/* Dedicated Studio Audio Center Button */}
+                    <button
+                      type="button"
+                      onClick={() => setIsAudioSettingsOpen(true)}
+                      className="w-full py-2.5 px-3 rounded-xl border border-cyan-500/40 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 hover:text-white text-xs font-bold flex items-center justify-center gap-2 transition-all active:scale-95 shadow-sm mt-2"
+                    >
+                      <Volume2 className="w-4 h-4 text-cyan-400" />
+                      <span>🔊 מרכז הגדרות סאונד מלא: אוזניות, רמקולים, מיקרופון ובדיקת שמע</span>
+                    </button>
                   </div>
                 </div>
 
@@ -3105,6 +3169,37 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
         config={audioStageConfig}
         onChangeConfig={(newCfg) => setAudioStageConfig(newCfg)}
         podcastId={episode.podcastId}
+      />
+
+      {/* Studio Audio & Sound Settings Center Modal */}
+      <StudioAudioSettingsModal
+        isOpen={isAudioSettingsOpen}
+        onClose={() => setIsAudioSettingsOpen(false)}
+        audioDevices={audioDevices}
+        selectedAudioId={selectedAudioId}
+        onSelectAudioId={setSelectedAudioId}
+        isAudioMuted={isAudioMuted}
+        onToggleMute={toggleMic}
+        micGain={micGain}
+        onGainChange={handleGainChange}
+        noiseSuppression={noiseSuppression}
+        onToggleNoiseSuppression={handleToggleNoiseSuppression}
+        isAutoGainControl={isAutoGainControl}
+        onToggleAutoGainControl={handleToggleAutoGainControl}
+        audioChannelMode={audioChannelMode}
+        onChangeChannelMode={setAudioChannelMode}
+        audioOutputs={audioOutputs}
+        selectedAudioOutputId={selectedAudioOutputId}
+        onSelectAudioOutputId={setSelectedAudioOutputId}
+        guestVolume={guestVolume}
+        onChangeGuestVolume={setGuestVolume}
+        guestStatus={guestConnectionStatus}
+        guestName={guestInfo?.name || episode.coHost?.name}
+        isCoHost={isPeerCoHost || Boolean(currentEpisode.coHost?.name)}
+        isMonitoringMic={isMonitoringMic}
+        onToggleMonitoring={handleToggleMonitoring}
+        stream={processedStreamRef.current || currentStream}
+        guestAudioElement={guestAudioRef.current}
       />
     </div>
   );

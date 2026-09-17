@@ -22,7 +22,8 @@ import {
   Wifi, 
   PhoneOff, 
   Maximize2,
-  Users
+  Users,
+  Volume2
 } from 'lucide-react';
 
 function GuestBroadcastContent() {
@@ -41,8 +42,11 @@ function GuestBroadcastContent() {
   // Hardware states
   const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([]);
   const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([]);
+  const [audioOutputDevices, setAudioOutputDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedVideoId, setSelectedVideoId] = useState<string>('');
   const [selectedAudioId, setSelectedAudioId] = useState<string>('');
+  const [selectedAudioOutputId, setSelectedAudioOutputId] = useState<string>('');
+  const [isPlayingSoundTest, setIsPlayingSoundTest] = useState(false);
   const [isAudioMuted, setIsAudioMuted] = useState(false);
   const [isVideoMuted, setIsVideoMuted] = useState(false);
   const [audioLevel, setAudioLevel] = useState(0);
@@ -113,10 +117,13 @@ function GuestBroadcastContent() {
         const devices = await navigator.mediaDevices.enumerateDevices();
         const vDevs = devices.filter(d => d.kind === 'videoinput');
         const aDevs = devices.filter(d => d.kind === 'audioinput');
+        const outDevs = devices.filter(d => d.kind === 'audiooutput');
         setVideoDevices(vDevs);
         setAudioDevices(aDevs);
+        setAudioOutputDevices(outDevs);
         if (vDevs[0]) setSelectedVideoId(vDevs[0].deviceId);
         if (aDevs[0]) setSelectedAudioId(aDevs[0].deviceId);
+        if (outDevs[0]) setSelectedAudioOutputId(outDevs[0].deviceId);
       } catch (err) {
         console.error('Error accessing camera/mic:', err);
       }
@@ -163,6 +170,53 @@ function GuestBroadcastContent() {
       }
     } catch (e) {
       console.error(e);
+    }
+  };
+
+  // Switch Audio Output Device (Headphones / Speakers)
+  const handleSwitchAudioOutput = async (sinkId: string) => {
+    setSelectedAudioOutputId(sinkId);
+    if (remoteAudioRef.current && 'setSinkId' in remoteAudioRef.current) {
+      try {
+        await (remoteAudioRef.current as any).setSinkId(sinkId);
+      } catch (e) {
+        console.warn('Failed to set sinkId on guest audio element', e);
+      }
+    }
+  };
+
+  // Play Test Sound Chime in Headphones/Speakers
+  const playTestSound = async () => {
+    try {
+      setIsPlayingSoundTest(true);
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      const ctx = new AudioCtx();
+      
+      const now = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(587.33, now); // D5
+      osc.frequency.setValueAtTime(880, now + 0.12); // A5
+      osc.frequency.setValueAtTime(1174.66, now + 0.24); // D6
+
+      gain.gain.setValueAtTime(0.01, now);
+      gain.gain.linearRampToValueAtTime(0.3, now + 0.05);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.7);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc.start(now);
+      osc.stop(now + 0.75);
+
+      setTimeout(() => {
+        setIsPlayingSoundTest(false);
+        ctx.close().catch(() => {});
+      }, 800);
+    } catch (e) {
+      setIsPlayingSoundTest(false);
     }
   };
 
@@ -337,6 +391,13 @@ function GuestBroadcastContent() {
     }
   }, [remoteStream]);
 
+  // Sync Audio Output (Headphones / Speakers) using setSinkId
+  useEffect(() => {
+    if (remoteAudioRef.current && selectedAudioOutputId && 'setSinkId' in remoteAudioRef.current) {
+      (remoteAudioRef.current as any).setSinkId(selectedAudioOutputId).catch(() => {});
+    }
+  }, [selectedAudioOutputId, remoteStream]);
+
   // Mobile Audio Touch Unlocker (for iOS Safari and mobile Chrome autoplay restriction)
   useEffect(() => {
     const unlock = () => {
@@ -503,6 +564,67 @@ function GuestBroadcastContent() {
               </div>
             </div>
 
+            {/* Device Selectors & Sound Test */}
+            <div className="space-y-3 bg-slate-900/50 p-3.5 rounded-2xl border border-slate-800">
+              <div className="flex items-center justify-between text-xs font-bold text-slate-300">
+                <span className="flex items-center gap-1.5">
+                  <Settings className="w-4 h-4 text-cyan-400" />
+                  <span>הגדרות חומרה ושמע (אוזניות ומיקרופון)</span>
+                </span>
+                {/* Audio Output Test Tone */}
+                <button
+                  type="button"
+                  onClick={playTestSound}
+                  disabled={isPlayingSoundTest}
+                  className="px-2.5 py-1 rounded-lg bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 hover:text-white border border-cyan-500/30 text-[11px] font-bold flex items-center gap-1.5 transition-all active:scale-95"
+                  title="נגן צליל בדיקה באוזניות"
+                >
+                  <Volume2 className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>{isPlayingSoundTest ? 'מנגן צליל...' : '▶️ בדיקת שמע באוזניות'}</span>
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                {/* Microphone selector */}
+                <div className="space-y-1">
+                  <label className="text-[11px] text-slate-400 flex items-center gap-1">
+                    <Mic className="w-3 h-3 text-indigo-400" />
+                    <span>מיקרופון:</span>
+                  </label>
+                  <select
+                    value={selectedAudioId}
+                    onChange={(e) => handleSwitchDevice(undefined, e.target.value)}
+                    className="w-full p-2 rounded-xl bg-slate-900 border border-slate-800 text-xs text-white focus:outline-none focus:border-indigo-500"
+                  >
+                    {audioDevices.map(d => (
+                      <option key={d.deviceId} value={d.deviceId}>{d.label || `מיקרופון ${d.deviceId.slice(0, 5)}`}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Headphone / Speaker output selector */}
+                <div className="space-y-1">
+                  <label className="text-[11px] text-slate-400 flex items-center gap-1">
+                    <Headphones className="w-3 h-3 text-cyan-400" />
+                    <span>אוזניות / רמקולים (פלט שמע):</span>
+                  </label>
+                  <select
+                    value={selectedAudioOutputId}
+                    onChange={(e) => handleSwitchAudioOutput(e.target.value)}
+                    className="w-full p-2 rounded-xl bg-slate-900 border border-slate-800 text-xs text-white focus:outline-none focus:border-cyan-500"
+                  >
+                    {audioOutputDevices.length > 0 ? (
+                      audioOutputDevices.map(d => (
+                        <option key={d.deviceId} value={d.deviceId}>{d.label || `אוזניות/רמקול ${d.deviceId.slice(0, 5)}`}</option>
+                      ))
+                    ) : (
+                      <option value="">ברירת מחדל של מערכת ההפעלה</option>
+                    )}
+                  </select>
+                </div>
+              </div>
+            </div>
+
             {/* Headphone Tip Card */}
             <div className="p-3 rounded-2xl bg-indigo-950/40 border border-indigo-500/30 flex items-center gap-3">
               <div className="p-2 rounded-xl bg-indigo-600/30 text-indigo-300 shrink-0">
@@ -586,6 +708,17 @@ function GuestBroadcastContent() {
                 >
                   {isVideoMuted ? <VideoOff className="w-4 h-4" /> : <Video className="w-4 h-4 text-indigo-400" />}
                   <span>{isVideoMuted ? 'מצלמה כבויה' : 'מצלמה פעילה'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={playTestSound}
+                  disabled={isPlayingSoundTest}
+                  className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl font-bold text-xs bg-slate-800 hover:bg-slate-700 text-cyan-300 transition-all border border-cyan-500/20 active:scale-95"
+                  title="נגן צליל בדיקה באוזניות"
+                >
+                  <Volume2 className="w-4 h-4 text-cyan-400" />
+                  <span>{isPlayingSoundTest ? 'בודק...' : '🔊 בדיקת שמע'}</span>
                 </button>
               </div>
 

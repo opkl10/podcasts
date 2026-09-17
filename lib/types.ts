@@ -165,6 +165,12 @@ export interface AudioInputDevice {
   isGameAudio?: boolean;
 }
 
+export interface AudioOutputDevice {
+  deviceId: string;
+  label: string;
+  isDefault?: boolean;
+}
+
 export interface VideoInputDevice {
   deviceId: string;
   label: string;
