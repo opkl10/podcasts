@@ -569,6 +569,8 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
   // Broadcast Studio Vocal DSP & Noise Filtering States
   const [studioVocalEnhance, setStudioVocalEnhance] = useState<boolean>(true);
   const [micNoiseSuppression, setMicNoiseSuppression] = useState<boolean>(false);
+  const [micAutoGain, setMicAutoGain] = useState<boolean>(true);
+  const [micPreampBoost, setMicPreampBoost] = useState<number>(1.0);
 
   // 1. Device Discovery & Hotplugging Listener (iPhone USB / Continuity / Elgato)
   const refreshDevices = useCallback(async () => {
@@ -803,7 +805,7 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
           sampleRate: { ideal: 48000, min: 44100 },
           channelCount: { ideal: 2, min: 1 },
           echoCancellation: false,
-          autoGainControl: false,
+          autoGainControl: micAutoGain ? true : false,
           noiseSuppression: micNoiseSuppression ? true : false,
         };
 
@@ -853,7 +855,7 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
         streamInstance.getTracks().forEach(t => t.stop());
       }
     };
-  }, [selectedAudioId, micNoiseSuppression]);
+  }, [selectedAudioId, micNoiseSuppression, micAutoGain]);
 
   // 3a-2. Dedicated Emergency Backup Microphone Stream Acquisition (Channel 3)
   useEffect(() => {
@@ -1601,12 +1603,14 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
       monitorGame: monitorGameAudio,
       monitorMic: isMonitoringMic,
       micMonitorVolume,
+      micPreampBoost,
       studioVocalDsp: studioVocalEnhance,
       backupMicStream: isBackupMicEnabled ? backupMicStream : null,
       backupMicInMix: isBackupMicEnabled && (backupMicMode === 'active' || isHotSwapped) && !isBackupAudioMuted,
       backupMicVolume: isBackupAudioMuted ? 0 : backupMicGain
     });
     gamingMixerRef.current.setMicVolume(isAudioMuted ? 0 : micGain);
+    gamingMixerRef.current.setMicPreampBoost(micPreampBoost);
     gamingMixerRef.current.setGameVolume(gameAudioVolume);
     gamingMixerRef.current.setBackupMicVolume(isBackupAudioMuted ? 0 : backupMicGain);
 
@@ -1633,6 +1637,12 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
       gamingMixerRef.current.setMicVolume(isAudioMuted ? 0 : micGain);
     }
   }, [micGain, isAudioMuted]);
+
+  useEffect(() => {
+    if (gamingMixerRef.current) {
+      gamingMixerRef.current.setMicPreampBoost(micPreampBoost);
+    }
+  }, [micPreampBoost]);
 
   useEffect(() => {
     if (gamingMixerRef.current) {
@@ -2352,6 +2362,7 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
         monitorGame: monitorGameAudio,
         monitorMic: isMonitoringMic,
         micMonitorVolume,
+        micPreampBoost,
         studioVocalDsp: studioVocalEnhance,
         backupMicStream: isBackupMicEnabled ? backupMicStream : null,
         backupMicInMix: isBackupMicEnabled && (backupMicMode === 'active' || isHotSwapped) && !isBackupAudioMuted,
@@ -4432,7 +4443,13 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
                   <span>ערוץ 1: מיקרופון שדרן (איכות אולפן HD)</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="text-[11px] font-mono text-indigo-400">{Math.round(micGain * 100)}%</span>
+                  {micGain > 1.2 ? (
+                    <span className="text-[11px] font-mono text-amber-400 font-bold bg-amber-950/60 px-2 py-0.5 rounded border border-amber-800/80 flex items-center gap-1">
+                      <span>🚀 בוסט דש {Math.round(micGain * 100)}%</span>
+                    </span>
+                  ) : (
+                    <span className="text-[11px] font-mono text-indigo-400 font-bold">{Math.round(micGain * 100)}%</span>
+                  )}
                   <button
                     type="button"
                     onClick={toggleMic}
@@ -4491,50 +4508,107 @@ export default function GamingRecordingStudio({ episode }: GamingRecordingStudio
                 </div>
               </div>
 
-              {/* Studio Broadcast Vocal DSP & AI Noise Filter Toggles */}
-              <div className="grid grid-cols-2 gap-1.5 pt-1">
+              {/* Studio Broadcast Vocal DSP, AI Noise Filter & Hardware Auto-Gain (AGC) Toggles */}
+              <div className="grid grid-cols-3 gap-1.5 pt-1">
                 <button
                   type="button"
                   onClick={() => {
                     setStudioVocalEnhance(!studioVocalEnhance);
                     gamingMixerRef.current?.resume();
                   }}
-                  className={`px-2 py-1.5 rounded-lg text-[10px] font-bold border flex items-center justify-center gap-1 transition-all ${
+                  className={`px-1 py-1.5 rounded-lg text-[10px] font-bold border flex items-center justify-center gap-1 transition-all ${
                     studioVocalEnhance
                       ? 'bg-indigo-600/30 border-indigo-500 text-indigo-200 shadow-sm'
                       : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
                   }`}
-                  title="מעבד קול אולפני: סינון רעידות 80Hz, הבלטת נוכחות 3.8kHz וקומפרסור מונע צרימות"
+                  title="מעבד קול אולפני: סינון רעידות 80Hz, הבלטת נוכחות 3.8kHz, קומפרסור ומייקאפ גיין"
                 >
-                  <span>🎙️ עיבוד אולפן (DSP): {studioVocalEnhance ? 'פעיל ✨' : 'כבוי'}</span>
+                  <span>🎙️ DSP: {studioVocalEnhance ? 'פעיל ✨' : 'כבוי'}</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => setMicNoiseSuppression(!micNoiseSuppression)}
-                  className={`px-2 py-1.5 rounded-lg text-[10px] font-bold border flex items-center justify-center gap-1 transition-all ${
+                  className={`px-1 py-1.5 rounded-lg text-[10px] font-bold border flex items-center justify-center gap-1 transition-all ${
                     micNoiseSuppression
                       ? 'bg-teal-600/30 border-teal-500 text-teal-200 shadow-sm'
                       : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
                   }`}
                   title="סינון רעשי רקע של חדר, מאווררים ומזגן"
                 >
-                  <span>🔇 סינון רעשים: {micNoiseSuppression ? 'פעיל' : 'כבוי'}</span>
+                  <span>🔇 סינון: {micNoiseSuppression ? 'פעיל' : 'כבוי'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMicAutoGain(!micAutoGain)}
+                  className={`px-1 py-1.5 rounded-lg text-[10px] font-bold border flex items-center justify-center gap-1 transition-all ${
+                    micAutoGain
+                      ? 'bg-amber-600/30 border-amber-500 text-amber-200 shadow-sm'
+                      : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
+                  }`}
+                  title="הגבר אוטומטי (Auto Gain Control): מגביר ומאזן אותות חלשים אוטומטית בחומרה"
+                >
+                  <span>🎚️ אוטו-גיין: {micAutoGain ? 'פעיל' : 'כבוי'}</span>
                 </button>
               </div>
 
-              {/* Mic Slider + Real-Time Multi-color VU */}
+              {/* Quick Preamp & Gain Boost Presets for Lavalier / Lapel Mics */}
+              <div className="pt-1.5 space-y-1">
+                <div className="flex items-center justify-between text-[10px]">
+                  <span className="text-slate-400 font-medium">🚀 הגברה מהירה לדש:</span>
+                  <span className="text-[10px] text-amber-400/90 font-mono">עד 500%</span>
+                </div>
+                <div className="grid grid-cols-4 gap-1">
+                  {[
+                    { label: '100% רגיל', gain: 1.0, boost: 1.0 },
+                    { label: '🚀 200% דש', gain: 2.0, boost: 1.5 },
+                    { label: '⚡ 350% חלש', gain: 3.5, boost: 2.2 },
+                    { label: '🔥 500% מקס', gain: 5.0, boost: 3.0 },
+                  ].map((p) => {
+                    const isActive = Math.abs(micGain - p.gain) < 0.1;
+                    return (
+                      <button
+                        key={p.gain}
+                        type="button"
+                        onClick={() => {
+                          setMicGain(p.gain);
+                          setMicPreampBoost(p.boost);
+                          gamingMixerRef.current?.setMicVolume(p.gain);
+                          gamingMixerRef.current?.setMicPreampBoost(p.boost);
+                          gamingMixerRef.current?.resume();
+                        }}
+                        className={`py-1 px-1 rounded text-[10px] font-bold border transition-all text-center truncate ${
+                          isActive
+                            ? 'bg-amber-600/30 border-amber-500 text-amber-200 shadow-sm ring-1 ring-amber-500/40'
+                            : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white hover:border-slate-700'
+                        }`}
+                        title={`הגבר ל-${p.label}`}
+                      >
+                        {p.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Mic Slider (0% - 500%) + Real-Time Multi-color VU */}
               <div className="flex items-center gap-3 pt-1">
                 <input
                   type="range"
                   min="0"
-                  max="2"
+                  max="5"
                   step="0.05"
                   value={micGain}
                   onChange={(e) => {
-                    setMicGain(parseFloat(e.target.value));
+                    const val = parseFloat(e.target.value);
+                    setMicGain(val);
+                    const dynPreamp = val > 2.0 ? 1.0 + (val - 2.0) * 0.5 : 1.0;
+                    setMicPreampBoost(dynPreamp);
+                    gamingMixerRef.current?.setMicVolume(val);
+                    gamingMixerRef.current?.setMicPreampBoost(dynPreamp);
                     gamingMixerRef.current?.resume();
                   }}
                   className="flex-1 accent-indigo-500 cursor-pointer h-1.5 bg-slate-800 rounded-lg"
+                  title={`עוצמת מיקרופון: ${Math.round(micGain * 100)}%`}
                 />
                 <div className="w-24 h-3 rounded-full bg-slate-950 overflow-hidden border border-slate-700/80" title="מד עוצמת מיקרופון">
                   <div

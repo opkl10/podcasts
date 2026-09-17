@@ -521,11 +521,15 @@ export class GamingAudioMixer {
 
   // Broadcast Studio Vocal DSP Chain (Professional Radio / Streaming Voice)
   private isStudioVocalDspEnabled: boolean = true;
+  private micPreampNode: GainNode | null = null;
   private micHighPass: BiquadFilterNode | null = null;
   private micDeMud: BiquadFilterNode | null = null;
   private micPresence: BiquadFilterNode | null = null;
   private micAir: BiquadFilterNode | null = null;
   private micCompressor: DynamicsCompressorNode | null = null;
+  private micMakeupGainNode: GainNode | null = null;
+  private micLimiter: DynamicsCompressorNode | null = null;
+  private micPreampBoost: number = 1.0;
   private isMonitoringGame: boolean = true;
   private isMonitoringMic: boolean = false;
   private micMonitorVolume: number = 1.0;
@@ -545,6 +549,7 @@ export class GamingAudioMixer {
       monitorGame?: boolean; 
       monitorMic?: boolean;
       micMonitorVolume?: number;
+      micPreampBoost?: number;
       studioVocalDsp?: boolean;
       backupMicStream?: MediaStream | null;
       backupMicInMix?: boolean;
@@ -563,6 +568,7 @@ export class GamingAudioMixer {
       if (options.monitorGame !== undefined) this.isMonitoringGame = options.monitorGame;
       if (options.monitorMic !== undefined) this.isMonitoringMic = options.monitorMic;
       if (options.micMonitorVolume !== undefined) this.micMonitorVolume = options.micMonitorVolume;
+      if (options.micPreampBoost !== undefined) this.micPreampBoost = options.micPreampBoost;
       if (options.studioVocalDsp !== undefined) this.isStudioVocalDspEnabled = options.studioVocalDsp;
       if (options.backupMicInMix !== undefined) this.isBackupMicInMix = options.backupMicInMix;
     }
@@ -583,6 +589,11 @@ export class GamingAudioMixer {
     if (micStream && micStream.getAudioTracks().length > 0) {
       try {
         this.micSource = this.audioCtx.createMediaStreamSource(micStream);
+
+        // Preamp Stage (Hardware compensation for weak lapel / lavalier microphones)
+        this.micPreampNode = this.audioCtx.createGain();
+        this.micPreampNode.gain.setValueAtTime(this.micPreampBoost, this.audioCtx.currentTime);
+
         this.micGainNode = this.audioCtx.createGain();
         this.micAnalyser = this.audioCtx.createAnalyser();
         this.micAnalyser.fftSize = 64;
@@ -600,45 +611,60 @@ export class GamingAudioMixer {
         this.micDeMud.Q.setValueAtTime(1.0, this.audioCtx.currentTime);
         this.micDeMud.gain.setValueAtTime(this.isStudioVocalDspEnabled ? -2.0 : 0.0, this.audioCtx.currentTime);
 
-        // Stage 3: Vocal Presence & Articulation Boost (3.8kHz +3.5dB for crisp radio clarity)
+        // Stage 3: Vocal Presence & Articulation Boost (3.8kHz +4.0dB for crisp radio clarity)
         this.micPresence = this.audioCtx.createBiquadFilter();
         this.micPresence.type = 'peaking';
         this.micPresence.frequency.setValueAtTime(3800, this.audioCtx.currentTime);
         this.micPresence.Q.setValueAtTime(1.2, this.audioCtx.currentTime);
-        this.micPresence.gain.setValueAtTime(this.isStudioVocalDspEnabled ? 3.5 : 0.0, this.audioCtx.currentTime);
+        this.micPresence.gain.setValueAtTime(this.isStudioVocalDspEnabled ? 4.0 : 0.0, this.audioCtx.currentTime);
 
-        // Stage 4: Broadcast Air & Condenser Sparkle (10kHz High Shelf +2.5dB)
+        // Stage 4: Broadcast Air & Condenser Sparkle (10kHz High Shelf +3.0dB)
         this.micAir = this.audioCtx.createBiquadFilter();
         this.micAir.type = 'highshelf';
         this.micAir.frequency.setValueAtTime(10000, this.audioCtx.currentTime);
-        this.micAir.gain.setValueAtTime(this.isStudioVocalDspEnabled ? 2.5 : 0.0, this.audioCtx.currentTime);
+        this.micAir.gain.setValueAtTime(this.isStudioVocalDspEnabled ? 3.0 : 0.0, this.audioCtx.currentTime);
 
-        // Stage 5: Studio Broadcast Dynamics Compressor / Peak Limiter (smooths peaks, prevents clipping)
+        // Stage 5: Studio Broadcast Dynamics Compressor (smooths dynamic range)
         this.micCompressor = this.audioCtx.createDynamicsCompressor();
-        this.micCompressor.threshold.setValueAtTime(this.isStudioVocalDspEnabled ? -18 : 0, this.audioCtx.currentTime);
+        this.micCompressor.threshold.setValueAtTime(this.isStudioVocalDspEnabled ? -22 : 0, this.audioCtx.currentTime);
         this.micCompressor.knee.setValueAtTime(12, this.audioCtx.currentTime);
         this.micCompressor.ratio.setValueAtTime(this.isStudioVocalDspEnabled ? 3.5 : 1.0, this.audioCtx.currentTime);
         this.micCompressor.attack.setValueAtTime(0.003, this.audioCtx.currentTime);
         this.micCompressor.release.setValueAtTime(0.20, this.audioCtx.currentTime);
 
-        // Connect Chain: Source -> HPF -> DeMud -> Presence -> Air -> Compressor -> MicGain
+        // Stage 6: Studio Vocal Makeup Gain (+4.5dB body so compressed voice is full & loud)
+        this.micMakeupGainNode = this.audioCtx.createGain();
+        this.micMakeupGainNode.gain.setValueAtTime(this.isStudioVocalDspEnabled ? 1.68 : 1.0, this.audioCtx.currentTime);
+
+        // Stage 7: Studio Brickwall Safety Limiter (Prevents clipping/distortion when boosting weak mics)
+        this.micLimiter = this.audioCtx.createDynamicsCompressor();
+        this.micLimiter.threshold.setValueAtTime(-1.0, this.audioCtx.currentTime);
+        this.micLimiter.knee.setValueAtTime(0, this.audioCtx.currentTime);
+        this.micLimiter.ratio.setValueAtTime(20.0, this.audioCtx.currentTime);
+        this.micLimiter.attack.setValueAtTime(0.001, this.audioCtx.currentTime);
+        this.micLimiter.release.setValueAtTime(0.05, this.audioCtx.currentTime);
+
+        // Connect Chain: Source -> Preamp -> HPF -> DeMud -> Presence -> Air -> Compressor -> Makeup -> Gain -> Limiter
         this.micSource
+          .connect(this.micPreampNode)
           .connect(this.micHighPass)
           .connect(this.micDeMud)
           .connect(this.micPresence)
           .connect(this.micAir)
           .connect(this.micCompressor)
-          .connect(this.micGainNode);
+          .connect(this.micMakeupGainNode)
+          .connect(this.micGainNode)
+          .connect(this.micLimiter);
 
-        this.micGainNode.connect(this.micAnalyser);
+        this.micLimiter.connect(this.micAnalyser);
         
         // Connect to isolated mic track destination
-        this.micGainNode.connect(this.micDestinationNode);
+        this.micLimiter.connect(this.micDestinationNode);
 
         // Live Audio Output for Streamer Mic Sidetone / Headphone Monitoring (bypasses to output)
         this.micMonitorGainNode = this.audioCtx.createGain();
         this.micMonitorGainNode.gain.setValueAtTime(this.isMonitoringMic ? this.micMonitorVolume : 0.0, this.audioCtx.currentTime);
-        this.micGainNode.connect(this.micMonitorGainNode);
+        this.micLimiter.connect(this.micMonitorGainNode);
         this.micMonitorGainNode.connect(this.audioCtx.destination);
       } catch (err) {
         console.warn('Could not connect mic track to mixer:', err);
@@ -703,10 +729,11 @@ export class GamingAudioMixer {
     }
 
     // 4. Connect to Master Destination (either Split Channels or Stereo Mix)
+    const micOut = this.micLimiter || this.micGainNode;
     if (this.isChannelSplit) {
       // Channel 0 = Mic (Left), Channel 1 = Game (Right)
       this.mergerNode = this.audioCtx.createChannelMerger(2);
-      if (this.micGainNode) this.micGainNode.connect(this.mergerNode, 0, 0);
+      if (micOut) micOut.connect(this.mergerNode, 0, 0);
       if (this.gameGainNode) this.gameGainNode.connect(this.mergerNode, 0, 1);
       if (this.isBackupMicInMix && this.backupMicGainNode) {
         this.backupMicGainNode.connect(this.mergerNode, 0, 0);
@@ -714,7 +741,7 @@ export class GamingAudioMixer {
       this.mergerNode.connect(this.masterDestinationNode);
     } else {
       // Standard stereo composite mix
-      if (this.micGainNode) this.micGainNode.connect(this.masterDestinationNode);
+      if (micOut) micOut.connect(this.masterDestinationNode);
       if (this.gameGainNode) this.gameGainNode.connect(this.masterDestinationNode);
       if (this.isBackupMicInMix && this.backupMicGainNode) {
         this.backupMicGainNode.connect(this.masterDestinationNode);
@@ -790,16 +817,26 @@ export class GamingAudioMixer {
     }
   }
 
+  public setMicPreampBoost(boost: number) {
+    this.micPreampBoost = Math.max(0.5, boost);
+    if (this.micPreampNode && this.audioCtx) {
+      this.micPreampNode.gain.setValueAtTime(this.micPreampBoost, this.audioCtx.currentTime);
+    }
+  }
+
   public setStudioVocalEnhance(enabled: boolean) {
     this.isStudioVocalDspEnabled = enabled;
     if (!this.audioCtx) return;
     const now = this.audioCtx.currentTime;
     if (this.micDeMud) this.micDeMud.gain.setValueAtTime(enabled ? -2.0 : 0.0, now);
-    if (this.micPresence) this.micPresence.gain.setValueAtTime(enabled ? 3.5 : 0.0, now);
-    if (this.micAir) this.micAir.gain.setValueAtTime(enabled ? 2.5 : 0.0, now);
+    if (this.micPresence) this.micPresence.gain.setValueAtTime(enabled ? 4.0 : 0.0, now);
+    if (this.micAir) this.micAir.gain.setValueAtTime(enabled ? 3.0 : 0.0, now);
     if (this.micCompressor) {
-      this.micCompressor.threshold.setValueAtTime(enabled ? -18 : 0, now);
+      this.micCompressor.threshold.setValueAtTime(enabled ? -22 : 0, now);
       this.micCompressor.ratio.setValueAtTime(enabled ? 3.5 : 1.0, now);
+    }
+    if (this.micMakeupGainNode) {
+      this.micMakeupGainNode.gain.setValueAtTime(enabled ? 1.68 : 1.0, now);
     }
   }
 
@@ -875,6 +912,10 @@ export class GamingAudioMixer {
       try { this.micSource.disconnect(); } catch {}
       this.micSource = null;
     }
+    if (this.micPreampNode) {
+      try { this.micPreampNode.disconnect(); } catch {}
+      this.micPreampNode = null;
+    }
     if (this.micHighPass) {
       try { this.micHighPass.disconnect(); } catch {}
       this.micHighPass = null;
@@ -894,6 +935,14 @@ export class GamingAudioMixer {
     if (this.micCompressor) {
       try { this.micCompressor.disconnect(); } catch {}
       this.micCompressor = null;
+    }
+    if (this.micMakeupGainNode) {
+      try { this.micMakeupGainNode.disconnect(); } catch {}
+      this.micMakeupGainNode = null;
+    }
+    if (this.micLimiter) {
+      try { this.micLimiter.disconnect(); } catch {}
+      this.micLimiter = null;
     }
     if (this.backupMicSource) {
       try { this.backupMicSource.disconnect(); } catch {}
