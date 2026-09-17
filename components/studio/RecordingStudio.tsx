@@ -65,7 +65,10 @@ import {
   Crosshair,
   SplitSquareVertical,
   LayoutGrid,
-  VolumeX
+  VolumeX,
+  CircleDot,
+  Trash2,
+  X
 } from 'lucide-react';
 
 interface RecordingStudioProps {
@@ -85,10 +88,25 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
   const [isUsingRemoteCam, setIsUsingRemoteCam] = useState(false);
   const [isMediaLoading, setIsMediaLoading] = useState(false);
 
-  // Audio DSP: Gain & Noise Suppression
+  // Audio DSP: Gain, Preamp, AGC & Headphone Monitoring
   const [micGain, setMicGain] = useState<number>(1.0); // 100% default
   const [noiseSuppression, setNoiseSuppression] = useState<boolean>(true); // DSP Noise filter ON
+  const [isMonitoringMic, setIsMonitoringMic] = useState<boolean>(false); // Live Headphone Monitoring
+  const [isAutoGainControl, setIsAutoGainControl] = useState<boolean>(false); // AGC toggle
+  const [mediaResetKey, setMediaResetKey] = useState<number>(0);
   const audioProcessorRef = useRef<StudioAudioProcessor | null>(null);
+
+  // Pre-recording Soundcheck Take: Test Recording & Instant Playback
+  const [isTestRecording, setIsTestRecording] = useState<boolean>(false);
+  const [testRecordingDuration, setTestRecordingDuration] = useState<number>(0);
+  const [testAudioUrl, setTestAudioUrl] = useState<string | null>(null);
+  const [isPlayingTestAudio, setIsPlayingTestAudio] = useState<boolean>(false);
+  const [testAudioProgress, setTestAudioProgress] = useState<number>(0);
+  const [testAudioDuration, setTestAudioDuration] = useState<number>(0);
+  const testMediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const testAudioChunksRef = useRef<Blob[]>([]);
+  const testAudioPlayerRef = useRef<HTMLAudioElement | null>(null);
+  const testAudioTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Video Cinematic Effects: Depth of Field (Bokeh)
   const [depthOfField, setDepthOfField] = useState<boolean>(false);
@@ -538,7 +556,7 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
               deviceId: selectedAudioId ? { ideal: selectedAudioId } : undefined,
               echoCancellation: false,
               noiseSuppression: false,
-              autoGainControl: false,
+              autoGainControl: isAutoGainControl ? true : false,
               channelCount: { ideal: audioChannelMode === 'stereo' ? 2 : 1 },
               sampleRate: { ideal: 48000 },
               sampleSize: { ideal: 16 }
@@ -553,7 +571,7 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
               audio: {
                 echoCancellation: false,
                 noiseSuppression: false,
-                autoGainControl: false,
+                autoGainControl: isAutoGainControl ? true : false,
                 channelCount: { ideal: audioChannelMode === 'stereo' ? 2 : 1 }
               }, 
               video: false 
@@ -609,8 +627,8 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
             setupAudioProcessor(rawStream);
           }
         }
-      } catch (err) {
-        console.error('Error starting media stream:', err);
+      } catch (err: any) {
+        console.error('Media init error:', err);
       } finally {
         setIsMediaLoading(false);
       }
@@ -624,7 +642,7 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
         streamInstance.getTracks().forEach(t => t.stop());
       }
     };
-  }, [selectedVideoId, selectedAudioId, videoResolution, isUsingRemoteCam, remoteStream, isAudioOnly]);
+  }, [selectedVideoId, selectedAudioId, videoResolution, isUsingRemoteCam, remoteStream, isAudioOnly, isAutoGainControl, mediaResetKey]);
 
   // 3. Web Audio API Setup for DSP Gain & VU Metering
   const setupAudioProcessor = (stream: MediaStream) => {
@@ -647,16 +665,18 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
 
     processor.setGain(micGain);
     processor.setNoiseSuppression(noiseSuppression);
+    processor.setMonitoring(isMonitoringMic);
     audioProcessorRef.current = processor;
     const processed = processor.process(stream);
     processedStreamRef.current = processed;
   };
 
-  // Update Gain Live
+  // Update Gain Live (Supports up to 500% with Preamp boost)
   const handleGainChange = (newGain: number) => {
     setMicGain(newGain);
     if (audioProcessorRef.current) {
       audioProcessorRef.current.setGain(newGain);
+      audioProcessorRef.current.resume();
     }
   };
 
@@ -666,7 +686,163 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
     setNoiseSuppression(nextState);
     if (audioProcessorRef.current) {
       audioProcessorRef.current.setNoiseSuppression(nextState);
+      audioProcessorRef.current.resume();
     }
+  };
+
+  // Toggle Live Headphone Monitoring
+  const handleToggleMonitoring = () => {
+    const nextState = !isMonitoringMic;
+    setIsMonitoringMic(nextState);
+    if (audioProcessorRef.current) {
+      audioProcessorRef.current.setMonitoring(nextState);
+      if (nextState) audioProcessorRef.current.resume();
+    }
+  };
+
+  // Toggle Hardware Auto Gain Control (AGC)
+  const handleToggleAutoGainControl = () => {
+    const nextState = !isAutoGainControl;
+    setIsAutoGainControl(nextState);
+  };
+
+  // Master Audio Subsystem Reset
+  const handleMasterAudioReset = async () => {
+    try {
+      if (currentStream) {
+        currentStream.getAudioTracks().forEach(t => t.stop());
+      }
+      if (audioProcessorRef.current) {
+        audioProcessorRef.current.stop();
+      }
+      setMicGain(1.0);
+      setIsAudioMuted(false);
+      setIsMonitoringMic(false);
+      setMediaResetKey(k => k + 1);
+    } catch (err) {
+      console.warn('Master audio reset failed:', err);
+    }
+  };
+
+  // Mic Soundcheck Test Take: Record (5-30s) and Auto Playback
+  const startMicTest = () => {
+    if (isTestRecording) return;
+    if (testAudioPlayerRef.current) {
+      testAudioPlayerRef.current.pause();
+    }
+    if (testAudioUrl) {
+      URL.revokeObjectURL(testAudioUrl);
+    }
+    setTestAudioUrl(null);
+    setIsPlayingTestAudio(false);
+    setTestAudioProgress(0);
+    setTestAudioDuration(0);
+
+    const activeStream = processedStreamRef.current || currentStream;
+    if (!activeStream || activeStream.getAudioTracks().length === 0) {
+      alert('לא זוהה אות שמע מהמיקרופון. אנא ודא שהמיקרופון פועל ומחובר.');
+      return;
+    }
+
+    try {
+      if (audioProcessorRef.current) audioProcessorRef.current.resume();
+
+      let mimeType = 'audio/webm;codecs=opus';
+      if (typeof MediaRecorder !== 'undefined') {
+        if (!MediaRecorder.isTypeSupported(mimeType)) {
+          mimeType = MediaRecorder.isTypeSupported('audio/webm') 
+            ? 'audio/webm' 
+            : (MediaRecorder.isTypeSupported('audio/mp4') ? 'audio/mp4' : '');
+        }
+      }
+
+      // Record specifically the audio track
+      const audioOnlyStream = new MediaStream([activeStream.getAudioTracks()[0]]);
+      const recorder = new MediaRecorder(audioOnlyStream, mimeType ? { mimeType } : undefined);
+      testMediaRecorderRef.current = recorder;
+      testAudioChunksRef.current = [];
+
+      recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) {
+          testAudioChunksRef.current.push(e.data);
+        }
+      };
+
+      recorder.onstop = () => {
+        const finalBlob = new Blob(testAudioChunksRef.current, { type: mimeType || 'audio/webm' });
+        if (finalBlob.size > 0) {
+          const url = URL.createObjectURL(finalBlob);
+          setTestAudioUrl(url);
+          // Autoplay immediately so the user hears their recording right away!
+          setTimeout(() => {
+            if (testAudioPlayerRef.current) {
+              testAudioPlayerRef.current.currentTime = 0;
+              testAudioPlayerRef.current.play().then(() => {
+                setIsPlayingTestAudio(true);
+              }).catch(() => {});
+            }
+          }, 150);
+        }
+      };
+
+      recorder.start(100);
+      setIsTestRecording(true);
+      setTestRecordingDuration(0);
+
+      if (testAudioTimerRef.current) clearInterval(testAudioTimerRef.current);
+      testAudioTimerRef.current = setInterval(() => {
+        setTestRecordingDuration(prev => {
+          if (prev >= 29) {
+            stopMicTest();
+            return 30;
+          }
+          return prev + 1;
+        });
+      }, 1000);
+    } catch (err) {
+      console.error('Failed to start mic test recording:', err);
+      alert('שגיאה באתחול הקלטת הניסיון של המיקרופון.');
+    }
+  };
+
+  const stopMicTest = () => {
+    if (testAudioTimerRef.current) {
+      clearInterval(testAudioTimerRef.current);
+      testAudioTimerRef.current = null;
+    }
+    setIsTestRecording(false);
+    if (testMediaRecorderRef.current && testMediaRecorderRef.current.state !== 'inactive') {
+      try {
+        testMediaRecorderRef.current.stop();
+      } catch (err) {
+        console.warn('Error stopping test recorder:', err);
+      }
+    }
+  };
+
+  const togglePlayTestAudio = () => {
+    if (!testAudioPlayerRef.current) return;
+    if (isPlayingTestAudio) {
+      testAudioPlayerRef.current.pause();
+      setIsPlayingTestAudio(false);
+    } else {
+      testAudioPlayerRef.current.play().then(() => {
+        setIsPlayingTestAudio(true);
+      }).catch(() => {});
+    }
+  };
+
+  const discardTestAudio = () => {
+    if (testAudioPlayerRef.current) {
+      testAudioPlayerRef.current.pause();
+      testAudioPlayerRef.current.currentTime = 0;
+    }
+    if (testAudioUrl) {
+      URL.revokeObjectURL(testAudioUrl);
+    }
+    setTestAudioUrl(null);
+    setIsPlayingTestAudio(false);
+    setTestAudioProgress(0);
   };
 
   // Draw Audio Waveform Canvas
@@ -2188,46 +2364,265 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
                     </button>
                   </div>
 
-                  {/* Sub-row: Gain Slider + DSP Noise Filter Toggle */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
-                    {/* Gain Slider */}
-                    <div className="p-2 rounded-xl bg-slate-900 border border-slate-800 flex items-center gap-2">
-                      <div className="flex items-center gap-1 text-[11px] font-bold text-slate-300 shrink-0">
+                  {/* Quick Gain Presets (100%, 200%, 350%, 500%) */}
+                  <div className="space-y-1.5 pt-1">
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="font-bold text-slate-300 flex items-center gap-1">
                         <Volume2 className="w-3.5 h-3.5 text-indigo-400" />
-                        <span>Gain:</span>
-                        <span className="font-mono text-indigo-400">{Math.round(micGain * 100)}%</span>
-                      </div>
-                      <input
-                        type="range"
-                        min="0"
-                        max="2"
-                        step="0.05"
-                        value={micGain}
-                        onChange={(e) => handleGainChange(parseFloat(e.target.value))}
-                        className="w-full accent-indigo-500 cursor-pointer h-1.5 bg-slate-800 rounded-lg"
-                      />
+                        <span>הגבר מיקרופון (Gain):</span>
+                      </span>
+                      <span className="font-mono text-indigo-400 font-bold">{Math.round(micGain * 100)}%</span>
                     </div>
 
+                    <div className="grid grid-cols-4 gap-1">
+                      {[
+                        { label: '100% רגיל', gain: 1.0 },
+                        { label: '🚀 200% דש', gain: 2.0 },
+                        { label: '⚡ 350% חלש', gain: 3.5 },
+                        { label: '🔥 500% מקס', gain: 5.0 },
+                      ].map((p) => {
+                        const isActive = Math.abs(micGain - p.gain) < 0.1;
+                        return (
+                          <button
+                            key={p.gain}
+                            type="button"
+                            onClick={() => handleGainChange(p.gain)}
+                            className={`py-1 px-1 rounded-lg text-[10px] font-bold border transition-all text-center truncate ${
+                              isActive
+                                ? 'bg-indigo-600/30 border-indigo-500 text-indigo-200 shadow-sm ring-1 ring-indigo-500/40'
+                                : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white hover:border-slate-700'
+                            }`}
+                            title={`הגבר ל-${p.label}`}
+                          >
+                            {p.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {/* Gain Slider (0% - 500%) */}
+                    <input
+                      type="range"
+                      min="0"
+                      max="5"
+                      step="0.05"
+                      value={micGain}
+                      onChange={(e) => handleGainChange(parseFloat(e.target.value))}
+                      className="w-full accent-indigo-500 cursor-pointer h-1.5 bg-slate-800 rounded-lg"
+                      title={`עוצמת מיקרופון: ${Math.round(micGain * 100)}%`}
+                    />
+                  </div>
+
+                  {/* Audio Controls Toggles Row: DSP Filter, AGC, Monitoring, Reset */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 pt-1">
                     {/* Noise Filter Toggle */}
                     <button
                       type="button"
                       onClick={handleToggleNoiseSuppression}
-                      className={`p-2 rounded-xl border text-[11px] font-bold flex items-center justify-between transition-all ${
+                      className={`p-1.5 rounded-xl border text-[10px] font-bold flex items-center justify-between transition-all ${
                         noiseSuppression
                           ? 'bg-emerald-950/60 border-emerald-500/40 text-emerald-300 shadow'
                           : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
                       }`}
+                      title="סינון רעשי רקע ואקוסטיקה (DSP)"
                     >
-                      <div className="flex items-center gap-1.5">
-                        <Wand2 className="w-3.5 h-3.5 text-emerald-400" />
-                        <span>ניקוי רעשים DSP</span>
+                      <div className="flex items-center gap-1">
+                        <Wand2 className="w-3 h-3 text-emerald-400 shrink-0" />
+                        <span className="truncate">DSP סינון</span>
                       </div>
-                      <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold ${
+                      <span className={`text-[8px] px-1 py-0.5 rounded font-bold ${
                         noiseSuppression ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-400'
                       }`}>
-                        {noiseSuppression ? 'פעיל ✓' : 'כבוי'}
+                        {noiseSuppression ? '✓' : '✕'}
                       </span>
                     </button>
+
+                    {/* Auto Gain Control (AGC) Toggle */}
+                    <button
+                      type="button"
+                      onClick={handleToggleAutoGainControl}
+                      className={`p-1.5 rounded-xl border text-[10px] font-bold flex items-center justify-between transition-all ${
+                        isAutoGainControl
+                          ? 'bg-cyan-950/60 border-cyan-500/40 text-cyan-300 shadow'
+                          : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                      }`}
+                      title="איזון אוטומטי של עוצמת המיקרופון בחומרה"
+                    >
+                      <div className="flex items-center gap-1">
+                        <Sliders className="w-3 h-3 text-cyan-400 shrink-0" />
+                        <span className="truncate">AGC אוטו</span>
+                      </div>
+                      <span className={`text-[8px] px-1 py-0.5 rounded font-bold ${
+                        isAutoGainControl ? 'bg-cyan-600 text-white' : 'bg-slate-800 text-slate-400'
+                      }`}>
+                        {isAutoGainControl ? '✓' : '✕'}
+                      </span>
+                    </button>
+
+                    {/* Headphone Live Monitoring Toggle */}
+                    <button
+                      type="button"
+                      onClick={handleToggleMonitoring}
+                      className={`p-1.5 rounded-xl border text-[10px] font-bold flex items-center justify-between transition-all ${
+                        isMonitoringMic
+                          ? 'bg-amber-950/60 border-amber-500/40 text-amber-300 shadow'
+                          : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                      }`}
+                      title="האזנה חיה למיקרופון באוזניות בזמן אמת"
+                    >
+                      <div className="flex items-center gap-1">
+                        <Headphones className="w-3 h-3 text-amber-400 shrink-0" />
+                        <span className="truncate">האזנה חיה</span>
+                      </div>
+                      <span className={`text-[8px] px-1 py-0.5 rounded font-bold ${
+                        isMonitoringMic ? 'bg-amber-600 text-white' : 'bg-slate-800 text-slate-400'
+                      }`}>
+                        {isMonitoringMic ? 'פעיל' : 'כבוי'}
+                      </span>
+                    </button>
+
+                    {/* Master Audio Reset */}
+                    <button
+                      type="button"
+                      onClick={handleMasterAudioReset}
+                      className="p-1.5 rounded-xl border border-slate-800 bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-rose-300 text-[10px] font-bold flex items-center justify-center gap-1 transition-all active:scale-95"
+                      title="איפוס מוחלט של מנוע הסאונד ושחרור נעילות חומרה"
+                    >
+                      <RotateCw className="w-3 h-3" />
+                      <span>איפוס סאונד</span>
+                    </button>
+                  </div>
+
+                  {/* Pre-recording Soundcheck Take: Record Mic Test (5-30s) & Instant Playback */}
+                  <div className="pt-2 border-t border-slate-800/80 space-y-2">
+                    {/* Audio element for instant playback */}
+                    <audio
+                      ref={testAudioPlayerRef}
+                      src={testAudioUrl || undefined}
+                      onTimeUpdate={() => {
+                        if (testAudioPlayerRef.current) {
+                          setTestAudioProgress(testAudioPlayerRef.current.currentTime);
+                          setTestAudioDuration(testAudioPlayerRef.current.duration || 0);
+                        }
+                      }}
+                      onEnded={() => {
+                        setIsPlayingTestAudio(false);
+                        setTestAudioProgress(0);
+                      }}
+                      onLoadedMetadata={() => {
+                        if (testAudioPlayerRef.current) {
+                          setTestAudioDuration(testAudioPlayerRef.current.duration || 0);
+                        }
+                      }}
+                    />
+
+                    {/* Main Action Buttons (When not actively recording test) */}
+                    {!isTestRecording && !testAudioUrl && (
+                      <button
+                        type="button"
+                        onClick={startMicTest}
+                        className="w-full px-3 py-2 rounded-xl text-xs font-bold border border-indigo-500/60 bg-gradient-to-r from-indigo-900/60 to-purple-900/60 hover:from-indigo-800/80 hover:to-purple-800/80 text-white flex items-center justify-center gap-2 shadow-md transition-all active:scale-95"
+                        title="הקלט 5-10 שניות בדיקה כדי לשמוע בדיוק איך הקול שלך נשמע עם כל הפילטרים והווליום"
+                      >
+                        <CircleDot className="w-3.5 h-3.5 text-rose-400 fill-rose-500/40 animate-pulse" />
+                        <span>🎙️ הקלט ניסיון והשמע (Soundcheck)</span>
+                      </button>
+                    )}
+
+                    {/* Active Test Recording Card */}
+                    {isTestRecording && (
+                      <div className="p-3 rounded-xl bg-rose-950/50 border border-rose-500/70 space-y-2 shadow-lg animate-pulse">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2 text-rose-200 font-bold text-xs">
+                            <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping" />
+                            <span>מקליט ניסיון... דבר למיקרופון!</span>
+                          </div>
+                          <span className="font-mono text-xs font-bold text-rose-300 bg-rose-900/80 px-2 py-0.5 rounded border border-rose-700">
+                            00:{testRecordingDuration.toString().padStart(2, '0')} / 00:30
+                          </span>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={stopMicTest}
+                          className="w-full py-2 px-3 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-md transition-all active:scale-95"
+                        >
+                          <Square className="w-3.5 h-3.5 fill-current" />
+                          <span>⏹️ עצור והשמע מיד את ההקלטה 🔊</span>
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Test Audio Result Player */}
+                    {testAudioUrl && !isTestRecording && (
+                      <div className="p-2.5 rounded-xl bg-slate-950/95 border border-indigo-500/50 space-y-2 shadow-xl">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-1.5 text-xs font-bold text-indigo-300">
+                            <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+                            <span>תוצאת הקלטת הניסיון (כך יישמע המיקרופון בהקלטה):</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={discardTestAudio}
+                            className="text-slate-500 hover:text-slate-300 p-1 rounded hover:bg-slate-800"
+                            title="סגור"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+
+                        <div className="flex items-center gap-2 bg-slate-900/80 p-2 rounded-lg border border-slate-800">
+                          <button
+                            type="button"
+                            onClick={togglePlayTestAudio}
+                            className="w-7 h-7 rounded-full bg-indigo-600 hover:bg-indigo-500 text-white flex items-center justify-center shrink-0 shadow"
+                          >
+                            {isPlayingTestAudio ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5 ml-0.5" />}
+                          </button>
+
+                          <div className="flex-1 space-y-1">
+                            <input
+                              type="range"
+                              min="0"
+                              max={testAudioDuration || 1}
+                              step="0.1"
+                              value={testAudioProgress}
+                              onChange={(e) => {
+                                const val = parseFloat(e.target.value);
+                                setTestAudioProgress(val);
+                                if (testAudioPlayerRef.current) {
+                                  testAudioPlayerRef.current.currentTime = val;
+                                }
+                              }}
+                              className="w-full accent-indigo-500 cursor-pointer h-1.5 bg-slate-800 rounded-lg"
+                            />
+                            <div className="flex justify-between text-[10px] font-mono text-slate-400">
+                              <span>00:{Math.floor(testAudioProgress).toString().padStart(2, '0')}</span>
+                              <span>00:{Math.floor(testAudioDuration).toString().padStart(2, '0')}</span>
+                            </div>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={startMicTest}
+                            className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-bold flex items-center gap-1 shrink-0"
+                            title="הקלט שוב"
+                          >
+                            <RotateCw className="w-3 h-3" />
+                            <span>שוב</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={discardTestAudio}
+                            className="p-1 rounded text-rose-400 hover:bg-rose-950/50 shrink-0"
+                            title="מחק הקלטת ניסיון"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
 

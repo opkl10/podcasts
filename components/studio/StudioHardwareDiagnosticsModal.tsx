@@ -467,15 +467,41 @@ export default function StudioHardwareDiagnosticsModal({
                 </h4>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="space-y-1.5">
+                  <div className="space-y-2">
                     <div className="flex justify-between text-xs">
                       <span className="text-slate-400">עוצמת הגברה (Digital Gain):</span>
                       <span className="font-mono font-bold text-indigo-400">{Math.round(micGain * 100)}%</span>
                     </div>
+
+                    <div className="grid grid-cols-4 gap-1">
+                      {[
+                        { label: '100% רגיל', gain: 1.0 },
+                        { label: '🚀 200% דש', gain: 2.0 },
+                        { label: '⚡ 350% חלש', gain: 3.5 },
+                        { label: '🔥 500% מקס', gain: 5.0 },
+                      ].map((p) => {
+                        const isActive = Math.abs(micGain - p.gain) < 0.1;
+                        return (
+                          <button
+                            key={p.gain}
+                            type="button"
+                            onClick={() => onGainChange(p.gain)}
+                            className={`py-1 px-1 rounded-lg text-[10px] font-bold border transition-all text-center truncate ${
+                              isActive
+                                ? 'bg-indigo-600/30 border-indigo-500 text-indigo-200 shadow-sm ring-1 ring-indigo-500/40'
+                                : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white hover:border-slate-700'
+                            }`}
+                          >
+                            {p.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+
                     <input
                       type="range"
-                      min="0.5"
-                      max="2.5"
+                      min="0"
+                      max="5"
                       step="0.05"
                       value={micGain}
                       onChange={(e) => onGainChange(parseFloat(e.target.value))}

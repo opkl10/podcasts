@@ -253,10 +253,13 @@ export function getVideoConstraints(resolution: VideoResolution = '1080p', devic
 export class StudioAudioProcessor {
   private audioCtx: AudioContext | null = null;
   private sourceNode: MediaStreamAudioSourceNode | null = null;
+  private preampNode: GainNode | null = null;
   private highpassFilter: BiquadFilterNode | null = null;
   private presenceFilter: BiquadFilterNode | null = null;
   private compressor: DynamicsCompressorNode | null = null;
   private gainNode: GainNode | null = null;
+  private limiter: DynamicsCompressorNode | null = null;
+  private monitorGainNode: GainNode | null = null;
   private destinationNode: MediaStreamAudioDestinationNode | null = null;
   private analyserNode: AnalyserNode | null = null;
   private animationFrameId: number | null = null;
@@ -265,6 +268,9 @@ export class StudioAudioProcessor {
   private onFrequencyData?: (data: Uint8Array) => void;
 
   private currentGain: number = 1.0;
+  private micPreampBoost: number = 1.0;
+  private isMonitoring: boolean = false;
+  private monitorVolume: number = 1.0;
   private isNoiseSuppressionOn: boolean = false; // Default to natural transparent capture
 
   constructor(
@@ -292,6 +298,10 @@ export class StudioAudioProcessor {
 
       this.sourceNode = this.audioCtx.createMediaStreamSource(stream);
 
+      // 0. Active Preamp Boost (clean boost for low-output mics like lavaliers)
+      this.preampNode = this.audioCtx.createGain();
+      this.preampNode.gain.value = this.micPreampBoost;
+
       // 1. Highpass Rumble Filter (Gentle 55Hz cutoff only when enabled to remove sub-audible table thumps without thinning vocal warmth)
       this.highpassFilter = this.audioCtx.createBiquadFilter();
       this.highpassFilter.type = 'highpass';
@@ -314,25 +324,41 @@ export class StudioAudioProcessor {
       this.compressor.attack.value = 0.020; // 20ms attack - prevents swallowing/clipping beginning of words
       this.compressor.release.value = 0.150; // 150ms release - transparent decay without pumping
 
-      // 4. Master Gain Node (Volume control 0% - 250%)
+      // 4. Master Gain Node (Volume control 0% - 500%)
       this.gainNode = this.audioCtx.createGain();
       this.gainNode.gain.value = this.currentGain;
 
-      // 5. Analyser for VU Meter
+      // 5. Studio Brickwall Safety Limiter (-1.0 dBFS) - prevents clipping distortion
+      this.limiter = this.audioCtx.createDynamicsCompressor();
+      this.limiter.threshold.value = -1.0;
+      this.limiter.knee.value = 0.0;
+      this.limiter.ratio.value = 20.0;
+      this.limiter.attack.value = 0.001;
+      this.limiter.release.value = 0.050;
+
+      // 6. Headphone Monitoring Gain Node
+      this.monitorGainNode = this.audioCtx.createGain();
+      this.monitorGainNode.gain.value = this.isMonitoring ? this.monitorVolume : 0.0;
+
+      // 7. Analyser for VU Meter
       this.analyserNode = this.audioCtx.createAnalyser();
       this.analyserNode.fftSize = 256;
       this.analyserNode.smoothingTimeConstant = 0.8;
 
-      // 6. Output Destination
+      // 8. Output Destination
       this.destinationNode = this.audioCtx.createMediaStreamDestination();
 
-      // Connect DSP chain: Source -> Highpass -> Presence -> Compressor -> Gain -> Destination & Analyser
-      this.sourceNode.connect(this.highpassFilter);
+      // Connect DSP chain: Source -> Preamp -> Highpass -> Presence -> Compressor -> Gain -> Limiter -> Destination & Analyser & Monitor
+      this.sourceNode.connect(this.preampNode);
+      this.preampNode.connect(this.highpassFilter);
       this.highpassFilter.connect(this.presenceFilter);
       this.presenceFilter.connect(this.compressor);
       this.compressor.connect(this.gainNode);
-      this.gainNode.connect(this.analyserNode);
-      this.gainNode.connect(this.destinationNode);
+      this.gainNode.connect(this.limiter);
+      this.limiter.connect(this.analyserNode);
+      this.limiter.connect(this.destinationNode);
+      this.limiter.connect(this.monitorGainNode);
+      this.monitorGainNode.connect(this.audioCtx.destination);
 
       this.startMeterLoop();
 
@@ -348,9 +374,42 @@ export class StudioAudioProcessor {
   }
 
   public setGain(value: number) {
-    this.currentGain = Math.max(0, Math.min(2.5, value));
+    this.currentGain = Math.max(0, Math.min(5.0, value));
     if (this.gainNode && this.audioCtx) {
       this.gainNode.gain.setTargetAtTime(this.currentGain, this.audioCtx.currentTime, 0.03);
+    }
+    const dynPreamp = value > 2.0 ? 1.0 + (value - 2.0) * 0.5 : 1.0;
+    this.setPreampBoost(dynPreamp);
+  }
+
+  public setPreampBoost(boost: number) {
+    this.micPreampBoost = Math.max(0.5, boost);
+    if (this.preampNode && this.audioCtx) {
+      this.preampNode.gain.setTargetAtTime(this.micPreampBoost, this.audioCtx.currentTime, 0.03);
+    }
+  }
+
+  public setMonitoring(enabled: boolean, volume: number = 1.0) {
+    this.isMonitoring = enabled;
+    this.monitorVolume = Math.max(0, volume);
+    if (this.monitorGainNode && this.audioCtx) {
+      this.monitorGainNode.gain.setTargetAtTime(enabled ? this.monitorVolume : 0.0, this.audioCtx.currentTime, 0.03);
+    }
+    if (enabled && this.audioCtx) {
+      this.resume();
+    }
+  }
+
+  public setMonitorVolume(volume: number) {
+    this.monitorVolume = Math.max(0, volume);
+    if (this.monitorGainNode && this.audioCtx && this.isMonitoring) {
+      this.monitorGainNode.gain.setTargetAtTime(this.monitorVolume, this.audioCtx.currentTime, 0.03);
+    }
+  }
+
+  public resume() {
+    if (this.audioCtx && this.audioCtx.state === 'suspended') {
+      this.audioCtx.resume().catch(() => {});
     }
   }
 
@@ -418,17 +477,33 @@ export class StudioAudioProcessor {
       try { this.sourceNode.disconnect(); } catch {}
       this.sourceNode = null;
     }
-    if (this.gainNode) {
-      try { this.gainNode.disconnect(); } catch {}
-      this.gainNode = null;
+    if (this.preampNode) {
+      try { this.preampNode.disconnect(); } catch {}
+      this.preampNode = null;
     }
     if (this.highpassFilter) {
       try { this.highpassFilter.disconnect(); } catch {}
       this.highpassFilter = null;
     }
+    if (this.presenceFilter) {
+      try { this.presenceFilter.disconnect(); } catch {}
+      this.presenceFilter = null;
+    }
     if (this.compressor) {
       try { this.compressor.disconnect(); } catch {}
       this.compressor = null;
+    }
+    if (this.gainNode) {
+      try { this.gainNode.disconnect(); } catch {}
+      this.gainNode = null;
+    }
+    if (this.limiter) {
+      try { this.limiter.disconnect(); } catch {}
+      this.limiter = null;
+    }
+    if (this.monitorGainNode) {
+      try { this.monitorGainNode.disconnect(); } catch {}
+      this.monitorGainNode = null;
     }
     if (this.destinationNode) {
       try { this.destinationNode.disconnect(); } catch {}
