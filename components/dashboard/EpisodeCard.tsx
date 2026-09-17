@@ -18,7 +18,8 @@ import {
   Radio,
   Subtitles,
   Activity,
-  Gamepad2
+  Gamepad2,
+  Users
 } from 'lucide-react';
 import { formatTime, getPodcastById } from '@/lib/storage';
 
@@ -77,6 +78,7 @@ export default function EpisodeCard({ episode, onDelete, onOpenAudiogram }: Epis
   const status = statusConfig[episode.status] || statusConfig.draft;
   const StatusIcon = status.icon;
   const podcast = getPodcastById(episode.podcastId);
+  const isDuo = episode.episodeFormat === 'duo' || !!episode.coHost;
 
   return (
     <div className="group relative flex flex-col justify-between rounded-2xl bg-[#121620] border border-slate-800/90 hover:border-indigo-500/40 p-6 transition-all duration-300 hover:shadow-2xl hover:shadow-indigo-950/20">
@@ -97,6 +99,12 @@ export default function EpisodeCard({ episode, onDelete, onOpenAudiogram }: Epis
             <span className="px-2.5 py-1 rounded-md bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 text-xs font-bold tracking-wide">
               עונה {episode.season} • פרק {episode.episodeNumber}
             </span>
+            {isDuo && (
+              <span className="px-2 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-[10px] font-bold flex items-center gap-1">
+                <Users className="w-3 h-3 text-emerald-400" />
+                צמד
+              </span>
+            )}
             {episode.mediaType === 'gaming_creator' ? (
               <span className="px-2 py-0.5 rounded bg-purple-500/15 border border-purple-500/30 text-purple-300 text-[10px] font-bold flex items-center gap-1">
                 <Gamepad2 className="w-3 h-3 text-purple-400" />
@@ -153,8 +161,28 @@ export default function EpisodeCard({ episode, onDelete, onOpenAudiogram }: Epis
           {episode.description || 'אין תיאור לפרק זה עדיין.'}
         </p>
 
-        {/* Guest info if exists */}
-        {episode.guest && (
+        {/* Duo Co-Hosts Card */}
+        {isDuo ? (
+          <div className="flex items-center gap-2.5 p-2.5 rounded-xl bg-slate-900/70 border border-emerald-500/25 mb-4">
+            <div className="flex -space-x-2 space-x-reverse shrink-0">
+              <div className="w-7 h-7 rounded-full bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center text-white text-[10px] font-black shadow ring-2 ring-slate-900">
+                {(episode.hostName || episode.host?.name || '1').charAt(0)}
+              </div>
+              <div className="w-7 h-7 rounded-full bg-gradient-to-tr from-emerald-500 to-teal-600 flex items-center justify-center text-white text-[10px] font-black shadow ring-2 ring-slate-900">
+                {(episode.coHost?.name || '2').charAt(0)}
+              </div>
+            </div>
+            <div className="min-w-0 flex-1 text-right">
+              <p className="text-xs font-bold text-slate-200 truncate">
+                {episode.hostName || episode.host?.name || 'מנחה 1'} & {episode.coHost?.name || 'מנחה 2'}
+              </p>
+              <p className="text-[10px] text-emerald-400 font-semibold truncate">
+                👥 צמד מנחים {episode.guest ? `• מארחים את ${episode.guest.name}` : ''}
+              </p>
+            </div>
+          </div>
+        ) : episode.guest ? (
+          /* Guest info if exists */
           <div className="flex items-center gap-2.5 p-2.5 rounded-xl bg-slate-900/60 border border-slate-800/80 mb-4">
             <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-600 flex items-center justify-center text-white text-xs font-bold shrink-0 shadow">
               {episode.guest.name.charAt(0)}
@@ -164,7 +192,17 @@ export default function EpisodeCard({ episode, onDelete, onOpenAudiogram }: Epis
               <p className="text-[11px] text-slate-400 truncate">{episode.guest.role || 'אורח/ת מיוחד/ת'}</p>
             </div>
           </div>
-        )}
+        ) : (episode.hostName || episode.host?.name) ? (
+          /* Single host info */
+          <div className="flex items-center gap-2.5 p-2 rounded-xl bg-slate-900/50 border border-slate-800/60 mb-4">
+            <div className="w-6 h-6 rounded-full bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center text-white text-[10px] font-bold shrink-0 shadow">
+              {(episode.hostName || episode.host?.name || 'מ').charAt(0)}
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-medium text-slate-300 truncate">{episode.hostName || episode.host?.name}</p>
+            </div>
+          </div>
+        ) : null}
 
         {/* Meta Stats */}
         <div className="grid grid-cols-2 gap-2 py-3 border-t border-slate-800/60 text-xs text-slate-400 mb-5">

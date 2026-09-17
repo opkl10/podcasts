@@ -55,6 +55,11 @@ export default function GuestInviteModal({
   const [networkIp, setNetworkIp] = useState<string>('localhost');
   const [port, setPort] = useState<string>('3001');
 
+  // Role: Co-Host vs Guest
+  const [inviteRole, setInviteRole] = useState<'cohost' | 'guest'>(
+    (episode.episodeFormat === 'duo' || !!episode.coHost) ? 'cohost' : 'guest'
+  );
+
   // Mode: 'local' (same Wi-Fi) vs 'public' (Internet / Cloud URL)
   const [connectionMode, setConnectionMode] = useState<'public' | 'local'>('public');
   const [publicUrl, setPublicUrl] = useState<string>('');
@@ -97,10 +102,12 @@ export default function GuestInviteModal({
     effectiveBaseUrl = cleanUrl.replace(/\/+$/, '');
   }
 
-  const guestLink = `${effectiveBaseUrl}/guest?room=${roomId}&title=${encodeURIComponent(episode.title)}`;
+  const guestLink = `${effectiveBaseUrl}/guest?room=${roomId}&title=${encodeURIComponent(episode.title)}&role=${inviteRole}`;
 
   const whatsappMessage = encodeURIComponent(
-    `היי! מזמין אותך להצטרף אליי לשידור חי של פרק הפודקאסט "${episode.title}".\n\nלחץ על הלינק הבא להצטרפות ישירה מהדפדפן (אין צורך בהתקנת אפליקציה):\n${guestLink}`
+    inviteRole === 'cohost'
+      ? `היי! מזמין אותך להצטרף אליי לשידור חי של פרק הפודקאסט "${episode.title}" כמנחה שותף/ה (Co-Host).\n\nלחץ על הלינק הבא להצטרפות ישירה מהדפדפן (אין צורך בהתקנת אפליקציה):\n${guestLink}`
+      : `היי! מזמין אותך להצטרף אליי לשידור חי של פרק הפודקאסט "${episode.title}".\n\nלחץ על הלינק הבא להצטרפות ישירה מהדפדפן (אין צורך בהתקנת אפליקציה):\n${guestLink}`
   );
 
   const handleCopyLink = () => {
@@ -128,20 +135,26 @@ export default function GuestInviteModal({
         {/* Header */}
         <div className="flex items-center justify-between border-b border-slate-800/80 pb-4">
           <div className="flex items-center gap-3">
-            <div className="p-3 rounded-2xl bg-gradient-to-tr from-indigo-600 via-purple-600 to-pink-600 text-white shadow-lg shadow-indigo-600/30">
+            <div className={`p-3 rounded-2xl text-white shadow-lg ${
+              inviteRole === 'cohost'
+                ? 'bg-gradient-to-tr from-emerald-600 via-teal-600 to-cyan-600 shadow-emerald-600/30'
+                : 'bg-gradient-to-tr from-indigo-600 via-purple-600 to-pink-600 shadow-indigo-600/30'
+            }`}>
               <Users className="w-6 h-6" />
             </div>
             <div>
               <h3 className="text-base sm:text-lg font-black text-white flex items-center gap-2">
-                <span>הזמנת אורח מרחוק (Remote Guest Studio)</span>
+                <span>{inviteRole === 'cohost' ? 'חיבור מנחה שותף מרחוק (Remote Co-Host)' : 'הזמנת אורח מרחוק (Remote Guest Studio)'}</span>
                 <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold font-mono ${
                   guestStatus === 'connected' ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
                 }`}>
-                  {guestStatus === 'connected' ? '🟢 אורח מחובר' : '⏳ ממתין להצטרפות'}
+                  {guestStatus === 'connected' ? (inviteRole === 'cohost' ? '🟢 מנחה שותף מחובר' : '🟢 אורח מחובר') : '⏳ ממתין להצטרפות'}
                 </span>
               </h3>
               <p className="text-xs text-slate-400">
-                שתפו את הלינק עם האורח – הוא יוכל להצטרף בשידור חי מכל מחשב או סמארטפון ללא התקנה
+                {inviteRole === 'cohost'
+                  ? 'שתפו את הלינק עם המנחה השותף – הוא יצטרף כמנחה שווה בשידור חי מכל דפדפן'
+                  : 'שתפו את הלינק עם האורח – הוא יוכל להצטרף בשידור חי מכל מחשב או סמארטפון ללא התקנה'}
               </p>
             </div>
           </div>
@@ -152,6 +165,38 @@ export default function GuestInviteModal({
           >
             <X className="w-5 h-5" />
           </button>
+        </div>
+
+        {/* Invite Role Switcher: Co-Host vs Guest */}
+        <div className="space-y-1.5">
+          <label className="text-xs font-bold text-slate-300 block">תפקיד המצטרף לשידור:</label>
+          <div className="grid grid-cols-2 gap-2 p-1.5 rounded-2xl bg-slate-900 border border-slate-800">
+            <button
+              type="button"
+              onClick={() => setInviteRole('cohost')}
+              className={`py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                inviteRole === 'cohost'
+                  ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/30'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <Users className="w-4 h-4" />
+              <span>👥 מנחה שותף/ה (Co-Host)</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setInviteRole('guest')}
+              className={`py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                inviteRole === 'guest'
+                  ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <Radio className="w-4 h-4" />
+              <span>🎙️ אורח/ת בשידור (Guest)</span>
+            </button>
+          </div>
         </div>
 
         {/* Network Mode Switcher: Public Internet vs Local Wi-Fi */}
@@ -274,11 +319,15 @@ export default function GuestInviteModal({
             <div>
               <span className="text-xs font-bold block text-white">
                 {guestStatus === 'connected'
-                  ? `אורח בשידור: ${guestInfo?.name || 'אורח מחובר'}`
-                  : 'ממתין שהאורח ייכנס לחדר ההמתנה...'}
+                  ? (inviteRole === 'cohost' || episode.coHost)
+                    ? `👥 מנחה שותף בשידור: ${guestInfo?.name || episode.coHost?.name || 'מחובר'}`
+                    : `🎙️ אורח בשידור: ${guestInfo?.name || 'אורח מחובר'}`
+                  : inviteRole === 'cohost'
+                    ? 'ממתין למנחה השותף/ה שייכנס לאולפן...'
+                    : 'ממתין שהאורח ייכנס לחדר ההמתנה...'}
               </span>
               {guestInfo?.role && (
-                <span className="text-[11px] text-indigo-300">{guestInfo.role}</span>
+                <span className="text-[11px] text-emerald-300">{guestInfo.role}</span>
               )}
             </div>
           </div>

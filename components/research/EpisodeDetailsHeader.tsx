@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { Episode, EpisodeStatus, PodcastShow } from '@/lib/types';
+import { Episode, EpisodeFormat, EpisodeStatus, PodcastShow } from '@/lib/types';
 import { getPodcasts, getPodcastById, saveMediaBlob, getMediaBlob, deleteMediaBlob, formatTime, healEpisodeRecording } from '@/lib/storage';
 import { 
   ArrowRight, 
@@ -26,7 +26,8 @@ import {
   Subtitles,
   Languages,
   Upload,
-  Gamepad2
+  Gamepad2,
+  Users
 } from 'lucide-react';
 
 interface EpisodeDetailsHeaderProps {
@@ -57,6 +58,7 @@ export default function EpisodeDetailsHeader({
   const [title, setTitle] = useState(episode.title);
   const [podcastId, setPodcastId] = useState(episode.podcastId || 'pod-tech');
   const [mediaType, setMediaType] = useState<'video' | 'audio_only' | 'gaming_creator'>(episode.mediaType || 'video');
+  const [episodeFormat, setEpisodeFormat] = useState<EpisodeFormat>(episode.episodeFormat || (episode.coHost ? 'duo' : 'interview'));
   const [description, setDescription] = useState(episode.description);
   const [season, setSeason] = useState(episode.season);
   const [episodeNumber, setEpisodeNumber] = useState(episode.episodeNumber);
@@ -64,6 +66,9 @@ export default function EpisodeDetailsHeader({
   const [guestName, setGuestName] = useState(episode.guest?.name || '');
   const [guestRole, setGuestRole] = useState(episode.guest?.role || '');
   const [hostName, setHostName] = useState(episode.hostName || episode.host?.name || '');
+  const [hostRole, setHostRole] = useState(episode.host?.role || '');
+  const [coHostName, setCoHostName] = useState(episode.coHost?.name || '');
+  const [coHostRole, setCoHostRole] = useState(episode.coHost?.role || '');
   const [podcasts, setPodcasts] = useState<PodcastShow[]>([]);
   const [audioPlaybackUrl, setAudioPlaybackUrl] = useState<string | null>(null);
 
@@ -120,11 +125,15 @@ export default function EpisodeDetailsHeader({
       title,
       description,
       mediaType,
+      episodeFormat,
       season: Number(season),
       episodeNumber: Number(episodeNumber),
       targetDurationMinutes: Number(targetDuration),
       hostName: hostName.trim() || undefined,
-      host: hostName.trim() ? { name: hostName.trim() } : undefined,
+      host: hostName.trim() ? { name: hostName.trim(), role: hostRole.trim() || undefined } : undefined,
+      coHost: (episodeFormat === 'duo' && coHostName.trim())
+        ? { name: coHostName.trim(), role: coHostRole.trim() || undefined }
+        : undefined,
       guest: guestName.trim()
         ? {
             name: guestName,
@@ -377,42 +386,165 @@ export default function EpisodeDetailsHeader({
             />
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div>
-              <label className="block text-xs font-medium text-cyan-400 mb-1">שם המגיש / מנחה (אופציונלי)</label>
-              <input
-                type="text"
-                value={hostName}
-                onChange={(e) => setHostName(e.target.value)}
-                placeholder="למשל: עומר אוקון"
-                className="w-full px-3.5 py-2 rounded-xl bg-slate-800 border border-slate-700 text-xs text-white focus:outline-none focus:border-cyan-500"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1">שם האורח/ת (אופציונלי)</label>
-              <input
-                type="text"
-                value={guestName}
-                onChange={(e) => setGuestName(e.target.value)}
-                placeholder="למשל: פרופ' ישראל ישראלי"
-                className="w-full px-3.5 py-2 rounded-xl bg-slate-800 border border-slate-700 text-xs text-white focus:outline-none focus:border-indigo-500"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1">תפקיד / תיאור האורח/ת</label>
-              <input
-                type="text"
-                value={guestRole}
-                onChange={(e) => setGuestRole(e.target.value)}
-                placeholder="למשל: מנכ״ל חברת הייטק ומרצה"
-                className="w-full px-3.5 py-2 rounded-xl bg-slate-800 border border-slate-700 text-xs text-white focus:outline-none focus:border-indigo-500"
-              />
+          {/* Format selection: Duo vs Interview vs Solo */}
+          <div>
+            <label className="block text-xs font-medium text-slate-400 mb-1.5">פורמט הגשה:</label>
+            <div className="grid grid-cols-3 gap-2">
+              <button
+                type="button"
+                onClick={() => setEpisodeFormat('duo')}
+                className={`py-2 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
+                  episodeFormat === 'duo'
+                    ? 'bg-emerald-600 text-white border-emerald-500 shadow-md shadow-emerald-600/30'
+                    : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-white'
+                }`}
+              >
+                <Users className="w-3.5 h-3.5" />
+                <span>👥 צמד מנחים</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setEpisodeFormat('interview')}
+                className={`py-2 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
+                  episodeFormat === 'interview'
+                    ? 'bg-indigo-600 text-white border-indigo-500 shadow-md shadow-indigo-600/30'
+                    : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-white'
+                }`}
+              >
+                <Mic className="w-3.5 h-3.5" />
+                <span>🎙️ מנחה ואורח</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setEpisodeFormat('solo')}
+                className={`py-2 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
+                  episodeFormat === 'solo'
+                    ? 'bg-blue-600 text-white border-blue-500 shadow-md shadow-blue-600/30'
+                    : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-white'
+                }`}
+              >
+                <User className="w-3.5 h-3.5" />
+                <span>👤 סולו יחיד</span>
+              </button>
             </div>
           </div>
 
-          {/* Format selection */}
+          {/* Participant Inputs depending on format */}
+          {episodeFormat === 'duo' ? (
+            <div className="p-3.5 rounded-2xl bg-slate-900/80 border border-emerald-500/30 space-y-3">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-bold text-emerald-400 flex items-center gap-1.5">
+                  <Users className="w-4 h-4" />
+                  צמד המנחים (Co-Hosts)
+                </span>
+                <span className="text-[10px] text-emerald-400/80 font-semibold bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-500/20">
+                  צמד שוויוני
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <label className="block text-[11px] font-bold text-cyan-300">מנחה 1 (ראשי/ת)</label>
+                  <input
+                    type="text"
+                    value={hostName}
+                    onChange={(e) => setHostName(e.target.value)}
+                    placeholder="שם מנחה 1"
+                    className="w-full px-3 py-1.5 rounded-xl bg-slate-800 border border-slate-700 text-xs text-white focus:outline-none focus:border-cyan-500"
+                  />
+                  <input
+                    type="text"
+                    value={hostRole}
+                    onChange={(e) => setHostRole(e.target.value)}
+                    placeholder="תפקיד / תיאור מנחה 1"
+                    className="w-full px-3 py-1 rounded-xl bg-slate-800/80 border border-slate-700/80 text-[11px] text-slate-300 placeholder-slate-500 focus:outline-none focus:border-cyan-500"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="block text-[11px] font-bold text-emerald-300">מנחה 2 (שותף/ה - Co-Host)</label>
+                  <input
+                    type="text"
+                    value={coHostName}
+                    onChange={(e) => setCoHostName(e.target.value)}
+                    placeholder="שם מנחה 2"
+                    className="w-full px-3 py-1.5 rounded-xl bg-slate-800 border border-slate-700 text-xs text-white focus:outline-none focus:border-emerald-500"
+                  />
+                  <input
+                    type="text"
+                    value={coHostRole}
+                    onChange={(e) => setCoHostRole(e.target.value)}
+                    placeholder="תפקיד / תיאור מנחה 2"
+                    className="w-full px-3 py-1 rounded-xl bg-slate-800/80 border border-slate-700/80 text-[11px] text-slate-300 placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+              </div>
+
+              {/* Optional Guest */}
+              <div className="pt-2 border-t border-slate-800">
+                <details className="group">
+                  <summary className="text-[11px] text-slate-400 hover:text-indigo-300 cursor-pointer">
+                    + הוספת אורח/ת חיצוני/ת לפרק הצמד (אופציונלי)
+                  </summary>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2">
+                    <input
+                      type="text"
+                      value={guestName}
+                      onChange={(e) => setGuestName(e.target.value)}
+                      placeholder="שם האורח/ת"
+                      className="w-full px-3 py-1.5 rounded-xl bg-slate-800 border border-slate-700 text-xs text-white focus:outline-none focus:border-indigo-500"
+                    />
+                    <input
+                      type="text"
+                      value={guestRole}
+                      onChange={(e) => setGuestRole(e.target.value)}
+                      placeholder="תפקיד / תיאור האורח/ת"
+                      className="w-full px-3 py-1.5 rounded-xl bg-slate-800 border border-slate-700 text-xs text-white focus:outline-none focus:border-indigo-500"
+                    />
+                  </div>
+                </details>
+              </div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-cyan-400 mb-1">שם המגיש / מנחה (אופציונלי)</label>
+                <input
+                  type="text"
+                  value={hostName}
+                  onChange={(e) => setHostName(e.target.value)}
+                  placeholder="למשל: עומר אוקון"
+                  className="w-full px-3.5 py-2 rounded-xl bg-slate-800 border border-slate-700 text-xs text-white focus:outline-none focus:border-cyan-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-400 mb-1">שם האורח/ת (אופציונלי)</label>
+                <input
+                  type="text"
+                  value={guestName}
+                  onChange={(e) => setGuestName(e.target.value)}
+                  placeholder="למשל: פרופ' ישראל ישראלי"
+                  className="w-full px-3.5 py-2 rounded-xl bg-slate-800 border border-slate-700 text-xs text-white focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-400 mb-1">תפקיד / תיאור האורח/ת</label>
+                <input
+                  type="text"
+                  value={guestRole}
+                  onChange={(e) => setGuestRole(e.target.value)}
+                  placeholder="למשל: מנכ״ל חברת הייטק ומרצה"
+                  className="w-full px-3.5 py-2 rounded-xl bg-slate-800 border border-slate-700 text-xs text-white focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Media Format selection */}
           <div>
-            <label className="block text-xs font-medium text-slate-400 mb-1">פורמט הפרק:</label>
+            <label className="block text-xs font-medium text-slate-400 mb-1">מדיום ההקלטה:</label>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               <button
                 type="button"
@@ -487,6 +619,14 @@ export default function EpisodeDetailsHeader({
                   עונה {episode.season} • פרק {episode.episodeNumber}
                 </span>
 
+                {/* Duo Format Badge */}
+                {(episode.episodeFormat === 'duo' || episode.coHost) && (
+                  <span className="px-2.5 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-bold flex items-center gap-1">
+                    <Users className="w-3 h-3 text-emerald-400" />
+                    <span>👥 צמד מנחים</span>
+                  </span>
+                )}
+
                 {/* Media Format Badge */}
                 {episode.mediaType === 'gaming_creator' ? (
                   <span className="px-2.5 py-0.5 rounded bg-purple-500/15 border border-purple-500/30 text-purple-300 text-xs font-bold flex items-center gap-1">
@@ -528,6 +668,11 @@ export default function EpisodeDetailsHeader({
                 setSeason(episode.season);
                 setEpisodeNumber(episode.episodeNumber);
                 setTargetDuration(episode.targetDurationMinutes);
+                setEpisodeFormat(episode.episodeFormat || (episode.coHost ? 'duo' : 'interview'));
+                setHostName(episode.hostName || episode.host?.name || '');
+                setHostRole(episode.host?.role || '');
+                setCoHostName(episode.coHost?.name || '');
+                setCoHostRole(episode.coHost?.role || '');
                 setGuestName(episode.guest?.name || '');
                 setGuestRole(episode.guest?.role || '');
                 setIsEditing(true);
@@ -539,20 +684,39 @@ export default function EpisodeDetailsHeader({
             </button>
           </div>
 
-          {/* Host & Guest Badges */}
+          {/* Host & Co-Host & Guest Badges */}
           <div className="mt-5 flex flex-wrap items-center gap-3">
-            {episode.hostName && (
+            {/* Host 1 Badge */}
+            {(episode.hostName || episode.host?.name) && (
               <div className="inline-flex items-center gap-3 p-2.5 pr-3.5 rounded-2xl bg-slate-900/80 border border-cyan-500/30 shadow-md">
                 <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center text-white text-sm font-black shadow">
                   🎙️
                 </div>
                 <div>
-                  <p className="text-xs font-bold text-white">{episode.hostName}</p>
-                  <p className="text-[11px] text-cyan-400 font-medium">מגיש/ת התוכנית</p>
+                  <p className="text-xs font-bold text-white">{episode.hostName || episode.host?.name}</p>
+                  <p className="text-[11px] text-cyan-400 font-medium">
+                    {episode.host?.role || (episode.episodeFormat === 'duo' || episode.coHost ? 'מנחה 1 (ראשי/ת)' : 'מגיש/ת התוכנית')}
+                  </p>
                 </div>
               </div>
             )}
 
+            {/* Co-Host Badge */}
+            {episode.coHost && (
+              <div className="inline-flex items-center gap-3 p-2.5 pr-3.5 rounded-2xl bg-slate-900/80 border border-emerald-500/30 shadow-md">
+                <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-emerald-500 to-teal-600 flex items-center justify-center text-white text-sm font-black shadow">
+                  👥
+                </div>
+                <div>
+                  <p className="text-xs font-bold text-white">{episode.coHost.name}</p>
+                  <p className="text-[11px] text-emerald-400 font-medium">
+                    {episode.coHost.role || 'מנחה 2 (שותף/ה - Co-Host)'}
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Guest Badge */}
             {episode.guest && (
               <div className="inline-flex items-center gap-3 p-2.5 pr-3.5 rounded-2xl bg-slate-900/80 border border-slate-800 shadow-md">
                 <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-indigo-500 to-purple-600 flex items-center justify-center text-white text-sm font-bold shadow">

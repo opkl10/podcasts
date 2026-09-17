@@ -9,6 +9,7 @@ interface RoomState {
   lastActive: number;
   lastFrame?: string; // base64 JPEG live fallback frame
   lastFrameTime?: number;
+  guestInfo?: { name: string; role?: string; isCoHost?: boolean };
 }
 
 // In-memory room storage with persistent /tmp fallback for serverless
@@ -54,7 +55,7 @@ export async function POST(req: NextRequest) {
     loadCache();
     cleanStaleRooms();
     const body = await req.json();
-    const { action, roomId, data, role, frame } = body;
+    const { action, roomId, data, role, frame, guestInfo } = body;
 
     if (!roomId) {
       return NextResponse.json({ error: 'Room ID is required' }, { status: 400 });
@@ -73,7 +74,8 @@ export async function POST(req: NextRequest) {
           status: 'ok',
           hasOffer: !!room.offer,
           hasAnswer: !!room.answer,
-          hasFrame: !!room.lastFrame
+          hasFrame: !!room.lastFrame,
+          guestInfo: room.guestInfo || null
         });
 
       case 'send-offer':
@@ -123,8 +125,19 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ 
           frame: room.lastFrame || null,
           frameTime: room.lastFrameTime || 0,
-          isFresh: room.lastFrameTime ? (Date.now() - room.lastFrameTime < 6000) : false
+          isFresh: room.lastFrameTime ? (Date.now() - room.lastFrameTime < 6000) : false,
+          guestInfo: room.guestInfo || null
         });
+
+      case 'set-guest-info':
+        if (data || guestInfo) {
+          room.guestInfo = data || guestInfo;
+          persistCache();
+        }
+        return NextResponse.json({ status: 'guest-info-saved', guestInfo: room.guestInfo || null });
+
+      case 'get-guest-info':
+        return NextResponse.json({ guestInfo: room.guestInfo || null });
 
       case 'reset':
         rooms.delete(roomId);

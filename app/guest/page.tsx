@@ -20,18 +20,21 @@ import {
   Activity, 
   Wifi, 
   PhoneOff, 
-  Maximize2
+  Maximize2,
+  Users
 } from 'lucide-react';
 
 function GuestBroadcastContent() {
   const searchParams = useSearchParams();
   const roomId = searchParams.get('room') || 'guest_default_room';
   const episodeTitle = searchParams.get('title') || 'פרק פודקאסט מיוחד';
+  const roleParam = searchParams.get('role');
+  const isCoHost = roleParam === 'cohost';
 
   // Green Room state vs On Air state
   const [isOnAir, setIsOnAir] = useState(false);
   const [guestName, setGuestName] = useState('');
-  const [guestRole, setGuestRole] = useState('');
+  const [guestRole, setGuestRole] = useState(isCoHost ? 'מנחה שותף/ה' : '');
 
   // Hardware states
   const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([]);
@@ -217,7 +220,13 @@ function GuestBroadcastContent() {
         }
       };
 
-      // Notify signaling server about guest joining with name & role
+      // Notify signaling server about participant joining with name & role
+      const participantInfo = { 
+        name: guestName.trim() || (isCoHost ? 'מנחה שותף/ה' : 'אורח/ת'), 
+        role: guestRole.trim() || (isCoHost ? 'מנחה שותף/ה' : undefined), 
+        isCoHost 
+      };
+
       await fetch('/api/signaling', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -225,7 +234,17 @@ function GuestBroadcastContent() {
           action: 'join',
           roomId,
           role: 'client',
-          guestInfo: { name: guestName, role: guestRole }
+          guestInfo: participantInfo
+        })
+      });
+
+      await fetch('/api/signaling', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'set-guest-info',
+          roomId,
+          data: participantInfo
         })
       });
 
@@ -345,16 +364,20 @@ function GuestBroadcastContent() {
       {/* Header */}
       <header className="p-4 sm:p-5 border-b border-slate-800 bg-slate-950/80 backdrop-blur-md flex items-center justify-between sticky top-0 z-30">
         <div className="flex items-center gap-3">
-          <div className="p-2.5 rounded-2xl bg-gradient-to-tr from-indigo-600 to-purple-600 text-white shadow-lg shadow-indigo-600/30">
-            <Radio className="w-5 h-5" />
+          <div className={`p-2.5 rounded-2xl text-white shadow-lg ${
+            isCoHost 
+              ? 'bg-gradient-to-tr from-emerald-600 via-teal-600 to-cyan-600 shadow-emerald-600/30' 
+              : 'bg-gradient-to-tr from-indigo-600 to-purple-600 shadow-indigo-600/30'
+          }`}>
+            {isCoHost ? <Users className="w-5 h-5" /> : <Radio className="w-5 h-5" />}
           </div>
           <div>
             <h1 className="text-base sm:text-lg font-black text-white flex items-center gap-2">
-              <span>אולפן אירוח אורחים (CastFlow Guest Room)</span>
+              <span>{isCoHost ? 'אולפן מנחה שותף/ה (CastFlow Co-Host Room)' : 'אולפן אירוח אורחים (CastFlow Guest Room)'}</span>
               {isOnAir && (
                 <span className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-red-600 text-white font-mono font-bold animate-pulse">
                   <span className="w-2 h-2 rounded-full bg-white" />
-                  ON AIR
+                  {isCoHost ? '👥 מנחה שותף ON AIR' : 'ON AIR'}
                 </span>
               )}
             </h1>
@@ -379,11 +402,21 @@ function GuestBroadcastContent() {
           /* GREEN ROOM PRE-FLIGHT CHECK */
           <div className="w-full max-w-2xl rounded-3xl bg-[#0f121a] border border-slate-800 p-6 sm:p-8 shadow-2xl space-y-6 animate-in fade-in">
             <div className="text-center space-y-1">
-              <span className="text-xs font-bold text-indigo-400 bg-indigo-500/10 px-3 py-1 rounded-full border border-indigo-500/30 inline-block mb-1">
-                חדר המתנה ירוק (Green Room)
+              <span className={`text-xs font-bold px-3 py-1 rounded-full border inline-block mb-1 ${
+                isCoHost 
+                  ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30' 
+                  : 'text-indigo-400 bg-indigo-500/10 border-indigo-500/30'
+              }`}>
+                {isCoHost ? '👥 חדר מנחה שותף/ה (Co-Host Green Room)' : 'חדר המתנה ירוק (Green Room)'}
               </span>
-              <h2 className="text-xl sm:text-2xl font-black text-white">ברוכים הבאים לשידור הפודקאסט!</h2>
-              <p className="text-xs text-slate-400">בדקו את המצלמה והמיקרופון לפני הכניסה לשידור החי עם המארח</p>
+              <h2 className="text-xl sm:text-2xl font-black text-white">
+                {isCoHost ? 'ברוך/ה הבא/ה לשידור המשותף!' : 'ברוכים הבאים לשידור הפודקאסט!'}
+              </h2>
+              <p className="text-xs text-slate-400">
+                {isCoHost 
+                  ? 'בדקו את המצלמה והמיקרופון לפני הכניסה לשידור המשותף כמנחה' 
+                  : 'בדקו את המצלמה והמיקרופון לפני הכניסה לשידור החי עם המארח'}
+              </p>
             </div>
 
             {/* Video Preview Viewport */}
@@ -443,16 +476,16 @@ function GuestBroadcastContent() {
               </div>
             </div>
 
-            {/* Guest Identity Form */}
+            {/* Guest / Co-Host Identity Form */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-1">
                 <label className="text-xs font-bold text-slate-300 flex items-center gap-1">
-                  <User className="w-3.5 h-3.5 text-indigo-400" />
-                  <span>שמך המלא (יוצג על המסך): *</span>
+                  {isCoHost ? <Users className="w-3.5 h-3.5 text-emerald-400" /> : <User className="w-3.5 h-3.5 text-indigo-400" />}
+                  <span>{isCoHost ? 'שמך המלא (יוצג כמנחה שותף/ה): *' : 'שמך המלא (יוצג על המסך): *'}</span>
                 </label>
                 <input
                   type="text"
-                  placeholder="למשל: ד״ר ירון לוי"
+                  placeholder={isCoHost ? 'למשל: דניאל לוי (מנחה)' : 'למשל: ד״ר ירון לוי'}
                   value={guestName}
                   onChange={(e) => setGuestName(e.target.value)}
                   className="w-full p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
@@ -466,7 +499,7 @@ function GuestBroadcastContent() {
                 </label>
                 <input
                   type="text"
-                  placeholder="למשל: במאי קולנוע וחוקר תרבות"
+                  placeholder={isCoHost ? 'למשל: מנחה שותף / מומחה תוכן' : 'למשל: במאי קולנוע וחוקר תרבות'}
                   value={guestRole}
                   onChange={(e) => setGuestRole(e.target.value)}
                   className="w-full p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
@@ -488,10 +521,14 @@ function GuestBroadcastContent() {
             {/* Join Button */}
             <button
               onClick={handleJoinBroadcast}
-              className="w-full py-4 rounded-2xl bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 hover:from-indigo-500 hover:to-pink-500 text-white font-black text-sm shadow-xl shadow-indigo-600/30 flex items-center justify-center gap-2 active:scale-98 transition-all"
+              className={`w-full py-4 rounded-2xl text-white font-black text-sm shadow-xl flex items-center justify-center gap-2 active:scale-98 transition-all ${
+                isCoHost
+                  ? 'bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-600 hover:from-emerald-500 hover:to-cyan-500 shadow-emerald-600/30'
+                  : 'bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 hover:from-indigo-500 hover:to-pink-500 shadow-indigo-600/30'
+              }`}
             >
-              <Sparkles className="w-5 h-5" />
-              <span>הצטרף לשידור החי באולפן</span>
+              {isCoHost ? <Users className="w-5 h-5" /> : <Sparkles className="w-5 h-5" />}
+              <span>{isCoHost ? 'הצטרף לאולפן כמנחה שותף/ה' : 'הצטרף לשידור החי באולפן'}</span>
             </button>
           </div>
         ) : (
@@ -513,8 +550,10 @@ function GuestBroadcastContent() {
                 </div>
               </div>
 
-              {/* Guest Self Return Feed */}
-              <div className="relative rounded-2xl overflow-hidden bg-slate-900 border border-indigo-500/50 flex items-center justify-center">
+              {/* Guest / Co-Host Self Return Feed */}
+              <div className={`relative rounded-2xl overflow-hidden bg-slate-900 flex items-center justify-center border ${
+                isCoHost ? 'border-emerald-500/50' : 'border-indigo-500/50'
+              }`}>
                 <video
                   ref={localVideoRef}
                   autoPlay
@@ -524,7 +563,7 @@ function GuestBroadcastContent() {
                 />
                 <div className="absolute top-3 left-3 z-10 px-2.5 py-1 rounded-lg bg-black/70 backdrop-blur-md border border-white/10 text-[10px] font-bold text-emerald-300 flex items-center gap-1.5">
                   <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                  <span>אתה בשידור: {guestName}</span>
+                  <span>{isCoHost ? `👥 מנחה שותף: ${guestName || 'אתה'}` : `אתה בשידור: ${guestName}`}</span>
                 </div>
               </div>
             </div>

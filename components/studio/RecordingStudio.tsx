@@ -190,11 +190,15 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
   const [remoteConnectionStatus, setRemoteConnectionStatus] = useState<'idle' | 'connecting' | 'connected' | 'disconnected'>('idle');
   const webrtcReceiverRef = useRef<StudioWebRTCReceiver | null>(null);
 
-  // Remote Guest Studio States & Receiver
+  // Remote Guest / Co-Host Studio States & Receiver
   const [isGuestModalOpen, setIsGuestModalOpen] = useState(false);
   const [guestConnectionStatus, setGuestConnectionStatus] = useState<'idle' | 'connecting' | 'connected' | 'error'>('idle');
-  const [guestInfo, setGuestInfo] = useState<{ name: string; role?: string } | undefined>(
-    episode.guest ? { name: episode.guest.name, role: episode.guest.role } : undefined
+  const [guestInfo, setGuestInfo] = useState<{ name: string; role?: string; isCoHost?: boolean } | undefined>(
+    episode.coHost
+      ? { name: episode.coHost.name, role: episode.coHost.role, isCoHost: true }
+      : episode.guest
+        ? { name: episode.guest.name, role: episode.guest.role, isCoHost: false }
+        : undefined
   );
   const [guestLayout, setGuestLayout] = useState<'split' | 'pip' | 'host' | 'guest'>('split');
   const [guestVolume, setGuestVolume] = useState<number>(1.0);
@@ -202,6 +206,8 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
   const guestReceiverRef = useRef<StudioWebRTCReceiver | null>(null);
   const guestVideoRef = useRef<HTMLVideoElement | null>(null);
   const [guestFrame, setGuestFrame] = useState<string | null>(null);
+
+  const isPeerCoHost = Boolean(guestInfo?.isCoHost || episode.episodeFormat === 'duo' || episode.coHost);
 
   const videoElementRef = useRef<HTMLVideoElement>(null);
   const studioContainerRef = useRef<HTMLDivElement>(null);
@@ -276,6 +282,13 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
         if (json.isFresh && json.frame) {
           setGuestFrame(json.frame);
           setGuestConnectionStatus('connected');
+        }
+        if (json.guestInfo) {
+          setGuestInfo(prev => ({
+            name: json.guestInfo.name || prev?.name || '',
+            role: json.guestInfo.role || prev?.role,
+            isCoHost: json.guestInfo.isCoHost ?? prev?.isCoHost ?? (episode.episodeFormat === 'duo' || !!episode.coHost)
+          }));
         }
       } catch {}
     }, 1500);
@@ -1285,18 +1298,22 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
 
         {/* Master Recording Timer & Status */}
         <div className="flex items-center gap-3">
-          {/* Remote Guest Studio Invite Button */}
+          {/* Remote Guest / Co-Host Studio Invite Button */}
           <button
             onClick={() => setIsGuestModalOpen(true)}
             className={`flex items-center gap-1.5 px-3 py-2 rounded-2xl text-xs font-bold border transition-all shadow-md active:scale-95 ${
               guestConnectionStatus === 'connected'
-                ? 'bg-emerald-950/60 border-emerald-500/60 text-emerald-300 shadow-lg shadow-emerald-950/40'
-                : 'bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 hover:text-white border-indigo-500/40'
+                ? isPeerCoHost
+                  ? 'bg-emerald-950/60 border-emerald-500/60 text-emerald-300 shadow-lg shadow-emerald-950/40'
+                  : 'bg-indigo-950/60 border-indigo-500/60 text-indigo-300 shadow-lg shadow-indigo-950/40'
+                : isPeerCoHost
+                  ? 'bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 hover:text-white border-emerald-500/40'
+                  : 'bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 hover:text-white border-indigo-500/40'
             }`}
-            title="הזמנת אורח מרחוק לשידור חי (Remote Guest)"
+            title={isPeerCoHost ? "חיבור מנחה שותף מרחוק (Remote Co-Host)" : "הזמנת אורח מרחוק לשידור חי (Remote Guest)"}
           >
-            <Users className="w-4 h-4 text-indigo-400" />
-            <span>👥 הזמן אורח {guestConnectionStatus === 'connected' ? '(מחובר ✓)' : ''}</span>
+            <Users className={`w-4 h-4 ${isPeerCoHost ? 'text-emerald-400' : 'text-indigo-400'}`} />
+            <span>{isPeerCoHost ? '👥 חבר מנחה שותף' : '👥 הזמן אורח'} {guestConnectionStatus === 'connected' ? '(מחובר ✓)' : ''}</span>
           </button>
 
           {/* Hardware Sound & Video Diagnostics Button */}
@@ -1500,8 +1517,10 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
                   </div>
                 </div>
 
-                {/* Guest Feed */}
-                <div className="relative rounded-2xl overflow-hidden bg-black border border-purple-500/40">
+                {/* Guest / Co-Host Feed */}
+                <div className={`relative rounded-2xl overflow-hidden bg-black border ${
+                  isPeerCoHost ? 'border-emerald-500/50' : 'border-purple-500/40'
+                }`}>
                   {guestFrame ? (
                     <img src={guestFrame} alt="Guest Stream" className="w-full h-full object-cover" />
                   ) : (
@@ -1512,9 +1531,11 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
                       className="w-full h-full object-cover"
                     />
                   )}
-                  <div className="absolute bottom-2 right-2 px-2.5 py-1 rounded-xl bg-black/75 backdrop-blur-md text-[10px] font-bold text-purple-300 border border-white/10 flex items-center gap-1.5">
+                  <div className={`absolute bottom-2 right-2 px-2.5 py-1 rounded-xl bg-black/75 backdrop-blur-md text-[10px] font-bold border border-white/10 flex items-center gap-1.5 ${
+                    isPeerCoHost ? 'text-emerald-300' : 'text-purple-300'
+                  }`}>
                     <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                    <span>🎙️ {guestInfo?.name || 'אורח בשידור'}</span>
+                    <span>{isPeerCoHost ? `👥 מנחה שותף: ${guestInfo?.name || episode.coHost?.name || 'מנחה 2'}` : `🎙️ ${guestInfo?.name || 'אורח בשידור'}`}</span>
                   </div>
                 </div>
               </div>
@@ -1531,9 +1552,11 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
                     className="w-full h-full object-cover"
                   />
                 )}
-                <div className="absolute bottom-4 right-4 px-3 py-1.5 rounded-xl bg-black/80 backdrop-blur-md text-xs font-bold text-purple-300 border border-white/10 flex items-center gap-1.5">
+                <div className={`absolute bottom-4 right-4 px-3 py-1.5 rounded-xl bg-black/80 backdrop-blur-md text-xs font-bold border border-white/10 flex items-center gap-1.5 ${
+                  isPeerCoHost ? 'text-emerald-300' : 'text-purple-300'
+                }`}>
                   <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                  <span>🎙️ {guestInfo?.name || 'אורח בשידור'}</span>
+                  <span>{isPeerCoHost ? `👥 מנחה שותף: ${guestInfo?.name || episode.coHost?.name || 'מנחה 2'}` : `🎙️ ${guestInfo?.name || 'אורח בשידור'}`}</span>
                 </div>
               </div>
             ) : isUsingRemoteCam && remoteFrame ? (
@@ -1560,7 +1583,9 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
 
                 {/* Floating Picture-in-Picture Guest Card */}
                 {!isAudioOnly && guestConnectionStatus === 'connected' && guestLayout === 'pip' && (
-                  <div className="absolute bottom-4 left-4 z-20 w-44 sm:w-56 aspect-video rounded-2xl overflow-hidden border-2 border-purple-500/80 shadow-2xl bg-black animate-in fade-in">
+                  <div className={`absolute bottom-4 left-4 z-20 w-44 sm:w-56 aspect-video rounded-2xl overflow-hidden border-2 shadow-2xl bg-black animate-in fade-in ${
+                    isPeerCoHost ? 'border-emerald-500/80' : 'border-purple-500/80'
+                  }`}>
                     {guestFrame ? (
                       <img src={guestFrame} alt="Guest PIP" className="w-full h-full object-cover" />
                     ) : (
@@ -1571,9 +1596,11 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
                         className="w-full h-full object-cover"
                       />
                     )}
-                    <div className="absolute bottom-1 right-1 px-1.5 py-0.5 rounded bg-black/80 text-[9px] font-bold text-purple-300 flex items-center gap-1">
+                    <div className={`absolute bottom-1 right-1 px-1.5 py-0.5 rounded bg-black/80 text-[9px] font-bold flex items-center gap-1 ${
+                      isPeerCoHost ? 'text-emerald-300' : 'text-purple-300'
+                    }`}>
                       <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                      <span>{guestInfo?.name || 'אורח'}</span>
+                      <span>{isPeerCoHost ? (guestInfo?.name || episode.coHost?.name || 'מנחה שותף') : (guestInfo?.name || 'אורח')}</span>
                     </div>
                   </div>
                 )}
@@ -1783,7 +1810,12 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
                   <h4 className="text-xs sm:text-sm font-black text-white truncate">
                     {overlayState.customBanner.show ? overlayState.customBanner.title : episode.title}
                   </h4>
-                  {episode.guest && !overlayState.customBanner.show && (
+                  {(episode.coHost || isPeerCoHost) && !overlayState.customBanner.show && (
+                    <p className="text-[11px] text-emerald-300 font-semibold truncate mt-0.5">
+                      👥 מנחים: {episode.hostName || episode.host?.name || 'מנחה 1'} & {episode.coHost?.name || guestInfo?.name || 'מנחה 2'}
+                    </p>
+                  )}
+                  {episode.guest && !isPeerCoHost && !overlayState.customBanner.show && (
                     <p className="text-[11px] text-indigo-300 font-semibold truncate mt-0.5">
                       אורח/ת: {episode.guest.name} {episode.guest.role ? `(${episode.guest.role})` : ''}
                     </p>

@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { Episode, PodcastShow, TopicItem } from '@/lib/types';
+import { Episode, EpisodeFormat, PodcastShow, TopicItem } from '@/lib/types';
 import { getEpisodes, getPodcasts, saveEpisode } from '@/lib/storage';
 import { 
   ArrowRight, 
@@ -16,15 +16,70 @@ import {
   Mic,
   BookOpen,
   Radio,
-  Video
+  Video,
+  Users
 } from 'lucide-react';
 
 const TEMPLATES = [
   {
+    id: 'duo',
+    label: '👥 פודקאסט צמד מנחים (Duo Co-Hosts)',
+    description: 'מבנה דינמי ומאוזן לצמד: סמול-טוק ועדכונים, פינג-פונג נושא מרכזי, פינת המלצות כפולה וסגירה משותפת.',
+    targetDuration: 35,
+    format: 'duo' as EpisodeFormat,
+    topics: [
+      {
+        id: 'top-d1',
+        title: 'פתיח, סמול-טוק ועדכונים הדדיים (Catch-up)',
+        estimatedMinutes: 5,
+        notes: 'פתיחה חמה, אנרגיה משותפת, מה חדש אצל כל אחד מהמנחים מאז הפרק הקודם.',
+        talkingPoints: ['חימום וכימיה בין המנחים', 'הצגת הנושא המרכזי של הפרק', 'נקודת פתיחה או חוויה שקרתה השבוע'],
+        questions: ['מה הדבר הכי מעניין שקרה לך השבוע?', 'איך נתקלת בנושא הזה לראשונה?'],
+        resources: [],
+        completed: false,
+        order: 1
+      },
+      {
+        id: 'top-d2',
+        title: 'הנושא המרכזי: דיבייט, ניתוח ופינג-פונג דעות',
+        estimatedMinutes: 20,
+        notes: 'דיון עומק דו-צדדי: הצגת שתי זוויות שונות, אתגר הדדי, סיפורים מהשטח.',
+        talkingPoints: ['זווית ראייה של מנחה 1', 'זווית ראייה של מנחה 2 (קונטרה / השלמה)', 'ההשלכות והמסקנות המשותפות'],
+        questions: ['האם אתה מסכים עם הטענה הזו?', 'איפה לדעתך הגישה הזו נכשלת?', 'איך אתה היית פותר את זה?'],
+        resources: [],
+        completed: false,
+        order: 2
+      },
+      {
+        id: 'top-d3',
+        title: 'פינת ההמלצות הכפולה (Dual Weekly Picks)',
+        estimatedMinutes: 5,
+        notes: 'כל מנחה משתף כלי, ספר, סרט, אפליקציה או תובנה מעשית.',
+        talkingPoints: ['ההמלצה השבועית של מנחה 1', 'ההמלצה השבועית של מנחה 2'],
+        questions: ['למה דווקא ההמלצה הזו שווה את הזמן של המאזינים?'],
+        resources: [],
+        completed: false,
+        order: 3
+      },
+      {
+        id: 'top-d4',
+        title: 'סיכום משותף, מסקנות וקריאה לפעולה',
+        estimatedMinutes: 5,
+        notes: 'סגירה קצבית עם פאנץ׳, הנעה לפעולה ופרטים על הפרק הבא.',
+        talkingPoints: ['מסקנה אחת שכל מאזין חייב לקחת', 'שאלה למאזינים לתגובות בסושיאל'],
+        questions: ['מה השורה התחתונה שלנו מהפרק?'],
+        resources: [],
+        completed: false,
+        order: 4
+      }
+    ]
+  },
+  {
     id: 'interview',
-    label: 'ראיון אורח קלאסי',
+    label: '🎙️ ראיון אורח קלאסי',
     description: 'פתיח והצגת האורח, סיפור אישי, דיון מעמיק בנושא המרכזי, שאלות מהירות וסיכום.',
     targetDuration: 45,
+    format: 'interview' as EpisodeFormat,
     topics: [
       {
         id: 'top-1',
@@ -63,9 +118,10 @@ const TEMPLATES = [
   },
   {
     id: 'solo',
-    label: 'פרק סולו / מונולוג לימודי',
+    label: '👤 פרק סולו / מונולוג לימודי',
     description: 'מבנה ממוקד של מגיש יחיד: הוק, הצגת הבעיה, 3 עקרונות פעולה וקריאה לפעולה.',
     targetDuration: 20,
+    format: 'solo' as EpisodeFormat,
     topics: [
       {
         id: 'top-s1',
@@ -109,15 +165,19 @@ export default function NewEpisodePage() {
   const [podcasts, setPodcasts] = useState<PodcastShow[]>([]);
   const [selectedPodcastId, setSelectedPodcastId] = useState<string>('');
   const [mediaType, setMediaType] = useState<'video' | 'audio_only'>('video');
-  const [selectedTemplate, setSelectedTemplate] = useState<string>('interview');
+  const [selectedTemplate, setSelectedTemplate] = useState<string>('duo');
+  const [episodeFormat, setEpisodeFormat] = useState<EpisodeFormat>('duo');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [hostName, setHostName] = useState('');
+  const [hostRole, setHostRole] = useState('');
+  const [coHostName, setCoHostName] = useState('');
+  const [coHostRole, setCoHostRole] = useState('');
   const [guestName, setGuestName] = useState('');
   const [guestRole, setGuestRole] = useState('');
   const [season, setSeason] = useState(1);
   const [episodeNumber, setEpisodeNumber] = useState(1);
-  const [targetDuration, setTargetDuration] = useState(45);
+  const [targetDuration, setTargetDuration] = useState(35);
 
   useEffect(() => {
     const existingPods = getPodcasts();
@@ -127,6 +187,9 @@ export default function NewEpisodePage() {
       if (existingPods[0].hostName) {
         setHostName(existingPods[0].hostName);
       }
+      if (existingPods[0].coHostName) {
+        setCoHostName(existingPods[0].coHostName);
+      }
     }
 
     const existingEps = getEpisodes();
@@ -134,6 +197,40 @@ export default function NewEpisodePage() {
       setEpisodeNumber(existingEps.length + 1);
     }
   }, []);
+
+  // Sync podcast hosts when podcast selection changes
+  const handleSelectPodcast = (podId: string) => {
+    setSelectedPodcastId(podId);
+    const chosen = podcasts.find(p => p.id === podId);
+    if (chosen) {
+      if (chosen.hostName) setHostName(chosen.hostName);
+      if (chosen.coHostName) {
+        setCoHostName(chosen.coHostName);
+        setEpisodeFormat('duo');
+        setSelectedTemplate('duo');
+      }
+    }
+  };
+
+  const handleSelectFormat = (fmt: EpisodeFormat) => {
+    setEpisodeFormat(fmt);
+    const matchingTemplate = TEMPLATES.find(t => t.format === fmt);
+    if (matchingTemplate) {
+      setSelectedTemplate(matchingTemplate.id);
+      setTargetDuration(matchingTemplate.targetDuration);
+    }
+  };
+
+  const handleSelectTemplate = (tmplId: string) => {
+    setSelectedTemplate(tmplId);
+    const tmpl = TEMPLATES.find(t => t.id === tmplId);
+    if (tmpl) {
+      setTargetDuration(tmpl.targetDuration);
+      if (tmpl.format) {
+        setEpisodeFormat(tmpl.format);
+      }
+    }
+  };
 
   const handleCreate = (e: React.FormEvent) => {
     e.preventDefault();
@@ -149,13 +246,17 @@ export default function NewEpisodePage() {
       episodeNumber: Number(episodeNumber),
       status: 'research',
       mediaType,
+      episodeFormat,
       description: description.trim(),
       hostName: hostName.trim() || undefined,
-      host: hostName.trim() ? { name: hostName.trim() } : undefined,
+      host: hostName.trim() ? { name: hostName.trim(), role: hostRole.trim() || undefined } : undefined,
+      coHost: (episodeFormat === 'duo' && coHostName.trim()) 
+        ? { name: coHostName.trim(), role: coHostRole.trim() || undefined } 
+        : undefined,
       targetDurationMinutes: Number(targetDuration) || template.targetDuration,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-      guest: guestName.trim()
+      guest: (episodeFormat !== 'solo' && guestName.trim())
         ? {
             name: guestName.trim(),
             role: guestRole.trim(),
@@ -197,7 +298,7 @@ export default function NewEpisodePage() {
             הגדרת פרק חדש לפודקאסט
           </h1>
           <p className="text-xs sm:text-sm text-slate-400 mt-1">
-            בחרו את תוכנית הפודקאסט, תבנית המבנה, הזינו את פרטי הפרק והאורח.
+            בחרו את תוכנית הפודקאסט, פורמט ההגשה (צמד מנחים / ראיון / סולו), והזינו את נושאי הפרק.
           </p>
         </div>
 
@@ -211,44 +312,109 @@ export default function NewEpisodePage() {
               <Radio className="w-4 h-4 text-indigo-400" />
               <select
                 value={selectedPodcastId}
-                onChange={(e) => setSelectedPodcastId(e.target.value)}
+                onChange={(e) => handleSelectPodcast(e.target.value)}
                 className="flex-1 px-4 py-2.5 rounded-xl bg-slate-900/80 border border-slate-700 text-xs sm:text-sm text-white focus:outline-none focus:border-indigo-500"
               >
                 {podcasts.map(p => (
                   <option key={p.id} value={p.id}>
-                    {p.title} ({p.category || 'כללי'})
+                    {p.title} ({p.category || 'כללי'}) {p.coHostName ? '• 👥 צמד' : ''}
                   </option>
                 ))}
               </select>
             </div>
           </div>
 
+          {/* Episode Format Selector */}
+          <div>
+            <label className="block text-xs font-bold text-slate-300 mb-2">
+              פורמט ההגשה של הפרק:
+            </label>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+              <button
+                type="button"
+                onClick={() => handleSelectFormat('duo')}
+                className={`p-3 rounded-2xl border text-right transition-all ${
+                  episodeFormat === 'duo'
+                    ? 'bg-emerald-950/40 border-emerald-500 shadow-lg shadow-emerald-950/40 ring-1 ring-emerald-500/40'
+                    : 'bg-slate-900/60 border-slate-800 text-slate-400 hover:border-slate-700'
+                }`}
+              >
+                <div className="flex items-center gap-2 mb-1">
+                  <Users className={`w-4 h-4 ${episodeFormat === 'duo' ? 'text-emerald-400' : 'text-slate-400'}`} />
+                  <span className={`text-xs font-bold ${episodeFormat === 'duo' ? 'text-white' : 'text-slate-300'}`}>
+                    👥 צמד מנחים (Duo)
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                  שני מגישים קבועים (Co-Hosts) בדיאלוג שוויוני ופינג-פונג
+                </p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleSelectFormat('interview')}
+                className={`p-3 rounded-2xl border text-right transition-all ${
+                  episodeFormat === 'interview'
+                    ? 'bg-indigo-950/40 border-indigo-500 shadow-lg shadow-indigo-950/40 ring-1 ring-indigo-500/40'
+                    : 'bg-slate-900/60 border-slate-800 text-slate-400 hover:border-slate-700'
+                }`}
+              >
+                <div className="flex items-center gap-2 mb-1">
+                  <Mic className={`w-4 h-4 ${episodeFormat === 'interview' ? 'text-indigo-400' : 'text-slate-400'}`} />
+                  <span className={`text-xs font-bold ${episodeFormat === 'interview' ? 'text-white' : 'text-slate-300'}`}>
+                    🎙️ מנחה ואורח/ת
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                  מגיש יחיד המארח מומחה באולפן או בחיבור מרחוק
+                </p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleSelectFormat('solo')}
+                className={`p-3 rounded-2xl border text-right transition-all ${
+                  episodeFormat === 'solo'
+                    ? 'bg-blue-950/40 border-blue-500 shadow-lg shadow-blue-950/40 ring-1 ring-blue-500/40'
+                    : 'bg-slate-900/60 border-slate-800 text-slate-400 hover:border-slate-700'
+                }`}
+              >
+                <div className="flex items-center gap-2 mb-1">
+                  <User className={`w-4 h-4 ${episodeFormat === 'solo' ? 'text-blue-400' : 'text-slate-400'}`} />
+                  <span className={`text-xs font-bold ${episodeFormat === 'solo' ? 'text-white' : 'text-slate-300'}`}>
+                    👤 סולו יחיד
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                  מונולוג ממוקד, מדריך מעשי או שיעור קצר של מגיש אחד
+                </p>
+              </button>
+            </div>
+          </div>
+
           {/* Template Selection */}
           <div>
-            <label className="block text-xs font-bold text-slate-300 mb-3">
-              בחרו תבנית מבנה התחלתית:
+            <label className="block text-xs font-bold text-slate-300 mb-2">
+              תבנית המבנה לפרק:
             </label>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               {TEMPLATES.map(tmpl => (
                 <div
                   key={tmpl.id}
-                  onClick={() => {
-                    setSelectedTemplate(tmpl.id);
-                    setTargetDuration(tmpl.targetDuration);
-                  }}
-                  className={`p-4 rounded-2xl border cursor-pointer transition-all ${
+                  onClick={() => handleSelectTemplate(tmpl.id)}
+                  className={`p-3.5 rounded-2xl border cursor-pointer transition-all ${
                     selectedTemplate === tmpl.id
                       ? 'bg-indigo-950/40 border-indigo-500 shadow-lg shadow-indigo-950/40'
                       : 'bg-slate-900/60 border-slate-800 hover:border-slate-700'
                   }`}
                 >
                   <div className="flex items-center justify-between mb-1.5">
-                    <span className="text-sm font-bold text-white">{tmpl.label}</span>
-                    <span className="text-[11px] font-semibold text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded">
+                    <span className="text-xs font-bold text-white truncate">{tmpl.label}</span>
+                    <span className="text-[10px] font-semibold text-indigo-400 bg-indigo-500/10 px-1.5 py-0.5 rounded shrink-0">
                       {tmpl.targetDuration} דק'
                     </span>
                   </div>
-                  <p className="text-xs text-slate-400 leading-relaxed">{tmpl.description}</p>
+                  <p className="text-[11px] text-slate-400 leading-relaxed line-clamp-3">{tmpl.description}</p>
                 </div>
               ))}
             </div>
@@ -273,7 +439,7 @@ export default function NewEpisodePage() {
                 </div>
                 <div>
                   <h4 className="text-xs font-bold text-white">🎬 וידאו פודקאסט</h4>
-                  <p className="text-[10px] text-slate-400">צילום 4K/1080p, מצלמת אייפון, אוברלייז וגרפיקה</p>
+                  <p className="text-[10px] text-slate-400">צילום 4K/1080p, מסך מפוצל, מצלמת אייפון, אוברלייז</p>
                 </div>
               </div>
 
@@ -361,49 +527,152 @@ export default function NewEpisodePage() {
             />
           </div>
 
-          {/* Host & Guest fields */}
-          <div className="p-4 rounded-2xl bg-slate-900/60 border border-slate-800 space-y-4">
-            <div>
-              <label className="text-xs font-bold text-cyan-300 flex items-center gap-1.5 mb-1.5">
-                <Mic className="w-3.5 h-3.5" />
-                שם המגיש / מנחה הפרק (אופציונלי)
-              </label>
-              <input
-                type="text"
-                placeholder="למשל: עומר אוקון"
-                value={hostName}
-                onChange={(e) => setHostName(e.target.value)}
-                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500"
-              />
-            </div>
+          {/* Host & Co-Host / Guest Identity Card */}
+          {episodeFormat === 'duo' ? (
+            /* Duo Co-Hosts Format Section */
+            <div className="p-5 rounded-2xl bg-slate-900/70 border border-emerald-500/30 space-y-4 shadow-lg shadow-emerald-950/20">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-2.5">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-400">
+                    <Users className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-white">צוות המנחים הקבוע (צמד מנחים - Duo)</h4>
+                    <p className="text-[10px] text-slate-400">הזינו את פרטי שני המנחים שיובילו את השידור יחד</p>
+                  </div>
+                </div>
+                <span className="text-[10px] px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-300 font-bold border border-emerald-500/30">
+                  👥 צמד שותפים
+                </span>
+              </div>
 
-            <div className="pt-2 border-t border-slate-800 space-y-3">
-              <h4 className="text-xs font-bold text-indigo-300 flex items-center gap-1.5">
-                <User className="w-3.5 h-3.5" />
-                פרטי אורח/ת (אופציונלי)
-              </h4>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {/* Host 1 */}
+                <div className="p-3.5 rounded-xl bg-slate-950/60 border border-slate-800 space-y-2">
+                  <label className="text-xs font-bold text-cyan-300 flex items-center gap-1.5">
+                    <Mic className="w-3.5 h-3.5 text-cyan-400" />
+                    מנחה 1 (מגיש/ת ראשי/ת)
+                  </label>
                   <input
                     type="text"
-                    placeholder="שם האורח/ת (למשל: דניאל לוי)"
-                    value={guestName}
-                    onChange={(e) => setGuestName(e.target.value)}
-                    className="w-full px-3.5 py-2 rounded-xl bg-slate-800 border border-slate-700 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+                    placeholder="שם מנחה 1 (למשל: עומר אוקון)"
+                    value={hostName}
+                    onChange={(e) => setHostName(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500"
+                  />
+                  <input
+                    type="text"
+                    placeholder="תפקיד / תיאור (למשל: יזם וטכנולוג)"
+                    value={hostRole}
+                    onChange={(e) => setHostRole(e.target.value)}
+                    className="w-full px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-[11px] text-slate-300 placeholder-slate-600 focus:outline-none focus:border-cyan-500"
                   />
                 </div>
-                <div>
+
+                {/* Host 2 / Co-Host */}
+                <div className="p-3.5 rounded-xl bg-slate-950/60 border border-slate-800 space-y-2">
+                  <label className="text-xs font-bold text-emerald-300 flex items-center gap-1.5">
+                    <Users className="w-3.5 h-3.5 text-emerald-400" />
+                    מנחה 2 (מנחה שותף/ה - Co-Host)
+                  </label>
                   <input
                     type="text"
-                    placeholder="תפקיד / חברה (למשל: מנהל טכנולוגיות ראשי)"
-                    value={guestRole}
-                    onChange={(e) => setGuestRole(e.target.value)}
-                    className="w-full px-3.5 py-2 rounded-xl bg-slate-800 border border-slate-700 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+                    placeholder="שם מנחה 2 (למשל: דניאל לוי)"
+                    value={coHostName}
+                    onChange={(e) => setCoHostName(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+                  />
+                  <input
+                    type="text"
+                    placeholder="תפקיד / תיאור (למשל: מפיק ומומחה תוכן)"
+                    value={coHostRole}
+                    onChange={(e) => setCoHostRole(e.target.value)}
+                    className="w-full px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-[11px] text-slate-300 placeholder-slate-600 focus:outline-none focus:border-emerald-500"
                   />
                 </div>
               </div>
+
+              {/* Optional guest in addition to duo */}
+              <div className="pt-2 border-t border-slate-800/80">
+                <details className="group">
+                  <summary className="text-[11px] font-semibold text-slate-400 hover:text-indigo-300 cursor-pointer flex items-center gap-1">
+                    <span>+ האם בפרק זה הצמד מארח גם אורח/ת חיצוני/ת? (אופציונלי)</span>
+                  </summary>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-3">
+                    <input
+                      type="text"
+                      placeholder="שם האורח/ת (למשל: פרופ' רון כהן)"
+                      value={guestName}
+                      onChange={(e) => setGuestName(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+                    />
+                    <input
+                      type="text"
+                      placeholder="תפקיד / ארגון האורח/ת"
+                      value={guestRole}
+                      onChange={(e) => setGuestRole(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+                    />
+                  </div>
+                </details>
+              </div>
             </div>
-          </div>
+          ) : (
+            /* Solo / Interview Format Section */
+            <div className="p-4 rounded-2xl bg-slate-900/60 border border-slate-800 space-y-4">
+              <div>
+                <label className="text-xs font-bold text-cyan-300 flex items-center gap-1.5 mb-1.5">
+                  <Mic className="w-3.5 h-3.5" />
+                  שם המגיש / מנחה הפרק (אופציונלי)
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <input
+                    type="text"
+                    placeholder="למשל: עומר אוקון"
+                    value={hostName}
+                    onChange={(e) => setHostName(e.target.value)}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500"
+                  />
+                  <input
+                    type="text"
+                    placeholder="תפקיד / תיאור (למשל: מגיש הפודקאסט)"
+                    value={hostRole}
+                    onChange={(e) => setHostRole(e.target.value)}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500"
+                  />
+                </div>
+              </div>
+
+              {episodeFormat === 'interview' && (
+                <div className="pt-2 border-t border-slate-800 space-y-3">
+                  <h4 className="text-xs font-bold text-indigo-300 flex items-center gap-1.5">
+                    <User className="w-3.5 h-3.5" />
+                    פרטי אורח/ת (אופציונלי)
+                  </h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <input
+                        type="text"
+                        placeholder="שם האורח/ת (למשל: דניאל לוי)"
+                        value={guestName}
+                        onChange={(e) => setGuestName(e.target.value)}
+                        className="w-full px-3.5 py-2 rounded-xl bg-slate-800 border border-slate-700 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+                      />
+                    </div>
+                    <div>
+                      <input
+                        type="text"
+                        placeholder="תפקיד / חברה (למשל: מנהל טכנולוגיות ראשי)"
+                        value={guestRole}
+                        onChange={(e) => setGuestRole(e.target.value)}
+                        className="w-full px-3.5 py-2 rounded-xl bg-slate-800 border border-slate-700 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Submit */}
           <div className="flex items-center justify-end gap-3 pt-4">

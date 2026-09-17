@@ -13,7 +13,16 @@ export interface PodcastShow {
   coverColor?: string;
   category?: string;
   hostName?: string;
+  coHostName?: string;
   createdAt: string;
+}
+
+export type EpisodeFormat = 'solo' | 'duo' | 'interview' | 'panel';
+
+export interface HostInfo {
+  name: string;
+  role?: string;
+  avatar?: string;
 }
 
 export type MarkerType = 'highlight' | 'topic_change' | 'clip_cut' | 'note' | 'question';
@@ -130,9 +139,11 @@ export interface Episode {
   season: number;
   status: EpisodeStatus;
   mediaType?: 'video' | 'audio_only' | 'gaming_creator'; // תמיכה בפרק וידאו, אודיו או גיימינג ומולטי-קאם
+  episodeFormat?: EpisodeFormat; // פורמט: סולו, צמד מנחים, ראיון אורח, פאנל
   description: string;
   hostName?: string; // שם המגיש / מנחה
-  host?: { name: string; role?: string; avatar?: string };
+  host?: HostInfo;
+  coHost?: HostInfo; // מנחה שותף / צמד מנחים
   guest?: GuestInfo;
   targetDurationMinutes: number;
   createdAt: string;

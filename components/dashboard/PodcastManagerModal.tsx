@@ -46,6 +46,7 @@ export default function PodcastManagerModal({
   const [description, setDescription] = useState('');
   const [category, setCategory] = useState('כללי');
   const [hostName, setHostName] = useState('');
+  const [coHostName, setCoHostName] = useState('');
   const [coverColor, setCoverColor] = useState(COLOR_OPTIONS[0].value);
 
   if (!isOpen) return null;
@@ -55,6 +56,7 @@ export default function PodcastManagerModal({
     setDescription('');
     setCategory('טכנולוגיה');
     setHostName('');
+    setCoHostName('');
     setCoverColor(COLOR_OPTIONS[0].value);
     setEditingId(null);
     setIsCreating(true);
@@ -65,6 +67,7 @@ export default function PodcastManagerModal({
     setDescription(podcast.description);
     setCategory(podcast.category || 'כללי');
     setHostName(podcast.hostName || '');
+    setCoHostName(podcast.coHostName || '');
     setCoverColor(podcast.coverColor || COLOR_OPTIONS[0].value);
     setEditingId(podcast.id);
     setIsCreating(true);
@@ -80,6 +83,7 @@ export default function PodcastManagerModal({
       description: description.trim(),
       category: category.trim(),
       hostName: hostName.trim(),
+      coHostName: coHostName.trim(),
       coverColor,
       createdAt: editingId ? (podcasts.find(p => p.id === editingId)?.createdAt || new Date().toISOString()) : new Date().toISOString()
     };
@@ -176,7 +180,7 @@ export default function PodcastManagerModal({
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">שם המגיש/ה</label>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">מנחה ראשי / מגיש/ה</label>
                 <input
                   type="text"
                   placeholder="למשל: ישראל ישראלי"
@@ -185,6 +189,19 @@ export default function PodcastManagerModal({
                   className="w-full px-3.5 py-2 rounded-xl bg-slate-800 border border-slate-700 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
                 />
               </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1">
+                מנחה שותף/ה (Co-Host) <span className="text-[10px] text-slate-400 font-normal">(אופציונלי - לפודקאסט צמדים)</span>
+              </label>
+              <input
+                type="text"
+                placeholder="למשל: דנה כהן (מלאו אם הפודקאסט מוגש כצמד קבוע)"
+                value={coHostName}
+                onChange={(e) => setCoHostName(e.target.value)}
+                className="w-full px-3.5 py-2 rounded-xl bg-slate-800 border border-slate-700 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+              />
             </div>
 
             <div>
@@ -262,10 +279,20 @@ export default function PodcastManagerModal({
                             {pod.category}
                           </span>
                         )}
+                        {pod.coHostName && (
+                          <span className="text-[10px] bg-emerald-500/10 text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-500/20 font-medium flex items-center gap-1">
+                            👥 צמד מנחים
+                          </span>
+                        )}
                       </div>
                       <p className="text-[11px] text-slate-400 truncate max-w-sm mt-0.5">
                         {pod.description || 'אין תיאור'}
                       </p>
+                      {(pod.hostName || pod.coHostName) && (
+                        <p className="text-[10px] text-slate-400 truncate mt-0.5">
+                          🎙️ {pod.hostName || 'מנחה'}{pod.coHostName ? ` & ${pod.coHostName}` : ''}
+                        </p>
+                      )}
                     </div>
                   </div>
 
