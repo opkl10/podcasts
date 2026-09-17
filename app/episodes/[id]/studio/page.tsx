@@ -25,6 +25,12 @@ export default function StudioPage({ params }: StudioPageProps) {
     setIsLoaded(true);
   }, [resolvedParams.id]);
 
+  useEffect(() => {
+    if (episode && episode.mediaType === 'gaming_creator') {
+      router.replace(`/gaming?episodeId=${episode.id}`);
+    }
+  }, [episode, router]);
+
   if (!isLoaded) {
     return (
       <div className="flex items-center justify-center min-h-[70vh]">
@@ -50,12 +56,6 @@ export default function StudioPage({ params }: StudioPageProps) {
       </div>
     );
   }
-
-  useEffect(() => {
-    if (episode && episode.mediaType === 'gaming_creator') {
-      router.replace(`/gaming?episodeId=${episode.id}`);
-    }
-  }, [episode, router]);
 
   if (episode.mediaType === 'gaming_creator') {
     return (
