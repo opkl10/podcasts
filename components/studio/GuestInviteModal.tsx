@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Episode } from '@/lib/types';
+import { saveEpisode } from '@/lib/storage';
 import { 
   Users, 
   Copy, 
@@ -38,6 +39,8 @@ interface GuestInviteModalProps {
   onChangeLayout: (layout: 'split' | 'pip' | 'host' | 'guest') => void;
   guestVolume: number;
   onChangeGuestVolume: (vol: number) => void;
+  onUpdateEpisode?: (updated: Episode) => void;
+  initialRole?: 'cohost' | 'guest';
 }
 
 export default function GuestInviteModal({
@@ -49,7 +52,9 @@ export default function GuestInviteModal({
   layoutMode,
   onChangeLayout,
   guestVolume,
-  onChangeGuestVolume
+  onChangeGuestVolume,
+  onUpdateEpisode,
+  initialRole
 }: GuestInviteModalProps) {
   const [copied, setCopied] = useState(false);
   const [networkIp, setNetworkIp] = useState<string>('localhost');
@@ -57,8 +62,47 @@ export default function GuestInviteModal({
 
   // Role: Co-Host vs Guest
   const [inviteRole, setInviteRole] = useState<'cohost' | 'guest'>(
-    (episode.episodeFormat === 'duo' || !!episode.coHost) ? 'cohost' : 'guest'
+    initialRole || ((episode.episodeFormat === 'duo' || !!episode.coHost) ? 'cohost' : 'guest')
   );
+
+  useEffect(() => {
+    if (isOpen) {
+      if (initialRole) {
+        setInviteRole(initialRole);
+      } else if (episode.episodeFormat === 'duo' || !!episode.coHost) {
+        setInviteRole('cohost');
+      }
+    }
+  }, [isOpen, initialRole, episode.episodeFormat, episode.coHost]);
+
+  // Co-Host Name & Role inputs
+  const [coHostInputName, setCoHostInputName] = useState(episode.coHost?.name || '');
+  const [coHostInputRole, setCoHostInputRole] = useState(episode.coHost?.role || '');
+  const [isCoHostSaved, setIsCoHostSaved] = useState(Boolean(episode.coHost?.name));
+
+  useEffect(() => {
+    if (episode.coHost?.name) {
+      setCoHostInputName(episode.coHost.name);
+      setCoHostInputRole(episode.coHost.role || '');
+      setIsCoHostSaved(true);
+    }
+  }, [episode.coHost]);
+
+  const handleSaveCoHost = () => {
+    if (!coHostInputName.trim()) return;
+    const updated: Episode = {
+      ...episode,
+      episodeFormat: 'duo',
+      coHost: {
+        name: coHostInputName.trim(),
+        role: coHostInputRole.trim() || undefined
+      }
+    };
+    saveEpisode(updated);
+    if (onUpdateEpisode) onUpdateEpisode(updated);
+    setIsCoHostSaved(true);
+    setInviteRole('cohost');
+  };
 
   // Mode: 'local' (same Wi-Fi) vs 'public' (Internet / Cloud URL)
   const [connectionMode, setConnectionMode] = useState<'public' | 'local'>('public');
@@ -102,11 +146,14 @@ export default function GuestInviteModal({
     effectiveBaseUrl = cleanUrl.replace(/\/+$/, '');
   }
 
-  const guestLink = `${effectiveBaseUrl}/guest?room=${roomId}&title=${encodeURIComponent(episode.title)}&role=${inviteRole}`;
+  let guestLink = `${effectiveBaseUrl}/guest?room=${roomId}&title=${encodeURIComponent(episode.title)}&role=${inviteRole}`;
+  if (inviteRole === 'cohost' && coHostInputName.trim()) {
+    guestLink += `&name=${encodeURIComponent(coHostInputName.trim())}`;
+  }
 
   const whatsappMessage = encodeURIComponent(
     inviteRole === 'cohost'
-      ? `היי! מזמין אותך להצטרף אליי לשידור חי של פרק הפודקאסט "${episode.title}" כמנחה שותף/ה (Co-Host).\n\nלחץ על הלינק הבא להצטרפות ישירה מהדפדפן (אין צורך בהתקנת אפליקציה):\n${guestLink}`
+      ? `היי ${coHostInputName.trim() ? coHostInputName.trim() : ''}! מזמין אותך להצטרף אליי לשידור חי של פרק הפודקאסט "${episode.title}" כמנחה שותף/ה (Co-Host).\n\nלחץ/י על הלינק הבא להצטרפות ישירה מהדפדפן (אין צורך בהתקנת אפליקציה):\n${guestLink}`
       : `היי! מזמין אותך להצטרף אליי לשידור חי של פרק הפודקאסט "${episode.title}".\n\nלחץ על הלינק הבא להצטרפות ישירה מהדפדפן (אין צורך בהתקנת אפליקציה):\n${guestLink}`
   );
 
@@ -198,6 +245,72 @@ export default function GuestInviteModal({
             </button>
           </div>
         </div>
+
+        {/* Co-Host Name & Role Input */}
+        {inviteRole === 'cohost' && (
+          <div className="p-4 rounded-2xl bg-emerald-950/30 border border-emerald-500/40 space-y-2.5 animate-in fade-in">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-emerald-300 flex items-center gap-1.5">
+                <Users className="w-4 h-4" />
+                <span>הגדרת פרטי מנחה שותף/ה (Co-Host):</span>
+              </span>
+              {isCoHostSaved ? (
+                <span className="text-[10px] text-emerald-400 font-bold bg-emerald-500/20 px-2 py-0.5 rounded-md border border-emerald-500/30 flex items-center gap-1">
+                  <Check className="w-3 h-3" />
+                  מוגדר בפרק
+                </span>
+              ) : (
+                <span className="text-[10px] text-amber-400 font-medium">
+                  לא נשמר עדיין
+                </span>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <div>
+                <label className="text-[10px] font-semibold text-slate-400 mb-1 block">שם המנחה השותף/ה *</label>
+                <input
+                  type="text"
+                  value={coHostInputName}
+                  onChange={(e) => {
+                    setCoHostInputName(e.target.value);
+                    setIsCoHostSaved(false);
+                  }}
+                  placeholder="למשל: דנה כהן"
+                  className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-emerald-500/30 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-400"
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] font-semibold text-slate-400 mb-1 block">תפקיד / תיאור (אופציונלי)</label>
+                <div className="flex gap-1.5">
+                  <input
+                    type="text"
+                    value={coHostInputRole}
+                    onChange={(e) => {
+                      setCoHostInputRole(e.target.value);
+                      setIsCoHostSaved(false);
+                    }}
+                    placeholder="למשל: מגישה שותפה"
+                    className="flex-1 px-3 py-2 rounded-xl bg-slate-900 border border-emerald-500/30 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-400"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleSaveCoHost}
+                    disabled={!coHostInputName.trim()}
+                    className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-bold shadow-md shadow-emerald-600/20 shrink-0 transition-all flex items-center gap-1"
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                    <span>שמור</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+            <p className="text-[10px] text-slate-400">
+              הגדרה זו מעדכנת את הפרק כפודקאסט צמד (Duo), מקנה כתובית מנחים כפולה במסך וממלאת את שמה של המנחה אוטומטית בהצטרפות.
+            </p>
+          </div>
+        )}
 
         {/* Network Mode Switcher: Public Internet vs Local Wi-Fi */}
         <div className="space-y-2">

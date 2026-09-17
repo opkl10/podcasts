@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
-import { Episode, TimestampMarker, AudioInputDevice, VideoInputDevice, TopicItem, LiveOverlayState, SubtitleItem, MovieFactCard } from '@/lib/types';
+import { Episode, EpisodeFormat, TimestampMarker, AudioInputDevice, VideoInputDevice, TopicItem, LiveOverlayState, SubtitleItem, MovieFactCard } from '@/lib/types';
 import { getMediaDevices, StudioAudioProcessor, getVideoConstraints, VideoResolution, getScreenCaptureStream } from '@/lib/mediaManager';
 import { StudioWebRTCReceiver } from '@/lib/webrtcClient';
 import { saveMediaBlob, getMediaBlob, deleteMediaBlob, saveEpisode, formatTime, getPermanentLogo, getAudioStageConfig, saveAudioStageConfig, AudioStageConfig } from '@/lib/storage';
@@ -192,6 +192,7 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
 
   // Remote Guest / Co-Host Studio States & Receiver
   const [isGuestModalOpen, setIsGuestModalOpen] = useState(false);
+  const [guestModalRole, setGuestModalRole] = useState<'cohost' | 'guest'>('cohost');
   const [guestConnectionStatus, setGuestConnectionStatus] = useState<'idle' | 'connecting' | 'connected' | 'error'>('idle');
   const [guestInfo, setGuestInfo] = useState<{ name: string; role?: string; isCoHost?: boolean } | undefined>(
     episode.coHost
@@ -207,7 +208,7 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
   const guestVideoRef = useRef<HTMLVideoElement | null>(null);
   const [guestFrame, setGuestFrame] = useState<string | null>(null);
 
-  const isPeerCoHost = Boolean(guestInfo?.isCoHost || episode.episodeFormat === 'duo' || episode.coHost);
+  const isPeerCoHost = Boolean(guestInfo?.isCoHost || currentEpisode.episodeFormat === 'duo' || currentEpisode.coHost);
 
   const videoElementRef = useRef<HTMLVideoElement>(null);
   const studioContainerRef = useRef<HTMLDivElement>(null);
@@ -287,8 +288,26 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
           setGuestInfo(prev => ({
             name: json.guestInfo.name || prev?.name || '',
             role: json.guestInfo.role || prev?.role,
-            isCoHost: json.guestInfo.isCoHost ?? prev?.isCoHost ?? (episode.episodeFormat === 'duo' || !!episode.coHost)
+            isCoHost: json.guestInfo.isCoHost ?? prev?.isCoHost ?? (currentEpisodeRef.current.episodeFormat === 'duo' || !!currentEpisodeRef.current.coHost)
           }));
+          if (json.guestInfo.isCoHost && json.guestInfo.name) {
+            setCurrentEpisode(prevEp => {
+              if (!prevEp.coHost || prevEp.coHost.name !== json.guestInfo.name) {
+                const updated: Episode = {
+                  ...prevEp,
+                  episodeFormat: (prevEp.episodeFormat === 'solo' ? 'duo' : prevEp.episodeFormat) as EpisodeFormat,
+                  coHost: {
+                    name: json.guestInfo.name,
+                    role: json.guestInfo.role || 'מנחה שותף/ה'
+                  }
+                };
+                saveEpisode(updated);
+                currentEpisodeRef.current = updated;
+                return updated;
+              }
+              return prevEp;
+            });
+          }
         }
       } catch {}
     }, 1500);
@@ -1298,22 +1317,52 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
 
         {/* Master Recording Timer & Status */}
         <div className="flex items-center gap-3">
-          {/* Remote Guest / Co-Host Studio Invite Button */}
-          <button
-            onClick={() => setIsGuestModalOpen(true)}
-            className={`flex items-center gap-1.5 px-3 py-2 rounded-2xl text-xs font-bold border transition-all shadow-md active:scale-95 ${
-              guestConnectionStatus === 'connected'
-                ? isPeerCoHost
+          {/* Co-Host Button */}
+          {currentEpisode.coHost ? (
+            <button
+              onClick={() => {
+                setGuestModalRole('cohost');
+                setIsGuestModalOpen(true);
+              }}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-2xl text-xs font-bold border transition-all shadow-md active:scale-95 ${
+                guestConnectionStatus === 'connected' && isPeerCoHost
                   ? 'bg-emerald-950/60 border-emerald-500/60 text-emerald-300 shadow-lg shadow-emerald-950/40'
-                  : 'bg-indigo-950/60 border-indigo-500/60 text-indigo-300 shadow-lg shadow-indigo-950/40'
-                : isPeerCoHost
-                  ? 'bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 hover:text-white border-emerald-500/40'
-                  : 'bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 hover:text-white border-indigo-500/40'
+                  : 'bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 hover:text-white border-emerald-500/40'
+              }`}
+              title="ניהול וחיבור מנחה שותף/ה (Co-Host)"
+            >
+              <Users className="w-4 h-4 text-emerald-400" />
+              <span>👥 מנחה שותף: {currentEpisode.coHost.name} {guestConnectionStatus === 'connected' && isPeerCoHost ? '(מחובר ✓)' : '(חבר)'}</span>
+            </button>
+          ) : (
+            <button
+              onClick={() => {
+                setGuestModalRole('cohost');
+                setIsGuestModalOpen(true);
+              }}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-2xl text-xs font-bold border transition-all shadow-md active:scale-95 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 hover:text-white border-emerald-500/40"
+              title="הוסף והזמן מנחה שותף/ה (Co-Host)"
+            >
+              <Users className="w-4 h-4 text-emerald-400" />
+              <span>👥 + הוסף מנחה שותף</span>
+            </button>
+          )}
+
+          {/* Remote Guest Invite Button */}
+          <button
+            onClick={() => {
+              setGuestModalRole('guest');
+              setIsGuestModalOpen(true);
+            }}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-2xl text-xs font-bold border transition-all shadow-md active:scale-95 ${
+              guestConnectionStatus === 'connected' && !isPeerCoHost
+                ? 'bg-indigo-950/60 border-indigo-500/60 text-indigo-300 shadow-lg shadow-indigo-950/40'
+                : 'bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 hover:text-white border-indigo-500/40'
             }`}
-            title={isPeerCoHost ? "חיבור מנחה שותף מרחוק (Remote Co-Host)" : "הזמנת אורח מרחוק לשידור חי (Remote Guest)"}
+            title="הזמנת אורח מרחוק לשידור חי (Remote Guest)"
           >
-            <Users className={`w-4 h-4 ${isPeerCoHost ? 'text-emerald-400' : 'text-indigo-400'}`} />
-            <span>{isPeerCoHost ? '👥 חבר מנחה שותף' : '👥 הזמן אורח'} {guestConnectionStatus === 'connected' ? '(מחובר ✓)' : ''}</span>
+            <Radio className="w-4 h-4 text-indigo-400" />
+            <span>🎙️ הזמן אורח {guestConnectionStatus === 'connected' && !isPeerCoHost ? '(מחובר ✓)' : ''}</span>
           </button>
 
           {/* Hardware Sound & Video Diagnostics Button */}
@@ -2517,7 +2566,7 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
 
       {/* Remote Guest Studio Invite & Layout Modal */}
       <GuestInviteModal
-        episode={episode}
+        episode={currentEpisode}
         isOpen={isGuestModalOpen}
         onClose={() => setIsGuestModalOpen(false)}
         guestStatus={guestConnectionStatus}
@@ -2526,6 +2575,12 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
         onChangeLayout={(layout) => setGuestLayout(layout)}
         guestVolume={guestVolume}
         onChangeGuestVolume={(vol) => setGuestVolume(vol)}
+        initialRole={guestModalRole}
+        onUpdateEpisode={(updated) => {
+          setCurrentEpisode(updated);
+          currentEpisodeRef.current = updated;
+          saveEpisode(updated);
+        }}
       />
 
       {/* Audio-Only Videocast Stage Background Customizer Modal */}

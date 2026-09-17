@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
+import { RemoteGuestSender } from '@/lib/webrtcClient';
 import { 
   Mic, 
   MicOff, 
@@ -30,10 +31,11 @@ function GuestBroadcastContent() {
   const episodeTitle = searchParams.get('title') || 'פרק פודקאסט מיוחד';
   const roleParam = searchParams.get('role');
   const isCoHost = roleParam === 'cohost';
+  const nameParam = searchParams.get('name') || '';
 
   // Green Room state vs On Air state
   const [isOnAir, setIsOnAir] = useState(false);
-  const [guestName, setGuestName] = useState('');
+  const [guestName, setGuestName] = useState(nameParam);
   const [guestRole, setGuestRole] = useState(isCoHost ? 'מנחה שותף/ה' : '');
 
   // Hardware states
@@ -54,6 +56,8 @@ function GuestBroadcastContent() {
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
   const peerRef = useRef<RTCPeerConnection | null>(null);
+  const guestSenderRef = useRef<RemoteGuestSender | null>(null);
+  const frameSuccessCountRef = useRef<number>(0);
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -147,12 +151,8 @@ function GuestBroadcastContent() {
       if (audioDeviceId) setSelectedAudioId(audioDeviceId);
 
       // If already connected, replace WebRTC tracks
-      if (peerRef.current) {
-        const senders = peerRef.current.getSenders();
-        stream.getTracks().forEach(track => {
-          const sender = senders.find(s => s.track?.kind === track.kind);
-          if (sender) sender.replaceTrack(track);
-        });
+      if (guestSenderRef.current) {
+        guestSenderRef.current.replaceStream(stream);
       }
     } catch (e) {
       console.error(e);
@@ -168,138 +168,42 @@ function GuestBroadcastContent() {
 
     setIsOnAir(true);
     setConnectionStatus('connecting');
+    frameSuccessCountRef.current = 0;
+
+    const participantInfo = { 
+      name: guestName.trim() || (isCoHost ? 'מנחה שותף/ה' : 'אורח/ת'), 
+      role: guestRole.trim() || (isCoHost ? 'מנחה שותף/ה' : undefined), 
+      isCoHost 
+    };
 
     try {
-      const RTC_CONFIG: RTCConfiguration = {
-        iceServers: [
-          { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun1.l.google.com:19302' },
-          { urls: 'stun:stun.services.mozilla.com' }
-        ]
-      };
-
-      const peer = new RTCPeerConnection(RTC_CONFIG);
-      peerRef.current = peer;
-
-      // Add local guest stream tracks
+      // 1. Start bidirectional WebRTC sender to host Studio
       if (localStreamRef.current) {
-        localStreamRef.current.getTracks().forEach(track => {
-          peer.addTrack(track, localStreamRef.current!);
-        });
-      }
-
-      // Receive host return video/audio stream
-      peer.ontrack = (event) => {
-        if (event.streams && event.streams[0] && remoteVideoRef.current) {
-          remoteVideoRef.current.srcObject = event.streams[0];
-        }
-      };
-
-      peer.onicecandidate = async (event) => {
-        if (event.candidate) {
-          try {
-            await fetch('/api/signaling', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                action: 'send-candidate',
-                roomId,
-                role: 'client',
-                data: event.candidate
-              })
-            });
-          } catch {}
-        }
-      };
-
-      peer.onconnectionstatechange = () => {
-        if (peer.connectionState === 'connected') {
-          setConnectionStatus('connected');
-        } else if (peer.connectionState === 'disconnected' || peer.connectionState === 'failed') {
-          setConnectionStatus('error');
-        }
-      };
-
-      // Notify signaling server about participant joining with name & role
-      const participantInfo = { 
-        name: guestName.trim() || (isCoHost ? 'מנחה שותף/ה' : 'אורח/ת'), 
-        role: guestRole.trim() || (isCoHost ? 'מנחה שותף/ה' : undefined), 
-        isCoHost 
-      };
-
-      await fetch('/api/signaling', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'join',
+        guestSenderRef.current = new RemoteGuestSender(
           roomId,
-          role: 'client',
-          guestInfo: participantInfo
-        })
-      });
-
-      await fetch('/api/signaling', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'set-guest-info',
-          roomId,
-          data: participantInfo
-        })
-      });
-
-      // Poll for host WebRTC offer
-      let offerProcessed = false;
-      pollIntervalRef.current = setInterval(async () => {
-        if (!peerRef.current) return;
-
-        if (!offerProcessed) {
-          try {
-            const res = await fetch('/api/signaling', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ action: 'get-offer', roomId })
-            });
-            const json = await res.json();
-            if (json.offer) {
-              offerProcessed = true;
-              await peerRef.current.setRemoteDescription(new RTCSessionDescription(json.offer));
-              const answer = await peerRef.current.createAnswer();
-              await peerRef.current.setLocalDescription(answer);
-
-              await fetch('/api/signaling', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  action: 'send-answer',
-                  roomId,
-                  role: 'client',
-                  data: answer
-                })
-              });
+          (status, message) => {
+            if (status === 'connected') {
+              setConnectionStatus('connected');
+            } else if (status === 'disconnected') {
+              if (frameSuccessCountRef.current < 2) {
+                setConnectionStatus('connecting');
+              }
+            } else if (status === 'error') {
+              if (frameSuccessCountRef.current < 2) {
+                setConnectionStatus('error');
+              }
             }
-          } catch (e) {}
-        }
-
-        // Fetch ICE candidates from host
-        try {
-          const cRes = await fetch('/api/signaling', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'get-candidates', roomId, role: 'client' })
-          });
-          const cJson = await cRes.json();
-          if (cJson.candidates && Array.isArray(cJson.candidates)) {
-            for (const cand of cJson.candidates) {
-              try {
-                await peerRef.current.addIceCandidate(new RTCIceCandidate(cand));
-              } catch {}
+          },
+          (remoteStream) => {
+            if (remoteVideoRef.current) {
+              remoteVideoRef.current.srcObject = remoteStream;
             }
           }
-        } catch (e) {}
-      }, 1000);
+        );
+        guestSenderRef.current.start(localStreamRef.current, participantInfo);
+      }
 
-      // Live High-Frequency Frame Streaming Fallback (Guaranteed to stream even behind symmetric NAT / mobile 5G firewall)
+      // 2. Live High-Frequency Frame Streaming Fallback (Guaranteed to stream even behind symmetric NAT / mobile 5G firewall)
       const offscreenCanvas = document.createElement('canvas');
       const offCtx = offscreenCanvas.getContext('2d');
       offscreenCanvas.width = 640;
@@ -310,7 +214,7 @@ function GuestBroadcastContent() {
           try {
             offCtx.drawImage(localVideoRef.current, 0, 0, 640, 360);
             const jpegData = offscreenCanvas.toDataURL('image/jpeg', 0.65);
-            await fetch('/api/signaling', {
+            const res = await fetch('/api/signaling', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
@@ -319,6 +223,13 @@ function GuestBroadcastContent() {
                 frame: jpegData
               })
             });
+            if (res.ok) {
+              frameSuccessCountRef.current++;
+              // As soon as frames reach the studio, mark connection as connected!
+              if (frameSuccessCountRef.current >= 2) {
+                setConnectionStatus('connected');
+              }
+            }
           } catch {}
         }
       }, 120);
@@ -353,8 +264,7 @@ function GuestBroadcastContent() {
     if (confirm('האם לעזוב את השידור באולפן?')) {
       setIsOnAir(false);
       setConnectionStatus('idle');
-      if (peerRef.current) peerRef.current.close();
-      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+      if (guestSenderRef.current) guestSenderRef.current.stop();
       if (frameIntervalRef.current) clearInterval(frameIntervalRef.current);
     }
   };
@@ -594,11 +504,24 @@ function GuestBroadcastContent() {
 
               <div className="flex items-center gap-2">
                 <span className="text-xs text-slate-400 font-medium">סטטוס חיבור:</span>
-                <span className={`text-xs font-bold flex items-center gap-1 ${
-                  connectionStatus === 'connected' ? 'text-emerald-400' : 'text-amber-400'
+                <span className={`text-xs font-bold flex items-center gap-1.5 px-3 py-1 rounded-xl border ${
+                  connectionStatus === 'connected'
+                    ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400 shadow-sm shadow-emerald-500/10'
+                    : connectionStatus === 'error'
+                      ? 'bg-rose-500/15 border-rose-500/30 text-rose-400'
+                      : 'bg-amber-500/15 border-amber-500/30 text-amber-400 animate-pulse'
                 }`}>
+                  <span className={`w-2 h-2 rounded-full ${
+                    connectionStatus === 'connected' ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
+                  }`} />
                   <Wifi className="w-3.5 h-3.5" />
-                  {connectionStatus === 'connected' ? 'מחובר לאולפן' : 'מתחבר...'}
+                  <span>
+                    {connectionStatus === 'connected'
+                      ? (isCoHost ? 'מנחה שותף/ה בשידור חי' : 'מחובר/ת לאולפן בשידור חי')
+                      : connectionStatus === 'error'
+                        ? 'תקלת חיבור (בדוק רשת)'
+                        : 'מתחבר לאולפן...'}
+                  </span>
                 </span>
               </div>
             </div>

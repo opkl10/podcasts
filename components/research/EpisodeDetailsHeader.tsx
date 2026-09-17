@@ -27,7 +27,8 @@ import {
   Languages,
   Upload,
   Gamepad2,
-  Users
+  Users,
+  UserPlus
 } from 'lucide-react';
 
 interface EpisodeDetailsHeaderProps {
@@ -125,13 +126,13 @@ export default function EpisodeDetailsHeader({
       title,
       description,
       mediaType,
-      episodeFormat,
+      episodeFormat: (coHostName.trim() && episodeFormat === 'solo') ? 'duo' : episodeFormat,
       season: Number(season),
       episodeNumber: Number(episodeNumber),
       targetDurationMinutes: Number(targetDuration),
       hostName: hostName.trim() || undefined,
       host: hostName.trim() ? { name: hostName.trim(), role: hostRole.trim() || undefined } : undefined,
-      coHost: (episodeFormat === 'duo' && coHostName.trim())
+      coHost: coHostName.trim()
         ? { name: coHostName.trim(), role: coHostRole.trim() || undefined }
         : undefined,
       guest: guestName.trim()
@@ -701,8 +702,8 @@ export default function EpisodeDetailsHeader({
               </div>
             )}
 
-            {/* Co-Host Badge */}
-            {episode.coHost && (
+            {/* Co-Host Badge or Add Co-Host Button */}
+            {episode.coHost ? (
               <div className="inline-flex items-center gap-3 p-2.5 pr-3.5 rounded-2xl bg-slate-900/80 border border-emerald-500/30 shadow-md">
                 <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-emerald-500 to-teal-600 flex items-center justify-center text-white text-sm font-black shadow">
                   👥
@@ -714,6 +715,21 @@ export default function EpisodeDetailsHeader({
                   </p>
                 </div>
               </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  setEpisodeFormat('duo');
+                  setIsEditing(true);
+                }}
+                className="inline-flex items-center gap-2.5 p-2 px-3.5 rounded-2xl bg-emerald-500/10 hover:bg-emerald-500/20 border border-dashed border-emerald-500/40 text-emerald-300 hover:text-white transition-all text-xs font-bold active:scale-95 group shadow-sm"
+                title="הוסף מנחה שותף/ה לפרק זה (פודקאסט זוגי / Co-Host)"
+              >
+                <div className="w-7 h-7 rounded-xl bg-emerald-500/20 group-hover:bg-emerald-500/30 flex items-center justify-center text-emerald-300">
+                  <UserPlus className="w-4 h-4" />
+                </div>
+                <span>+ הוסף מנחה שותף/ה (Co-Host)</span>
+              </button>
             )}
 
             {/* Guest Badge */}

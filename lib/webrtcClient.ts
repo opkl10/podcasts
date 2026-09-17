@@ -1,7 +1,7 @@
 // WebRTC Client & Frame Streamer for connecting iPhone to Studio
 // Supports direct P2P streaming + dual-signaling (Local API + Cloud Relay)
 
-const RTC_CONFIG: RTCConfiguration = {
+export const RTC_CONFIG: RTCConfiguration = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
@@ -12,11 +12,11 @@ const RTC_CONFIG: RTCConfiguration = {
 };
 
 // Cloud Pub/Sub relay for serverless Vercel & cross-network environments (zero setup, free, instant)
-function getCloudTopic(roomId: string): string {
+export function getCloudTopic(roomId: string): string {
   return `castflow_sig_${roomId.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
 }
 
-async function publishSignal(roomId: string, payload: any) {
+export async function publishSignal(roomId: string, payload: any) {
   // 1. Post to local API route
   try {
     fetch('/api/signaling', {
@@ -387,3 +387,223 @@ export class RemoteCameraSender {
     this.onStatusChange('idle');
   }
 }
+
+// Remote Guest / Co-Host Sender: Connects browser webcam/mic to Studio over WebRTC + dual signaling
+export class RemoteGuestSender {
+  private peer: RTCPeerConnection | null = null;
+  private roomId: string;
+  private stream: MediaStream | null = null;
+  private pollInterval: NodeJS.Timeout | null = null;
+  private onStatusChange: (status: 'idle' | 'waiting' | 'connected' | 'disconnected' | 'error', message?: string) => void;
+  private onRemoteStream?: (stream: MediaStream) => void;
+  private processedCandidates = new Set<string>();
+  private lastCloudTimestamp = 0;
+  private answerReceived = false;
+
+  constructor(
+    roomId: string,
+    onStatusChange: (status: 'idle' | 'waiting' | 'connected' | 'disconnected' | 'error', message?: string) => void,
+    onRemoteStream?: (stream: MediaStream) => void
+  ) {
+    this.roomId = roomId;
+    this.onStatusChange = onStatusChange;
+    this.onRemoteStream = onRemoteStream;
+    this.lastCloudTimestamp = Math.floor(Date.now() / 1000) - 10;
+  }
+
+  public getPeerConnection(): RTCPeerConnection | null {
+    return this.peer;
+  }
+
+  public async start(stream: MediaStream, guestInfo?: { name: string; role?: string; isCoHost?: boolean }) {
+    this.stop();
+    this.stream = stream;
+    this.onStatusChange('waiting', 'מתחבר לאולפן...');
+    this.answerReceived = false;
+    this.processedCandidates.clear();
+
+    try {
+      this.peer = new RTCPeerConnection(RTC_CONFIG);
+
+      // Add local guest audio & video tracks
+      stream.getTracks().forEach(track => {
+        if (this.peer && this.stream) {
+          this.peer.addTrack(track, this.stream);
+        }
+      });
+
+      // Receive host return stream if host is broadcasting back
+      this.peer.ontrack = (event) => {
+        if (event.streams && event.streams[0] && this.onRemoteStream) {
+          this.onRemoteStream(event.streams[0]);
+        }
+      };
+
+      this.peer.onicecandidate = (event) => {
+        if (event.candidate) {
+          publishSignal(this.roomId, {
+            action: 'send-candidate',
+            roomId: this.roomId,
+            role: 'client',
+            data: event.candidate
+          });
+        }
+      };
+
+      this.peer.onconnectionstatechange = () => {
+        if (!this.peer) return;
+        const state = this.peer.connectionState;
+        if (state === 'connected') {
+          this.onStatusChange('connected', 'מחובר לאולפן ומשדר בשידור חי!');
+        } else if (state === 'disconnected' || state === 'failed') {
+          this.onStatusChange('disconnected', 'החיבור לאולפן נותק');
+        }
+      };
+
+      // Notify signaling server about participant joining with name & role
+      if (guestInfo) {
+        publishSignal(this.roomId, {
+          action: 'join',
+          roomId: this.roomId,
+          role: 'client',
+          guestInfo
+        });
+        publishSignal(this.roomId, {
+          action: 'set-guest-info',
+          roomId: this.roomId,
+          data: guestInfo
+        });
+      }
+
+      // Create Offer with bidirectional audio & video
+      const offer = await this.peer.createOffer({
+        offerToReceiveAudio: true,
+        offerToReceiveVideo: true
+      });
+      await this.peer.setLocalDescription(offer);
+
+      publishSignal(this.roomId, {
+        action: 'send-offer',
+        roomId: this.roomId,
+        role: 'client',
+        data: offer
+      });
+
+      // Poll for answer from Studio
+      let reOfferCount = 0;
+      this.pollInterval = setInterval(async () => {
+        if (!this.peer) return;
+
+        // If no answer yet, re-publish offer every 3 seconds to ensure delivery
+        reOfferCount++;
+        if (!this.answerReceived && reOfferCount % 3 === 0 && this.peer.localDescription) {
+          publishSignal(this.roomId, {
+            action: 'send-offer',
+            roomId: this.roomId,
+            role: 'client',
+            data: this.peer.localDescription
+          });
+        }
+
+        // 1. Check for Answer
+        if (!this.answerReceived && this.peer.signalingState === 'have-local-offer') {
+          let answerData: any = null;
+
+          // Check local signaling
+          try {
+            const res = await fetch('/api/signaling', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ action: 'get-answer', roomId: this.roomId })
+            });
+            const json = await res.json();
+            if (json.answer) answerData = json.answer;
+          } catch (e) {}
+
+          // Check cloud relay if local didn't return
+          if (!answerData) {
+            try {
+              const topic = getCloudTopic(this.roomId);
+              const cloudRes = await fetch(`https://ntfy.sh/${topic}/json?poll=1&since=${this.lastCloudTimestamp}`);
+              const text = await cloudRes.text();
+              const lines = text.trim().split('\n');
+              for (const line of lines) {
+                if (!line) continue;
+                try {
+                  const item = JSON.parse(line);
+                  if (item.time) this.lastCloudTimestamp = Math.max(this.lastCloudTimestamp, item.time);
+                  if (item.message) {
+                    const parsed = JSON.parse(item.message);
+                    if (parsed.action === 'send-answer' && parsed.data) {
+                      answerData = parsed.data;
+                      break;
+                    }
+                  }
+                } catch (pe) {}
+              }
+            } catch (ce) {}
+          }
+
+          if (answerData && this.peer && this.peer.signalingState === 'have-local-offer') {
+            try {
+              await this.peer.setRemoteDescription(new RTCSessionDescription(answerData));
+              this.answerReceived = true;
+              this.onStatusChange('connected', 'מחובר לאולפן ומשדר בשידור חי!');
+            } catch (ae) {
+              console.warn('Error setting answer on guest:', ae);
+            }
+          }
+        }
+
+        // 2. Fetch candidates from host (Studio)
+        try {
+          const candRes = await fetch('/api/signaling', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'get-candidates', roomId: this.roomId, role: 'client' })
+          });
+          const candJson = await candRes.json();
+          if (candJson.candidates && Array.isArray(candJson.candidates)) {
+            for (const c of candJson.candidates) {
+              const key = JSON.stringify(c);
+              if (!this.processedCandidates.has(key) && this.peer && this.peer.remoteDescription) {
+                this.processedCandidates.add(key);
+                try {
+                  await this.peer.addIceCandidate(new RTCIceCandidate(c));
+                } catch {}
+              }
+            }
+          }
+        } catch (e) {}
+      }, 800);
+
+    } catch (err: any) {
+      console.error('Remote guest sender error:', err);
+      this.onStatusChange('error', err.message || 'שגיאת חיבור');
+    }
+  }
+
+  public replaceStream(newStream: MediaStream) {
+    this.stream = newStream;
+    if (this.peer) {
+      const senders = this.peer.getSenders();
+      newStream.getTracks().forEach(track => {
+        const sender = senders.find(s => s.track?.kind === track.kind);
+        if (sender) sender.replaceTrack(track);
+      });
+    }
+  }
+
+  public stop() {
+    if (this.pollInterval) {
+      clearInterval(this.pollInterval);
+      this.pollInterval = null;
+    }
+    if (this.peer) {
+      this.peer.close();
+      this.peer = null;
+    }
+    this.onStatusChange('idle');
+  }
+}
+
