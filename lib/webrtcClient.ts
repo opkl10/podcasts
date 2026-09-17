@@ -7,8 +7,18 @@ export const RTC_CONFIG: RTCConfiguration = {
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' },
     { urls: 'stun:stun.services.mozilla.com' },
-    { urls: 'stun:global.stun.twilio.com:3478' }
-  ]
+    { urls: 'stun:global.stun.twilio.com:3478' },
+    {
+      urls: [
+        'turn:openrelay.metered.ca:80',
+        'turn:openrelay.metered.ca:443',
+        'turn:openrelay.metered.ca:443?transport=tcp'
+      ],
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
+    }
+  ],
+  iceCandidatePoolSize: 10
 };
 
 // Cloud Pub/Sub relay for serverless Vercel & cross-network environments (zero setup, free, instant)
@@ -47,6 +57,7 @@ export class StudioWebRTCReceiver {
   private processedCandidates = new Set<string>();
   private answerSent = false;
   private lastCloudTimestamp = 0;
+  private remoteStream: MediaStream | null = null;
 
   constructor(
     roomId: string,
@@ -59,21 +70,39 @@ export class StudioWebRTCReceiver {
     this.lastCloudTimestamp = Math.floor(Date.now() / 1000) - 10;
   }
 
+  public getPeerConnection(): RTCPeerConnection | null {
+    return this.peer;
+  }
+
   public async start() {
     this.stop();
     this.onStatusChange('connecting');
     this.answerSent = false;
     this.processedCandidates.clear();
+    this.remoteStream = null;
 
     try {
       this.peer = new RTCPeerConnection(RTC_CONFIG);
 
-      // Track handler: When iPhone's video/audio track is received
+      // Track handler: When remote guest's video or audio track is received
       this.peer.ontrack = (event) => {
-        if (event.streams && event.streams[0]) {
-          this.onStreamReceived(event.streams[0]);
-          this.onStatusChange('connected');
+        if (!this.remoteStream) {
+          this.remoteStream = new MediaStream();
         }
+        if (event.track) {
+          if (!this.remoteStream.getTracks().some(t => t.id === event.track.id)) {
+            this.remoteStream.addTrack(event.track);
+          }
+        }
+        if (event.streams && event.streams[0]) {
+          event.streams[0].getTracks().forEach(t => {
+            if (this.remoteStream && !this.remoteStream.getTracks().some(existing => existing.id === t.id)) {
+              this.remoteStream.addTrack(t);
+            }
+          });
+        }
+        this.onStreamReceived(this.remoteStream);
+        this.onStatusChange('connected');
       };
 
       // Local ICE candidate generation
@@ -168,7 +197,7 @@ export class StudioWebRTCReceiver {
           }
         }
 
-        // 2. Fetch candidates from iPhone (client)
+        // 2. Fetch candidates from client via local signaling
         try {
           const candRes = await fetch('/api/signaling', {
             method: 'POST',
@@ -188,6 +217,31 @@ export class StudioWebRTCReceiver {
             }
           }
         } catch (e) {}
+
+        // 3. Fetch candidates from client via cloud relay (ntfy.sh)
+        try {
+          const topic = getCloudTopic(this.roomId);
+          const cloudRes = await fetch(`https://ntfy.sh/${topic}/json?poll=1&since=${this.lastCloudTimestamp}`);
+          const text = await cloudRes.text();
+          const lines = text.trim().split('\n');
+          for (const line of lines) {
+            if (!line) continue;
+            try {
+              const item = JSON.parse(line);
+              if (item.time) this.lastCloudTimestamp = Math.max(this.lastCloudTimestamp, item.time);
+              if (item.message) {
+                const parsed = JSON.parse(item.message);
+                if (parsed.action === 'send-candidate' && parsed.role === 'client' && parsed.data) {
+                  const key = JSON.stringify(parsed.data);
+                  if (!this.processedCandidates.has(key) && this.peer && this.peer.remoteDescription) {
+                    this.processedCandidates.add(key);
+                    await this.peer.addIceCandidate(new RTCIceCandidate(parsed.data)).catch(() => {});
+                  }
+                }
+              }
+            } catch (pe) {}
+          }
+        } catch (ce) {}
       }, 900);
 
     } catch (err) {
@@ -575,6 +629,31 @@ export class RemoteGuestSender {
             }
           }
         } catch (e) {}
+
+        // 3. Fetch candidates from host via cloud relay (ntfy.sh)
+        try {
+          const topic = getCloudTopic(this.roomId);
+          const cloudRes = await fetch(`https://ntfy.sh/${topic}/json?poll=1&since=${this.lastCloudTimestamp}`);
+          const text = await cloudRes.text();
+          const lines = text.trim().split('\n');
+          for (const line of lines) {
+            if (!line) continue;
+            try {
+              const item = JSON.parse(line);
+              if (item.time) this.lastCloudTimestamp = Math.max(this.lastCloudTimestamp, item.time);
+              if (item.message) {
+                const parsed = JSON.parse(item.message);
+                if (parsed.action === 'send-candidate' && parsed.role === 'host' && parsed.data) {
+                  const key = JSON.stringify(parsed.data);
+                  if (!this.processedCandidates.has(key) && this.peer && this.peer.remoteDescription) {
+                    this.processedCandidates.add(key);
+                    await this.peer.addIceCandidate(new RTCIceCandidate(parsed.data)).catch(() => {});
+                  }
+                }
+              }
+            } catch (pe) {}
+          }
+        } catch (ce) {}
       }, 800);
 
     } catch (err: any) {

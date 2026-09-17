@@ -62,6 +62,8 @@ function GuestBroadcastContent() {
   const analyserRef = useRef<AnalyserNode | null>(null);
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const frameIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const fallbackAudioRecorderRef = useRef<MediaRecorder | null>(null);
+  const latestAudioChunkRef = useRef<string | null>(null);
 
   // 1. Enumerate Devices and Start Local Preview in Green Room
   useEffect(() => {
@@ -129,6 +131,9 @@ function GuestBroadcastContent() {
       }
       if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
       if (frameIntervalRef.current) clearInterval(frameIntervalRef.current);
+      if (fallbackAudioRecorderRef.current) {
+        try { fallbackAudioRecorderRef.current.stop(); } catch {}
+      }
       if (peerRef.current) peerRef.current.close();
     };
   }, []);
@@ -203,7 +208,37 @@ function GuestBroadcastContent() {
         guestSenderRef.current.start(localStreamRef.current, participantInfo);
       }
 
-      // 2. Live High-Frequency Frame Streaming Fallback (Guaranteed to stream even behind symmetric NAT / mobile 5G firewall)
+      // 2. Fallback Audio Stream Recorder (Transmits audio chunks via HTTP fallback if WebRTC UDP is blocked)
+      try {
+        if (localStreamRef.current) {
+          const audioTracks = localStreamRef.current.getAudioTracks();
+          if (audioTracks.length > 0 && typeof MediaRecorder !== 'undefined') {
+            const audioStream = new MediaStream(audioTracks);
+            let mimeType = 'audio/webm;codecs=opus';
+            if (!MediaRecorder.isTypeSupported(mimeType)) {
+              mimeType = MediaRecorder.isTypeSupported('audio/mp4') ? 'audio/mp4' : '';
+            }
+            const rec = mimeType ? new MediaRecorder(audioStream, { mimeType }) : new MediaRecorder(audioStream);
+            fallbackAudioRecorderRef.current = rec;
+            rec.ondataavailable = async (e) => {
+              if (e.data && e.data.size > 0 && !isAudioMuted) {
+                try {
+                  const reader = new FileReader();
+                  reader.onloadend = () => {
+                    latestAudioChunkRef.current = reader.result as string;
+                  };
+                  reader.readAsDataURL(e.data);
+                } catch {}
+              }
+            };
+            rec.start(750);
+          }
+        }
+      } catch (ae) {
+        console.warn('Fallback audio recorder setup error:', ae);
+      }
+
+      // 3. Live High-Frequency Frame Streaming Fallback (Guaranteed to stream even behind symmetric NAT / mobile 5G firewall)
       const offscreenCanvas = document.createElement('canvas');
       const offCtx = offscreenCanvas.getContext('2d');
       offscreenCanvas.width = 640;
@@ -214,14 +249,19 @@ function GuestBroadcastContent() {
           try {
             offCtx.drawImage(localVideoRef.current, 0, 0, 640, 360);
             const jpegData = offscreenCanvas.toDataURL('image/jpeg', 0.65);
+            const payload: any = {
+              action: 'push-frame',
+              roomId,
+              frame: jpegData
+            };
+            if (latestAudioChunkRef.current) {
+              payload.audioChunk = latestAudioChunkRef.current;
+              latestAudioChunkRef.current = null;
+            }
             const res = await fetch('/api/signaling', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                action: 'push-frame',
-                roomId,
-                frame: jpegData
-              })
+              body: JSON.stringify(payload)
             });
             if (res.ok) {
               frameSuccessCountRef.current++;
@@ -232,7 +272,7 @@ function GuestBroadcastContent() {
             }
           } catch {}
         }
-      }, 120);
+      }, 180);
 
     } catch (err) {
       console.error('Connection error:', err);
@@ -266,6 +306,10 @@ function GuestBroadcastContent() {
       setConnectionStatus('idle');
       if (guestSenderRef.current) guestSenderRef.current.stop();
       if (frameIntervalRef.current) clearInterval(frameIntervalRef.current);
+      if (fallbackAudioRecorderRef.current) {
+        try { fallbackAudioRecorderRef.current.stop(); } catch {}
+        fallbackAudioRecorderRef.current = null;
+      }
     }
   };
 

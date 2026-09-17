@@ -224,6 +224,9 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
   const [guestStream, setGuestStream] = useState<MediaStream | null>(null);
   const guestReceiverRef = useRef<StudioWebRTCReceiver | null>(null);
   const guestVideoRef = useRef<HTMLVideoElement | null>(null);
+  const guestAudioRef = useRef<HTMLAudioElement | null>(null);
+  const guestFallbackAudioPlayerRef = useRef<HTMLAudioElement | null>(null);
+  const lastGuestAudioTimeRef = useRef<number>(0);
   const [guestFrame, setGuestFrame] = useState<string | null>(null);
 
   const isPeerCoHost = Boolean(guestInfo?.isCoHost || currentEpisode.episodeFormat === 'duo' || currentEpisode.coHost);
@@ -279,6 +282,11 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
           if (guestVideoRef.current) {
             guestVideoRef.current.srcObject = stream;
           }
+          if (guestAudioRef.current) {
+            guestAudioRef.current.srcObject = stream;
+            guestAudioRef.current.volume = guestVolume;
+            guestAudioRef.current.play().catch(() => {});
+          }
         },
         (status) => {
           setGuestConnectionStatus(status === 'disconnected' ? 'error' : status);
@@ -302,6 +310,23 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
           setGuestFrame(json.frame);
           setGuestConnectionStatus('connected');
         }
+
+        // Fallback Audio Chunk Streaming (plays when WebRTC P2P/TURN audio isn't active yet)
+        if (json.audioChunk && json.audioTime && json.audioTime > lastGuestAudioTimeRef.current) {
+          lastGuestAudioTimeRef.current = json.audioTime;
+          const isWebrtcConnected = guestReceiverRef.current?.getPeerConnection()?.connectionState === 'connected';
+          const hasLiveAudioTrack = guestStream && guestStream.getAudioTracks().some(t => t.readyState === 'live' && t.enabled);
+
+          if (!isWebrtcConnected || !hasLiveAudioTrack) {
+            if (!guestFallbackAudioPlayerRef.current) {
+              guestFallbackAudioPlayerRef.current = new Audio();
+            }
+            guestFallbackAudioPlayerRef.current.src = json.audioChunk;
+            guestFallbackAudioPlayerRef.current.volume = guestVolume;
+            guestFallbackAudioPlayerRef.current.play().catch(() => {});
+          }
+        }
+
         if (json.guestInfo) {
           setGuestInfo(prev => ({
             name: json.guestInfo.name || prev?.name || '',
@@ -328,13 +353,46 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
           }
         }
       } catch {}
-    }, 1500);
+    }, 1200);
 
     return () => {
       if (guestReceiverRef.current) guestReceiverRef.current.stop();
       if (frameTimer) clearInterval(frameTimer);
+      if (guestFallbackAudioPlayerRef.current) {
+        guestFallbackAudioPlayerRef.current.pause();
+        guestFallbackAudioPlayerRef.current = null;
+      }
     };
   }, [episode.id]);
+
+  // Continuously Sync Guest Audio Stream & Volume with Dedicated Player
+  useEffect(() => {
+    if (guestAudioRef.current && guestStream) {
+      if (guestAudioRef.current.srcObject !== guestStream) {
+        guestAudioRef.current.srcObject = guestStream;
+      }
+      guestAudioRef.current.volume = guestVolume;
+      guestAudioRef.current.play().catch(() => {});
+    }
+  }, [guestStream, guestVolume]);
+
+  // Audio Gesture Unlocker: Automatically unblocks audio autoplay on user interaction
+  useEffect(() => {
+    const unlockAudio = () => {
+      if (guestAudioRef.current && guestStream && guestAudioRef.current.paused) {
+        guestAudioRef.current.play().catch(() => {});
+      }
+      if (guestFallbackAudioPlayerRef.current && guestFallbackAudioPlayerRef.current.paused) {
+        guestFallbackAudioPlayerRef.current.play().catch(() => {});
+      }
+    };
+    window.addEventListener('pointerdown', unlockAudio, { passive: true });
+    window.addEventListener('keydown', unlockAudio, { passive: true });
+    return () => {
+      window.removeEventListener('pointerdown', unlockAudio);
+      window.removeEventListener('keydown', unlockAudio);
+    };
+  }, [guestStream]);
 
   // Multi-Monitor Second Screen Detection & Auto-Launch
   useEffect(() => {
@@ -1191,6 +1249,37 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
 
       if (!recordStream) return;
 
+      // Mix Remote Guest / Co-Host Audio into recording stream if connected
+      if (guestStream && guestStream.getAudioTracks().length > 0) {
+        try {
+          const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+          const mixCtx = new AudioCtx();
+          const dest = mixCtx.createMediaStreamDestination();
+
+          const hostTracks = recordStream.getAudioTracks();
+          if (hostTracks.length > 0) {
+            const hostSource = mixCtx.createMediaStreamSource(new MediaStream(hostTracks));
+            hostSource.connect(dest);
+          }
+
+          const guestTracks = guestStream.getAudioTracks();
+          if (guestTracks.length > 0) {
+            const guestSource = mixCtx.createMediaStreamSource(new MediaStream(guestTracks));
+            const guestGain = mixCtx.createGain();
+            guestGain.gain.value = guestVolume;
+            guestSource.connect(guestGain);
+            guestGain.connect(dest);
+          }
+
+          recordStream = new MediaStream([
+            ...recordStream.getVideoTracks(),
+            ...dest.stream.getAudioTracks()
+          ]);
+        } catch (err) {
+          console.warn('Error mixing guest audio into recordStream:', err);
+        }
+      }
+
       // Main Video Recorder
       const videoRecorder = new MediaRecorder(recordStream, {
         mimeType: MediaRecorder.isTypeSupported(mimeType) ? mimeType : undefined,
@@ -1444,6 +1533,9 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
 
   return (
     <div ref={studioContainerRef} className="space-y-6 animate-in fade-in duration-300 font-sans">
+      {/* Permanent Dedicated Remote Guest / Co-Host Audio Player */}
+      <audio ref={guestAudioRef} autoPlay playsInline className="hidden" />
+
       {/* Emergency Crash Recovery Alert Banner */}
       {hasCrashRecovery && (
         <div className="p-4 rounded-2xl bg-amber-950/70 border-2 border-amber-500/60 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-amber-200 text-xs shadow-2xl animate-in slide-in-from-top-3">
@@ -1746,15 +1838,15 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
                 <div className={`relative rounded-2xl overflow-hidden bg-black border ${
                   isPeerCoHost ? 'border-emerald-500/50' : 'border-purple-500/40'
                 }`}>
-                  {guestFrame ? (
+                  <video
+                    ref={guestVideoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    className={`w-full h-full object-cover ${guestFrame ? 'hidden' : 'block'}`}
+                  />
+                  {guestFrame && (
                     <img src={guestFrame} alt="Guest Stream" className="w-full h-full object-cover" />
-                  ) : (
-                    <video
-                      ref={guestVideoRef}
-                      autoPlay
-                      playsInline
-                      className="w-full h-full object-cover"
-                    />
                   )}
                   <div className={`absolute bottom-2 right-2 px-2.5 py-1 rounded-xl bg-black/75 backdrop-blur-md text-[10px] font-bold border border-white/10 flex items-center gap-1.5 ${
                     isPeerCoHost ? 'text-emerald-300' : 'text-purple-300'
@@ -1767,15 +1859,15 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
             ) : !isAudioOnly && guestConnectionStatus === 'connected' && guestLayout === 'guest' ? (
               /* Solo Guest View */
               <div className="w-full h-full relative">
-                {guestFrame ? (
+                <video
+                  ref={guestVideoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className={`w-full h-full object-cover ${guestFrame ? 'hidden' : 'block'}`}
+                />
+                {guestFrame && (
                   <img src={guestFrame} alt="Guest Stream" className="w-full h-full object-cover" />
-                ) : (
-                  <video
-                    ref={guestVideoRef}
-                    autoPlay
-                    playsInline
-                    className="w-full h-full object-cover"
-                  />
                 )}
                 <div className={`absolute bottom-4 right-4 px-3 py-1.5 rounded-xl bg-black/80 backdrop-blur-md text-xs font-bold border border-white/10 flex items-center gap-1.5 ${
                   isPeerCoHost ? 'text-emerald-300' : 'text-purple-300'
@@ -1811,15 +1903,15 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
                   <div className={`absolute bottom-4 left-4 z-20 w-44 sm:w-56 aspect-video rounded-2xl overflow-hidden border-2 shadow-2xl bg-black animate-in fade-in ${
                     isPeerCoHost ? 'border-emerald-500/80' : 'border-purple-500/80'
                   }`}>
-                    {guestFrame ? (
+                    <video
+                      ref={guestVideoRef}
+                      autoPlay
+                      playsInline
+                      muted
+                      className={`w-full h-full object-cover ${guestFrame ? 'hidden' : 'block'}`}
+                    />
+                    {guestFrame && (
                       <img src={guestFrame} alt="Guest PIP" className="w-full h-full object-cover" />
-                    ) : (
-                      <video
-                        ref={guestVideoRef}
-                        autoPlay
-                        playsInline
-                        className="w-full h-full object-cover"
-                      />
                     )}
                     <div className={`absolute bottom-1 right-1 px-1.5 py-0.5 rounded bg-black/80 text-[9px] font-bold flex items-center gap-1 ${
                       isPeerCoHost ? 'text-emerald-300' : 'text-purple-300'

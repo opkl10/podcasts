@@ -9,6 +9,8 @@ interface RoomState {
   lastActive: number;
   lastFrame?: string; // base64 JPEG live fallback frame
   lastFrameTime?: number;
+  lastAudioChunk?: string; // base64 audio live fallback chunk
+  lastAudioTime?: number;
   guestInfo?: { name: string; role?: string; isCoHost?: boolean };
 }
 
@@ -113,11 +115,15 @@ export async function POST(req: NextRequest) {
         const candidates = room.candidates.filter(c => c.sender === targetSender);
         return NextResponse.json({ candidates: candidates.map(c => c.candidate) });
 
-      // Frame Streaming Fallback (Guaranteed to work even if router blocks WebRTC UDP)
+      // Frame & Audio Streaming Fallback (Guaranteed to work even if router blocks WebRTC UDP)
       case 'push-frame':
         if (frame) {
           room.lastFrame = frame;
           room.lastFrameTime = Date.now();
+        }
+        if (body.audioChunk) {
+          room.lastAudioChunk = body.audioChunk;
+          room.lastAudioTime = Date.now();
         }
         return NextResponse.json({ status: 'frame-received' });
 
@@ -125,6 +131,8 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ 
           frame: room.lastFrame || null,
           frameTime: room.lastFrameTime || 0,
+          audioChunk: room.lastAudioChunk || null,
+          audioTime: room.lastAudioTime || 0,
           isFresh: room.lastFrameTime ? (Date.now() - room.lastFrameTime < 6000) : false,
           guestInfo: room.guestInfo || null
         });
