@@ -2,7 +2,19 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { Episode, SubtitleItem, SubtitleStyle, HighlightClip } from '@/lib/types';
-import { saveEpisode, getMediaBlob, saveMediaBlob, findMediaBlobForEpisode } from '@/lib/storage';
+import { 
+  saveEpisode, 
+  getMediaBlob, 
+  saveMediaBlob, 
+  findMediaBlobForEpisode,
+  getPermanentLogo,
+  savePermanentLogo,
+  PermanentLogoConfig,
+  getStoredCustomFonts,
+  saveStoredCustomFont,
+  deleteStoredCustomFont,
+  StoredCustomFont
+} from '@/lib/storage';
 import { 
   exportToSRT, 
   exportToVTT, 
@@ -72,19 +84,29 @@ import {
   Bookmark,
   Flame,
   Film,
-  Filter
+  Filter,
+  Move,
+  Image as ImageIcon,
+  Grid,
+  CheckCheck,
+  FileUp,
+  Sparkle,
+  LayoutTemplate,
+  SlidersHorizontal
 } from 'lucide-react';
 import { getAISettings, AISettingsConfig } from '@/lib/apiConfig';
 import SubtitleAISettingsModal from './SubtitleAISettingsModal';
 
 interface SubtitleStudioProps {
-  episode: Episode;
+  episode?: Episode;
   isOpen: boolean;
   onClose: () => void;
   onUpdateEpisode?: (updated: Episode) => void;
   isStandalonePage?: boolean;
   onBack?: () => void;
   initialClipId?: string;
+  initialMediaUrl?: string;
+  initialMediaFile?: File | null;
 }
 
 const DEFAULT_STYLE: SubtitleStyle = {
@@ -102,10 +124,18 @@ const DEFAULT_STYLE: SubtitleStyle = {
   activeWordAnimation: 'color-pop',
   textAlign: 'center',
   positionY: 80,
+  positionX: 50,
   boxStyle: 'rounded-badge',
   isBold: true,
   letterSpacing: 0.5,
-  animation: 'karaoke-pop'
+  animation: 'karaoke-pop',
+  maxWordsPerLine: 4,
+  logoEnabled: false,
+  logoPosition: 'top-right',
+  logoSize: 64,
+  logoOpacity: 90,
+  logoOffsetX: 16,
+  logoOffsetY: 16
 };
 
 const SUBTITLE_THEMES = [
@@ -226,23 +256,46 @@ const SUBTITLE_THEMES = [
 const BUILT_IN_FONTS = [
   { name: 'Rubik (עבה וקולנועי - מומלץ)', value: 'Rubik, sans-serif' },
   { name: 'Heebo (מודרני ונקי)', value: 'Heebo, sans-serif' },
-  { name: 'Secular One (פודקאסט בולט)', value: '"Secular One", sans-serif' },
+  { name: 'Secular One (טיקטוק ופודקאסט בולט)', value: '"Secular One", sans-serif' },
   { name: 'Assistant (אלגנטי וקריא)', value: 'Assistant, sans-serif' },
-  { name: 'Frank Ruhl Libre (קלאסי ועיתונאי)', value: '"Frank Ruhl Libre", serif' },
-  { name: 'Impact (טיקטוק ורילס)', value: 'Impact, sans-serif' },
   { name: 'Varela Round (מעוגל וידידותי)', value: '"Varela Round", sans-serif' },
-  { name: 'Comic Sans / Casual (חופשי)', value: '"Comic Sans MS", cursive' }
+  { name: 'Frank Ruhl Libre (קלאסי ועיתונאי)', value: '"Frank Ruhl Libre", serif' },
+  { name: 'Impact (טיקטוק ורילס עוצמתי)', value: 'Impact, sans-serif' },
+  { name: 'Montserrat (מודרני בינלאומי)', value: 'Montserrat, sans-serif' },
+  { name: 'Alef (עברית אלגנטית נקייה)', value: 'Alef, sans-serif' },
+  { name: 'Amatic SC (כותרות ייחודיות)', value: '"Amatic SC", cursive' },
+  { name: 'Arial / Sans-Serif (סטנדרטי)', value: 'Arial, sans-serif' }
 ];
 
+const DEFAULT_FALLBACK_EPISODE: Episode = {
+  id: 'standalone_subtitles',
+  podcastId: 'pod-default',
+  title: 'אולפן כתוביות עצמאי',
+  description: 'עריכת כתוביות חופשית לכל וידאו ושמע',
+  season: 1,
+  episodeNumber: 1,
+  status: 'published',
+  mediaType: 'video',
+  targetDurationMinutes: 10,
+  topics: [],
+  movieFacts: [],
+  subtitles: [],
+  createdAt: new Date().toISOString(),
+  updatedAt: new Date().toISOString()
+};
+
 export default function SubtitleStudio({
-  episode,
+  episode: propEpisode,
   isOpen,
   onClose,
   onUpdateEpisode,
   isStandalonePage = false,
   onBack,
-  initialClipId
+  initialClipId,
+  initialMediaUrl,
+  initialMediaFile
 }: SubtitleStudioProps) {
+  const episode = propEpisode || DEFAULT_FALLBACK_EPISODE;
   const [selectedTranscriptionScope, setSelectedTranscriptionScope] = useState<string>(initialClipId || 'full');
   const [filterSubtitlesByClip, setFilterSubtitlesByClip] = useState<boolean>(!!initialClipId);
   const [isShortsAspect, setIsShortsAspect] = useState<boolean>(!!initialClipId);
@@ -287,6 +340,17 @@ export default function SubtitleStudio({
   const [subtitles, setSubtitles] = useState<SubtitleItem[]>([]);
   const [globalStyle, setGlobalStyle] = useState<SubtitleStyle>(DEFAULT_STYLE);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [lastSelectedIdx, setLastSelectedIdx] = useState<number | null>(null);
+
+  // Subtitle Drag & Drop on Video Canvas
+  const [isDraggingSubtitle, setIsDraggingSubtitle] = useState(false);
+  const videoContainerRef = useRef<HTMLDivElement>(null);
+  const [showSafeZone, setShowSafeZone] = useState(false);
+
+  // Persistent Logo states & refs
+  const [logoSaveSuccess, setLogoSaveSuccess] = useState(false);
+  const logoInputRef = useRef<HTMLInputElement>(null);
+  const directFileInputRef = useRef<HTMLInputElement>(null);
   
   // Custom Fonts State
   const [customFonts, setCustomFonts] = useState<{ name: string; value: string }[]>([]);
@@ -362,6 +426,40 @@ export default function SubtitleStudio({
   useEffect(() => {
     if (isOpen) {
       setAISettings(getAISettings());
+
+      // 0. Inject Google Fonts for Hebrew & English
+      const linkId = 'google-fonts-subtitles';
+      if (typeof document !== 'undefined' && !document.getElementById(linkId)) {
+        const link = document.createElement('link');
+        link.id = linkId;
+        link.rel = 'stylesheet';
+        link.href = 'https://fonts.googleapis.com/css2?family=Alef:wght@400;700&family=Amatic+SC:wght@700&family=Assistant:wght@400;600;700;800&family=Frank+Ruhl+Libre:wght@400;700;900&family=Heebo:wght@400;600;700;900&family=Montserrat:wght@400;700;900&family=Rubik:wght@400;600;700;900&family=Secular+One&family=Varela+Round&display=swap';
+        document.head.appendChild(link);
+      }
+
+      // 0.1 Load Stored Custom Fonts from localStorage
+      const storedFonts = getStoredCustomFonts();
+      if (storedFonts.length > 0 && typeof document !== 'undefined') {
+        storedFonts.forEach(font => {
+          const styleId = `custom-font-${font.name.replace(/[^\w\d]/g, '_')}`;
+          if (!document.getElementById(styleId)) {
+            const newStyle = document.createElement('style');
+            newStyle.id = styleId;
+            newStyle.appendChild(document.createTextNode(`
+              @font-face {
+                font-family: '${font.name.replace(/[^\w\d]/g, '_')}';
+                src: url('${font.dataUrl}');
+              }
+            `));
+            document.head.appendChild(newStyle);
+          }
+        });
+        setCustomFonts(storedFonts.map(f => ({ name: `פונט אישי: ${f.name}`, value: `'${f.name.replace(/[^\w\d]/g, '_')}', sans-serif` })));
+      }
+
+      // 0.2 Load Permanent Logo from localStorage
+      const permLogo = getPermanentLogo(episode?.podcastId);
+
       // 1. Initialize strictly from actual recorded spoken subtitles (NO mock script placeholders!)
       if (episode.subtitles && episode.subtitles.length > 0) {
         setSubtitles(episode.subtitles);
@@ -370,11 +468,44 @@ export default function SubtitleStudio({
       }
 
       if (episode.subtitleStyle) {
-        setGlobalStyle(episode.subtitleStyle);
+        setGlobalStyle(prev => ({
+          ...prev,
+          ...episode.subtitleStyle,
+          logoEnabled: episode.subtitleStyle?.logoEnabled !== undefined 
+            ? episode.subtitleStyle.logoEnabled 
+            : (permLogo?.showByDefault ?? prev.logoEnabled),
+          logoUrl: episode.subtitleStyle?.logoUrl || permLogo?.url || prev.logoUrl,
+          logoPosition: (episode.subtitleStyle?.logoPosition || permLogo?.positionPreset || prev.logoPosition || 'top-right') as any,
+          logoSize: episode.subtitleStyle?.logoSize || permLogo?.size || prev.logoSize || 64,
+          logoOpacity: episode.subtitleStyle?.logoOpacity !== undefined 
+            ? episode.subtitleStyle.logoOpacity 
+            : (permLogo ? Math.round(permLogo.opacity * 100) : (prev.logoOpacity || 90)),
+        }));
+      } else if (permLogo && permLogo.url) {
+        setGlobalStyle(prev => ({
+          ...prev,
+          logoEnabled: permLogo.showByDefault,
+          logoUrl: permLogo.url,
+          logoPosition: (permLogo.positionPreset || 'top-right') as any,
+          logoSize: permLogo.size || 64,
+          logoOpacity: Math.round(permLogo.opacity * 100),
+        }));
       }
 
       // Load Video or Audio Blob for in-studio preview and syncing
       const loadMedia = async () => {
+        // Direct media file or url passed via props
+        if (initialMediaFile) {
+          setVideoUrl(URL.createObjectURL(initialMediaFile));
+          setIsStandaloneMedia(true);
+          return;
+        }
+        if (initialMediaUrl) {
+          setVideoUrl(initialMediaUrl);
+          setIsStandaloneMedia(true);
+          return;
+        }
+
         let blob: Blob | null = null;
         let isStandalone = false;
         if (activeClip) {
@@ -412,7 +543,7 @@ export default function SubtitleStudio({
 
       loadMedia();
     }
-  }, [isOpen, episode, activeClip?.id]);
+  }, [isOpen, episode, activeClip?.id, initialMediaUrl, initialMediaFile]);
 
   if (!isOpen) return null;
 
@@ -940,30 +1071,105 @@ export default function SubtitleStudio({
     reader.readAsText(file);
   };
 
-  // 5. Custom Font Upload Handler
+  // 5. Custom Font Upload Handler with Persistence
   const handleFontUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const fontName = file.name.replace(/\.[^/.]+$/, '').replace(/[^\w\d]/g, '_');
+    const rawFontName = file.name.replace(/\.[^/.]+$/, '');
+    const fontName = rawFontName.replace(/[^\w\d]/g, '_');
     const reader = new FileReader();
     reader.onload = (event) => {
       const fontUrl = event.target?.result as string;
-      const newStyle = document.createElement('style');
-      newStyle.appendChild(document.createTextNode(`
+      const styleId = `custom-font-${fontName}`;
+      let existingStyle = document.getElementById(styleId);
+      if (!existingStyle) {
+        existingStyle = document.createElement('style');
+        existingStyle.id = styleId;
+        document.head.appendChild(existingStyle);
+      }
+      existingStyle.textContent = `
         @font-face {
           font-family: '${fontName}';
           src: url('${fontUrl}');
         }
-      `));
-      document.head.appendChild(newStyle);
+      `;
 
-      const newFontEntry = { name: `פונט אישי: ${file.name}`, value: `'${fontName}', sans-serif` };
-      setCustomFonts(prev => [...prev, newFontEntry]);
-      setGlobalStyle(prev => ({ ...prev, fontFamily: newFontEntry.value }));
-      alert(`הפונט "${file.name}" נטען והוחל בהצלחה!`);
+      const fontValue = `'${fontName}', sans-serif`;
+      const newFontEntry = { name: file.name, value: fontValue, dataUrl: fontUrl };
+      saveStoredCustomFont(newFontEntry);
+
+      setCustomFonts(prev => {
+        const filtered = prev.filter(f => f.value !== fontValue);
+        return [...filtered, { name: `פונט אישי: ${file.name}`, value: fontValue }];
+      });
+      applyStyleUpdate({ fontFamily: fontValue });
+      alert(`הפונט "${file.name}" נטען, נשמר לצמיתות והוחל בהצלחה!`);
     };
     reader.readAsDataURL(file);
+  };
+
+  const handleDeleteCustomFont = (fontValue: string) => {
+    deleteStoredCustomFont(fontValue);
+    setCustomFonts(prev => prev.filter(f => f.value !== fontValue));
+    if (globalStyle.fontFamily === fontValue) {
+      applyStyleUpdate({ fontFamily: 'Rubik, sans-serif' });
+    }
+  };
+
+  // 6. Brand Logo Upload & Persistent Handler
+  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const logoUrl = event.target?.result as string;
+      applyStyleUpdate({
+        logoEnabled: true,
+        logoUrl
+      });
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleSaveLogoPermanent = () => {
+    if (!globalStyle.logoUrl) {
+      alert('אנא העלה קובץ לוגו תחילה.');
+      return;
+    }
+    const config: PermanentLogoConfig = {
+      url: globalStyle.logoUrl,
+      opacity: (globalStyle.logoOpacity !== undefined ? globalStyle.logoOpacity : 90) / 100,
+      size: globalStyle.logoSize || 64,
+      positionPreset: (globalStyle.logoPosition as any) || 'top-right',
+      showByDefault: globalStyle.logoEnabled !== false,
+      transform: { x: globalStyle.logoOffsetX || 16, y: globalStyle.logoOffsetY || 16, scale: 1.0 }
+    };
+    savePermanentLogo(config, episode?.podcastId);
+    setLogoSaveSuccess(true);
+    setTimeout(() => setLogoSaveSuccess(false), 3000);
+  };
+
+  const handleClearPermanentLogo = () => {
+    if (confirm('להסיר את הלוגו הקבוע מברירת המחדל?')) {
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('castflow_permanent_logo');
+        if (episode?.podcastId) {
+          localStorage.removeItem(`castflow_permanent_logo_${episode.podcastId}`);
+        }
+      }
+      applyStyleUpdate({ logoEnabled: false, logoUrl: '' });
+      alert('הלוגו הקבוע הוסר בהצלחה.');
+    }
+  };
+
+  // Direct media file uploader (for standalone or quick testing)
+  const handleDirectMediaUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    setVideoUrl(url);
+    setIsStandaloneMedia(true);
   };
 
   // 4. Playback Controls
@@ -1020,11 +1226,21 @@ export default function SubtitleStudio({
     return false;
   });
 
-  // Selection
-  const toggleSelect = (id: string) => {
-    setSelectedIds(prev => 
-      prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
-    );
+  // Selection with Shift+Click Range Selection
+  const toggleSelect = (id: string, index?: number, shiftKey?: boolean) => {
+    if (shiftKey && index !== undefined && lastSelectedIdx !== null) {
+      const start = Math.min(lastSelectedIdx, index);
+      const end = Math.max(lastSelectedIdx, index);
+      const rangeIds = subtitles.slice(start, end + 1).map(s => s.id);
+      setSelectedIds(prev => Array.from(new Set([...prev, ...rangeIds])));
+    } else {
+      setSelectedIds(prev => 
+        prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
+      );
+      if (index !== undefined) {
+        setLastSelectedIdx(index);
+      }
+    }
   };
 
   const selectAll = () => {
@@ -1032,6 +1248,76 @@ export default function SubtitleStudio({
       setSelectedIds([]);
     } else {
       setSelectedIds(subtitles.map(s => s.id));
+    }
+  };
+
+  // Batch Operations for Selected Subtitles
+  const handleBatchShiftTiming = (delta: number) => {
+    if (selectedIds.length === 0) return;
+    setSubtitles(prev => prev.map(s => {
+      if (selectedIds.includes(s.id)) {
+        const newStart = Math.max(0, Number((s.startTime + delta).toFixed(2)));
+        const dur = Math.max(0.3, s.endTime - s.startTime);
+        const newEnd = Number((newStart + dur).toFixed(2));
+        return { ...s, startTime: newStart, endTime: newEnd };
+      }
+      return s;
+    }));
+  };
+
+  const handleBatchApplyCurrentStyle = () => {
+    if (selectedIds.length === 0) return;
+    setSubtitles(prev => prev.map(s => {
+      if (selectedIds.includes(s.id)) {
+        return { ...s, customStyle: { ...globalStyle } };
+      }
+      return s;
+    }));
+    alert(`העיצוב הנוכחי הוחל בהצלחה על ${selectedIds.length} כתוביות שנבחרו!`);
+  };
+
+  const handleBatchMerge = () => {
+    if (selectedIds.length < 2) {
+      alert('יש לבחור לפחות 2 כתוביות כדי לאחד אותן.');
+      return;
+    }
+    const selectedSubs = subtitles.filter(s => selectedIds.includes(s.id)).sort((a, b) => a.startTime - b.startTime);
+    const minStart = selectedSubs[0].startTime;
+    const maxEnd = selectedSubs[selectedSubs.length - 1].endTime;
+    const mergedText = selectedSubs.map(s => s.text.trim()).join(' ');
+    const firstId = selectedSubs[0].id;
+    const mergedItem: SubtitleItem = {
+      id: `sub_merged_${Date.now()}`,
+      startTime: minStart,
+      endTime: maxEnd,
+      text: mergedText,
+      customStyle: selectedSubs[0].customStyle
+    };
+    setSubtitles(prev => {
+      const remaining = prev.filter(s => !selectedIds.includes(s.id));
+      const insertIdx = prev.findIndex(s => s.id === firstId);
+      remaining.splice(insertIdx >= 0 ? insertIdx : remaining.length, 0, mergedItem);
+      return remaining.sort((a, b) => a.startTime - b.startTime);
+    });
+    setSelectedIds([mergedItem.id]);
+  };
+
+  const handleBatchRechunk = (wordsLimit: number) => {
+    if (subtitles.length === 0) return;
+    if (selectedIds.length > 0) {
+      const selectedSubs = subtitles.filter(s => selectedIds.includes(s.id)).sort((a, b) => a.startTime - b.startTime);
+      const rechunked = smartRebalanceSubtitles(selectedSubs, wordsLimit, 1);
+      const firstId = selectedSubs[0].id;
+      setSubtitles(prev => {
+        const remaining = prev.filter(s => !selectedIds.includes(s.id));
+        const insertIdx = prev.findIndex(s => s.id === firstId);
+        remaining.splice(insertIdx >= 0 ? insertIdx : remaining.length, 0, ...rechunked);
+        return remaining.sort((a, b) => a.startTime - b.startTime);
+      });
+      setSelectedIds([]);
+      alert(`${selectedSubs.length} כתוביות חולקו מחדש ל-${wordsLimit} מילים בכל כרטיס!`);
+    } else {
+      handleRebalanceAll(wordsLimit);
     }
   };
 
@@ -1073,8 +1359,12 @@ export default function SubtitleStudio({
     setSubtitles(prev => prev.map(s => {
       if (s.id === id) {
         const newVal = Math.max(0, Number((s[field] + delta).toFixed(2)));
-        if (field === 'startTime' && newVal >= s.endTime) return s;
-        if (field === 'endTime' && newVal <= s.startTime) return s;
+        if (field === 'startTime' && newVal >= s.endTime) {
+          return { ...s, startTime: newVal, endTime: Number((newVal + 0.4).toFixed(2)) };
+        }
+        if (field === 'endTime' && newVal <= s.startTime) {
+          return { ...s, endTime: Number((s.startTime + 0.2).toFixed(2)) };
+        }
         return { ...s, [field]: newVal };
       }
       return s;
@@ -1201,17 +1491,24 @@ export default function SubtitleStudio({
     if (onUpdateEpisode) onUpdateEpisode(updated);
   };
 
-  // Snap subtitle start to current playback position in video
-  const handleSnapToCurrentTime = (id: string) => {
+  // Snap subtitle start or end to current playback position in video
+  const handleSnapToCurrentTime = (id: string, targetField: 'startTime' | 'endTime' = 'startTime') => {
     const current = Number(currentTime.toFixed(2));
     setSubtitles(prev => prev.map(s => {
       if (s.id === id) {
-        const duration = Math.max(0.5, s.endTime - s.startTime);
-        return {
-          ...s,
-          startTime: current,
-          endTime: Number((current + duration).toFixed(2))
-        };
+        if (targetField === 'startTime') {
+          const duration = Math.max(0.4, s.endTime - s.startTime);
+          return {
+            ...s,
+            startTime: current,
+            endTime: current >= s.endTime ? Number((current + duration).toFixed(2)) : s.endTime
+          };
+        } else {
+          return {
+            ...s,
+            endTime: Math.max(Number((s.startTime + 0.3).toFixed(2)), current)
+          };
+        }
       }
       return s;
     }));
@@ -1638,11 +1935,14 @@ export default function SubtitleStudio({
           {/* Left Column: Interactive Video Preview (7 Cols) */}
           <div className="lg:col-span-7 p-4 sm:p-6 flex flex-col items-center justify-center bg-black/40 border-b lg:border-b-0 lg:border-l border-slate-800 relative overflow-hidden">
             {/* Live Video / Canvas Player */}
-            <div className={`relative bg-black rounded-3xl overflow-hidden shadow-2xl border border-slate-800 flex items-center justify-center transition-all ${
-              isShortsAspect 
-                ? 'w-[280px] sm:w-[320px] aspect-[9/16] ring-2 ring-amber-500/40 shadow-amber-950/40' 
-                : 'w-full max-w-2xl aspect-video'
-            }`}>
+            <div 
+              ref={videoContainerRef}
+              className={`relative bg-black rounded-3xl overflow-hidden shadow-2xl border border-slate-800 flex items-center justify-center transition-all select-none ${
+                isShortsAspect 
+                  ? 'w-[280px] sm:w-[320px] aspect-[9/16] ring-2 ring-amber-500/40 shadow-amber-950/40' 
+                  : 'w-full max-w-2xl aspect-video'
+              }`}
+            >
               {videoUrl ? (
                 <video
                   ref={videoRef}
@@ -1696,13 +1996,67 @@ export default function SubtitleStudio({
                 </div>
               </div>
 
-              {/* Dynamic Styled Subtitle Overlay on Top of Video */}
+              {/* Brand Logo Overlay (Right / Left / Custom position) */}
+              {globalStyle.logoEnabled && globalStyle.logoUrl && (
+                <div
+                  className="absolute pointer-events-none transition-all z-30 select-none"
+                  style={{
+                    top: (globalStyle.logoPosition === 'top-right' || globalStyle.logoPosition === 'top-left' || globalStyle.logoPosition === 'top-center' || !globalStyle.logoPosition) 
+                      ? `${globalStyle.logoOffsetY ?? 16}px` 
+                      : 'auto',
+                    bottom: (globalStyle.logoPosition === 'bottom-right' || globalStyle.logoPosition === 'bottom-left' || globalStyle.logoPosition === 'bottom-center') 
+                      ? `${globalStyle.logoOffsetY ?? 16}px` 
+                      : 'auto',
+                    right: (globalStyle.logoPosition === 'top-right' || globalStyle.logoPosition === 'bottom-right' || !globalStyle.logoPosition) 
+                      ? `${globalStyle.logoOffsetX ?? 16}px` 
+                      : 'auto',
+                    left: (globalStyle.logoPosition === 'top-left' || globalStyle.logoPosition === 'bottom-left') 
+                      ? `${globalStyle.logoOffsetX ?? 16}px` 
+                      : (globalStyle.logoPosition === 'top-center' || globalStyle.logoPosition === 'bottom-center') 
+                      ? '50%' 
+                      : 'auto',
+                    transform: (globalStyle.logoPosition === 'top-center' || globalStyle.logoPosition === 'bottom-center') 
+                      ? 'translateX(-50%)' 
+                      : 'none',
+                    opacity: (globalStyle.logoOpacity !== undefined ? globalStyle.logoOpacity : 90) / 100
+                  }}
+                >
+                  <img
+                    src={globalStyle.logoUrl}
+                    alt="Brand Logo"
+                    style={{
+                      width: `${globalStyle.logoSize || 64}px`,
+                      height: 'auto',
+                      maxHeight: `${globalStyle.logoSize || 64}px`,
+                      objectFit: 'contain',
+                      filter: 'drop-shadow(0 3px 10px rgba(0,0,0,0.75))'
+                    }}
+                  />
+                </div>
+              )}
+
+              {/* 9:16 Safe Zones Guidelines Overlay */}
+              {showSafeZone && isShortsAspect && (
+                <div className="absolute inset-0 pointer-events-none z-10 border-2 border-dashed border-cyan-400/40 rounded-3xl m-2 flex flex-col justify-between p-3 text-[10px] text-cyan-300 font-mono">
+                  <div className="flex justify-between border-b border-cyan-400/20 pb-1">
+                    <span>TikTok / Reels Safe Top</span>
+                    <span>אזור בטוח עליון</span>
+                  </div>
+                  <div className="flex justify-between border-t border-cyan-400/20 pt-1">
+                    <span>אזור בטוח תחתון (כפתורים)</span>
+                    <span>Safe Bottom Margin</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Dynamic Draggable Styled Subtitle Overlay on Top of Video */}
               {activeSubtitle && (() => {
                 const st = activeSubtitle.customStyle || globalStyle;
-                const posPercent = typeof st.positionY === 'number'
+                const posX = typeof st.positionX === 'number' ? st.positionX : 50;
+                const posY = typeof st.positionY === 'number'
                   ? st.positionY
                   : st.positionY === 'top'
-                  ? 12
+                  ? 15
                   : st.positionY === 'center'
                   ? 50
                   : 82;
@@ -1730,7 +2084,7 @@ export default function SubtitleStudio({
                   return 'p-0 bg-transparent';
                 };
 
-                const words = activeSubtitle.text.split(' ');
+                const words = activeSubtitle.text.trim().split(/\s+/).filter(Boolean);
                 const subStartTime = (isStandaloneMedia && activeClip && activeSubtitle.startTime >= activeClip.startTime)
                   ? (activeSubtitle.startTime - activeClip.startTime)
                   : activeSubtitle.startTime;
@@ -1738,19 +2092,65 @@ export default function SubtitleStudio({
                 const duration = Math.max(0.1, activeSubtitle.endTime - activeSubtitle.startTime);
                 const activeWordIndex = Math.min(words.length - 1, Math.floor((elapsed / duration) * words.length));
 
+                // Words per line grouping
+                const maxW = st.maxWordsPerLine || 0;
+                const wordLines: string[][] = [];
+                if (maxW > 0 && words.length > maxW) {
+                  for (let i = 0; i < words.length; i += maxW) {
+                    wordLines.push(words.slice(i, i + maxW));
+                  }
+                } else {
+                  wordLines.push(words);
+                }
+
                 return (
                   <div
+                    onPointerDown={(e) => {
+                      e.stopPropagation();
+                      setIsDraggingSubtitle(true);
+                      (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+                    }}
+                    onPointerMove={(e) => {
+                      if (!isDraggingSubtitle || !videoContainerRef.current) return;
+                      const rect = videoContainerRef.current.getBoundingClientRect();
+                      const rawX = ((e.clientX - rect.left) / rect.width) * 100;
+                      const rawY = ((e.clientY - rect.top) / rect.height) * 100;
+                      const newX = Math.round(Math.max(10, Math.min(90, rawX)));
+                      const newY = Math.round(Math.max(8, Math.min(92, rawY)));
+                      applyStyleUpdate({ positionX: newX, positionY: newY });
+                    }}
+                    onPointerUp={(e) => {
+                      if (isDraggingSubtitle) {
+                        setIsDraggingSubtitle(false);
+                        try {
+                          (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId);
+                        } catch {}
+                      }
+                    }}
                     style={{
                       position: 'absolute',
-                      left: '50%',
-                      transform: 'translateX(-50%)',
-                      top: `${posPercent}%`,
-                      width: st.boxStyle === 'full-bar' ? '100%' : '90%',
+                      left: `${posX}%`,
+                      top: `${posY}%`,
+                      transform: 'translate(-50%, -50%)',
+                      width: st.boxStyle === 'full-bar' ? '100%' : 'auto',
+                      maxWidth: st.boxStyle === 'full-bar' ? '100%' : '92%',
                       textAlign: st.textAlign || 'center',
-                      pointerEvents: 'none',
-                      zIndex: 20
+                      cursor: isDraggingSubtitle ? 'grabbing' : 'grab',
+                      userSelect: 'none',
+                      touchAction: 'none',
+                      zIndex: 25
                     }}
+                    className="group/drag transition-transform active:scale-[0.99]"
+                    title="גרור עם העכבר כדי למקם את הכתובית בכל נקודה על גבי המסך"
                   >
+                    {/* Drag Floating Tooltip */}
+                    <div className={`absolute -top-7 left-1/2 -translate-x-1/2 px-2 py-0.5 rounded-full bg-purple-600/95 border border-purple-400 text-white text-[10px] font-bold whitespace-nowrap shadow-xl transition-opacity flex items-center gap-1 ${
+                      isDraggingSubtitle ? 'opacity-100' : 'opacity-0 group-hover/drag:opacity-100'
+                    }`}>
+                      <Move className="w-2.5 h-2.5" />
+                      <span>מיקום חופשי ({posX}%, {posY}%)</span>
+                    </div>
+
                     <div
                       style={{
                         display: 'inline-block',
@@ -1767,39 +2167,44 @@ export default function SubtitleStudio({
                         letterSpacing: `${st.letterSpacing || 0}px`,
                         direction: 'rtl'
                       }}
-                      className={`${getBoxClasses()} animate-in zoom-in-95 duration-100 transition-all`}
+                      className={`${getBoxClasses()} animate-in zoom-in-95 duration-100 transition-all border border-transparent group-hover/drag:border-purple-400/40`}
                     >
-                      {st.activeWordAnimation === 'color-pop' || st.activeWordAnimation === 'glow' ? (
-                        words.map((w, wIdx) => {
-                          const isWordActive = wIdx === activeWordIndex;
-                          const activeCol = st.highlightWordColor || '#FACC15';
-                          return (
-                            <span
-                              key={wIdx}
-                              style={{
-                                color: isWordActive ? activeCol : undefined,
-                                textShadow: isWordActive && st.activeWordAnimation === 'glow' ? `0 0 15px ${activeCol}` : undefined,
-                                transform: isWordActive ? 'scale(1.08)' : 'scale(1)',
-                                display: 'inline-block',
-                                transition: 'all 0.1s ease',
-                                margin: '0 3px'
-                              }}
-                            >
-                              {w}
-                            </span>
-                          );
-                        })
-                      ) : (
-                        activeSubtitle.text
-                      )}
+                      {wordLines.map((lineWords, lineIdx) => (
+                        <div key={lineIdx} className="leading-snug">
+                          {st.activeWordAnimation === 'color-pop' || st.activeWordAnimation === 'glow' ? (
+                            lineWords.map((w, wInLineIdx) => {
+                              const globalWIdx = (maxW > 0 ? lineIdx * maxW : 0) + wInLineIdx;
+                              const isWordActive = globalWIdx === activeWordIndex;
+                              const activeCol = st.highlightWordColor || '#FACC15';
+                              return (
+                                <span
+                                  key={wInLineIdx}
+                                  style={{
+                                    color: isWordActive ? activeCol : undefined,
+                                    textShadow: isWordActive && st.activeWordAnimation === 'glow' ? `0 0 15px ${activeCol}` : undefined,
+                                    transform: isWordActive ? 'scale(1.08)' : 'scale(1)',
+                                    display: 'inline-block',
+                                    transition: 'all 0.1s ease',
+                                    margin: '0 3px'
+                                  }}
+                                >
+                                  {w}
+                                </span>
+                              );
+                            })
+                          ) : (
+                            lineWords.join(' ')
+                          )}
+                        </div>
+                      ))}
                     </div>
                   </div>
                 );
               })()}
             </div>
 
-            {/* Aspect Ratio Switcher (Shorts 9:16 / Wide 16:9) */}
-            <div className="flex items-center gap-2 mt-3">
+            {/* Aspect Ratio Switcher & Video Tools */}
+            <div className="flex flex-wrap items-center justify-center gap-2 mt-3">
               <button
                 type="button"
                 onClick={() => setIsShortsAspect(false)}
@@ -1818,6 +2223,33 @@ export default function SubtitleStudio({
               >
                 📱 9:16 אנכי (Shorts / Reels)
               </button>
+              <button
+                type="button"
+                onClick={() => setShowSafeZone(!showSafeZone)}
+                className={`px-3 py-1 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+                  showSafeZone ? 'bg-cyan-500 text-slate-950 font-black shadow-md' : 'bg-slate-800/80 text-slate-400 hover:text-white'
+                }`}
+                title="הצג קווי אזור בטוח של טיקטוק ורילס למניעת הסתרת הכתוביות"
+              >
+                <Grid className="w-3.5 h-3.5" />
+                <span>אזור בטוח (Safe Zone)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => directFileInputRef.current?.click()}
+                className="px-3 py-1 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 bg-slate-800/80 hover:bg-slate-700 text-purple-300 hover:text-white border border-purple-500/30"
+                title="טען סרטון או קובץ שמע ישירות מהמחשב"
+              >
+                <FileUp className="w-3.5 h-3.5" />
+                <span>טען קובץ מקומי</span>
+              </button>
+              <input
+                ref={directFileInputRef}
+                type="file"
+                accept="video/*,audio/*"
+                onChange={handleDirectMediaUpload}
+                className="hidden"
+              />
             </div>
 
             {/* Video Playback Scrubber & Micro Controls */}
@@ -1933,7 +2365,7 @@ export default function SubtitleStudio({
                     ) : (
                       <Square className="w-4 h-4 text-slate-500" />
                     )}
-                    <span>בחר הכל ({selectedIds.length})</span>
+                    <span>בחר הכל ({selectedIds.length}/{subtitles.length})</span>
                   </button>
 
                   <div className="flex items-center gap-2">
@@ -1956,6 +2388,116 @@ export default function SubtitleStudio({
                     </button>
                   </div>
                 </div>
+
+                {/* Batch Actions Toolbar when 1 or more are selected */}
+                {selectedIds.length > 0 && (
+                  <div className="p-3 rounded-2xl bg-gradient-to-r from-purple-950/80 via-indigo-950/80 to-slate-900 border border-purple-500/50 shadow-xl space-y-2 my-2 animate-in fade-in duration-200">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-black text-purple-200 flex items-center gap-1.5">
+                        <CheckCheck className="w-4 h-4 text-purple-400" />
+                        <span>פעולות מרוכזות עבור {selectedIds.length} כתוביות שנבחרו:</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedIds([])}
+                        className="text-[11px] text-slate-400 hover:text-white px-2 py-0.5 rounded-lg bg-slate-900 border border-slate-800"
+                      >
+                        בטל בחירה
+                      </button>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                      {/* Batch Shift Timing */}
+                      <div className="flex items-center gap-1 bg-slate-950 px-2 py-1 rounded-xl border border-slate-800 text-[11px]">
+                        <Clock className="w-3 h-3 text-indigo-400" />
+                        <span className="text-slate-400 text-[10px]">הזז זמן לנבחרים:</span>
+                        <button
+                          type="button"
+                          onClick={() => handleBatchShiftTiming(-0.5)}
+                          className="px-1.5 py-0.5 rounded bg-slate-900 hover:bg-slate-800 text-purple-300 font-mono text-[10px]"
+                          title="הזז 0.5s אחורה"
+                        >
+                          -0.5s
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleBatchShiftTiming(-0.1)}
+                          className="px-1.5 py-0.5 rounded bg-slate-900 hover:bg-slate-800 text-purple-300 font-mono text-[10px]"
+                          title="הזז 0.1s אחורה"
+                        >
+                          -0.1s
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleBatchShiftTiming(0.1)}
+                          className="px-1.5 py-0.5 rounded bg-slate-900 hover:bg-slate-800 text-purple-300 font-mono text-[10px]"
+                          title="הזז 0.1s קדימה"
+                        >
+                          +0.1s
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleBatchShiftTiming(0.5)}
+                          className="px-1.5 py-0.5 rounded bg-slate-900 hover:bg-slate-800 text-purple-300 font-mono text-[10px]"
+                          title="הזז 0.5s קדימה"
+                        >
+                          +0.5s
+                        </button>
+                      </div>
+
+                      {/* Apply Current Style to Selected */}
+                      <button
+                        type="button"
+                        onClick={handleBatchApplyCurrentStyle}
+                        className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-purple-600/30 hover:bg-purple-600/50 text-purple-200 border border-purple-500/40 text-[11px] font-bold transition-all"
+                        title="החל את הגופן, הגודל, הצבע והמיקום הנוכחיים על כל הכתוביות שנבחרו"
+                      >
+                        <Palette className="w-3 h-3 text-purple-400" />
+                        <span>החל עיצוב</span>
+                      </button>
+
+                      {/* Merge Selected */}
+                      {selectedIds.length >= 2 && (
+                        <button
+                          type="button"
+                          onClick={handleBatchMerge}
+                          className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 border border-indigo-500/40 text-[11px] font-bold transition-all"
+                          title="אחד את כל הכתוביות הנבחרות לכתובית רציפה אחת"
+                        >
+                          <GitMerge className="w-3 h-3 text-indigo-400" />
+                          <span>אחד</span>
+                        </button>
+                      )}
+
+                      {/* Rechunk Selected */}
+                      <div className="flex items-center gap-1 bg-slate-950 px-2 py-1 rounded-xl border border-slate-800 text-[11px]">
+                        <Split className="w-3 h-3 text-amber-400" />
+                        <span className="text-slate-400 text-[10px]">חלק נבחרים:</span>
+                        {[2, 3, 4, 6].map(wCount => (
+                          <button
+                            key={wCount}
+                            type="button"
+                            onClick={() => handleBatchRechunk(wCount)}
+                            className="px-1.5 py-0.5 rounded bg-slate-900 hover:bg-slate-800 text-amber-300 font-bold text-[10px]"
+                            title={`חלק את הכתוביות הנבחרות ל-${wCount} מילים לכרטיס`}
+                          >
+                            {wCount}
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* Delete Selected */}
+                      <button
+                        type="button"
+                        onClick={handleDeleteSelected}
+                        className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-rose-600/20 hover:bg-rose-600/40 text-rose-300 border border-rose-500/30 text-[11px] font-bold transition-all"
+                      >
+                        <Trash2 className="w-3 h-3 text-rose-400" />
+                        <span>מחק</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
 
                 {/* Smart Rebalance & Pacing Control Bar */}
                 {subtitles.length > 0 && (
@@ -2097,9 +2639,12 @@ export default function SubtitleStudio({
                           }`}
                         >
                           {/* Cue Header */}
-                          <div className="flex items-center justify-between gap-2 mb-2">
+                          <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
                             <div className="flex items-center gap-2">
-                              <button onClick={() => toggleSelect(sub.id)}>
+                              <button 
+                                onClick={(e) => toggleSelect(sub.id, idx, e.shiftKey)}
+                                title="לחיצה לבחירה (החזק Shift לבחירת טווח כתוביות)"
+                              >
                                 {isSelected ? (
                                   <CheckSquare className="w-4 h-4 text-purple-400" />
                                 ) : (
@@ -2107,54 +2652,102 @@ export default function SubtitleStudio({
                                 )}
                               </button>
                               <span className="text-[11px] font-mono font-bold text-slate-400">#{idx + 1}</span>
+                              <span className="text-[10px] font-mono text-purple-300 bg-purple-950/40 px-1.5 py-0.5 rounded border border-purple-500/20">
+                                {Math.max(0.1, sub.endTime - sub.startTime).toFixed(2)}s
+                              </span>
                             </div>
 
-                            {/* Precision Micro-Timers */}
-                            <div className="flex items-center gap-1.5">
-                              {/* Snap to current playhead */}
-                              <button
-                                type="button"
-                                onClick={() => handleSnapToCurrentTime(sub.id)}
-                                className="px-1.5 py-0.5 rounded-lg bg-slate-950 hover:bg-slate-800 text-emerald-400 hover:text-emerald-300 border border-slate-800 text-[10px] font-mono flex items-center gap-1"
-                                title="קבע זמן התחלה לפי מיקום הווידאו הנוכחי"
-                              >
-                                <Pin className="w-2.5 h-2.5" />
-                                <span>נעץ זמן</span>
-                              </button>
-
+                            {/* Precision Micro-Timers with Quick Nudge Buttons */}
+                            <div className="flex flex-wrap items-center gap-1.5">
                               {/* Start Time */}
-                              <div className="flex items-center gap-1 bg-slate-950 px-2 py-0.5 rounded-lg border border-slate-800">
-                                <span className="text-[10px] text-slate-500">התחלה:</span>
+                              <div className="flex items-center gap-0.5 bg-slate-950 px-1.5 py-0.5 rounded-lg border border-slate-800 text-[10px]">
+                                <span className="text-slate-500 text-[9px] ml-0.5">התחלה:</span>
                                 <button
-                                  onClick={() => adjustTiming(sub.id, 'startTime', -0.1)}
-                                  className="text-[10px] text-purple-400 hover:text-white px-1 font-mono"
+                                  type="button"
+                                  onClick={() => adjustTiming(sub.id, 'startTime', -0.5)}
+                                  className="px-1 text-[9px] text-slate-400 hover:text-white font-mono"
+                                  title="0.5s אחורה"
                                 >
-                                  -
+                                  -0.5
                                 </button>
-                                <span className="text-[11px] font-mono font-bold text-indigo-300">{sub.startTime}s</span>
                                 <button
-                                  onClick={() => adjustTiming(sub.id, 'startTime', 0.1)}
-                                  className="text-[10px] text-purple-400 hover:text-white px-1 font-mono"
+                                  type="button"
+                                  onClick={() => adjustTiming(sub.id, 'startTime', -0.1)}
+                                  className="px-1 text-[9px] text-purple-400 hover:text-white font-mono"
+                                  title="0.1s אחורה"
                                 >
-                                  +
+                                  -0.1
+                                </button>
+                                <span className="text-[11px] font-mono font-bold text-indigo-300 px-1">{sub.startTime}s</span>
+                                <button
+                                  type="button"
+                                  onClick={() => adjustTiming(sub.id, 'startTime', 0.1)}
+                                  className="px-1 text-[9px] text-purple-400 hover:text-white font-mono"
+                                  title="0.1s קדימה"
+                                >
+                                  +0.1
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => adjustTiming(sub.id, 'startTime', 0.5)}
+                                  className="px-1 text-[9px] text-slate-400 hover:text-white font-mono"
+                                  title="0.5s קדימה"
+                                >
+                                  +0.5
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleSnapToCurrentTime(sub.id, 'startTime')}
+                                  className="p-0.5 rounded bg-slate-900 hover:bg-slate-800 text-emerald-400 hover:text-emerald-300 mr-1"
+                                  title="קבע התחלה לזמן הנגן הנוכחי"
+                                >
+                                  <Pin className="w-2.5 h-2.5" />
                                 </button>
                               </div>
 
                               {/* End Time */}
-                              <div className="flex items-center gap-1 bg-slate-950 px-2 py-0.5 rounded-lg border border-slate-800">
-                                <span className="text-[10px] text-slate-500">סיום:</span>
+                              <div className="flex items-center gap-0.5 bg-slate-950 px-1.5 py-0.5 rounded-lg border border-slate-800 text-[10px]">
+                                <span className="text-slate-500 text-[9px] ml-0.5">סיום:</span>
                                 <button
-                                  onClick={() => adjustTiming(sub.id, 'endTime', -0.1)}
-                                  className="text-[10px] text-purple-400 hover:text-white px-1 font-mono"
+                                  type="button"
+                                  onClick={() => adjustTiming(sub.id, 'endTime', -0.5)}
+                                  className="px-1 text-[9px] text-slate-400 hover:text-white font-mono"
+                                  title="0.5s אחורה"
                                 >
-                                  -
+                                  -0.5
                                 </button>
-                                <span className="text-[11px] font-mono font-bold text-indigo-300">{sub.endTime}s</span>
                                 <button
-                                  onClick={() => adjustTiming(sub.id, 'endTime', 0.1)}
-                                  className="text-[10px] text-purple-400 hover:text-white px-1 font-mono"
+                                  type="button"
+                                  onClick={() => adjustTiming(sub.id, 'endTime', -0.1)}
+                                  className="px-1 text-[9px] text-purple-400 hover:text-white font-mono"
+                                  title="0.1s אחורה"
                                 >
-                                  +
+                                  -0.1
+                                </button>
+                                <span className="text-[11px] font-mono font-bold text-indigo-300 px-1">{sub.endTime}s</span>
+                                <button
+                                  type="button"
+                                  onClick={() => adjustTiming(sub.id, 'endTime', 0.1)}
+                                  className="px-1 text-[9px] text-purple-400 hover:text-white font-mono"
+                                  title="0.1s קדימה"
+                                >
+                                  +0.1
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => adjustTiming(sub.id, 'endTime', 0.5)}
+                                  className="px-1 text-[9px] text-slate-400 hover:text-white font-mono"
+                                  title="0.5s קדימה"
+                                >
+                                  +0.5
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleSnapToCurrentTime(sub.id, 'endTime')}
+                                  className="p-0.5 rounded bg-slate-900 hover:bg-slate-800 text-emerald-400 hover:text-emerald-300 mr-1"
+                                  title="קבע סיום לזמן הנגן הנוכחי"
+                                >
+                                  <Pin className="w-2.5 h-2.5" />
                                 </button>
                               </div>
 
@@ -2389,7 +2982,159 @@ export default function SubtitleStudio({
                   )}
                 </div>
 
-                {/* Font Selector & Custom Font Uploader */}
+                {/* 1. Brand Logo Overlay Configuration Panel */}
+                <div className="p-4 rounded-2xl bg-gradient-to-r from-purple-950/30 to-slate-950 border border-purple-500/30 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1.5 rounded-xl bg-purple-600/20 text-purple-400">
+                        <ImageIcon className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-bold text-white">שכבת לוגו מותג (Brand Logo)</h4>
+                        <p className="text-[10px] text-slate-400">מיקום בצד ימין או שמאל עם שמירה קבועה במערכת</p>
+                      </div>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={globalStyle.logoEnabled || false}
+                        onChange={(e) => applyStyleUpdate({ logoEnabled: e.target.checked })}
+                        className="sr-only peer"
+                      />
+                      <div className="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-purple-600"></div>
+                    </label>
+                  </div>
+
+                  {globalStyle.logoEnabled && (
+                    <div className="space-y-3 pt-2 border-t border-slate-800/80">
+                      {/* Upload or change logo image */}
+                      <div className="flex items-center gap-2">
+                        {globalStyle.logoUrl ? (
+                          <div className="relative group w-12 h-12 rounded-xl bg-slate-900 border border-slate-700 flex items-center justify-center p-1 overflow-hidden shrink-0">
+                            <img src={globalStyle.logoUrl} alt="Logo preview" className="max-w-full max-h-full object-contain" />
+                            <button
+                              type="button"
+                              onClick={() => applyStyleUpdate({ logoUrl: '' })}
+                              className="absolute inset-0 bg-black/70 text-rose-400 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                              title="הסר תמונת לוגו"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="w-12 h-12 rounded-xl bg-slate-900 border border-dashed border-slate-700 flex items-center justify-center text-slate-500 shrink-0">
+                            <ImageIcon className="w-5 h-5" />
+                          </div>
+                        )}
+
+                        <div className="flex-1">
+                          <button
+                            type="button"
+                            onClick={() => logoInputRef.current?.click()}
+                            className="w-full py-1.5 px-3 rounded-xl bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 hover:text-white border border-purple-500/40 text-xs font-bold transition-all flex items-center justify-center gap-1.5"
+                          >
+                            <Upload className="w-3.5 h-3.5" />
+                            <span>{globalStyle.logoUrl ? 'החלף קובץ לוגו' : 'העלה לוגו (PNG/SVG/JPG)'}</span>
+                          </button>
+                          <input
+                            ref={logoInputRef}
+                            type="file"
+                            accept="image/png,image/svg+xml,image/jpeg,image/webp"
+                            onChange={handleLogoUpload}
+                            className="hidden"
+                          />
+                          <p className="text-[9px] text-slate-500 mt-1">מומלץ קובץ PNG שקוף איכותי</p>
+                        </div>
+                      </div>
+
+                      {/* Position selector (4 corners + center) */}
+                      <div className="space-y-1">
+                        <label className="text-[11px] font-bold text-slate-300">מיקום הלוגו על המסך:</label>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+                          {[
+                            { id: 'top-right', label: '↗️ ימין למעלה' },
+                            { id: 'top-left', label: '↖️ שמאל למעלה' },
+                            { id: 'bottom-right', label: '↘️ ימין למטה' },
+                            { id: 'bottom-left', label: '↙️ שמאל למטה' }
+                          ].map((pos) => (
+                            <button
+                              key={pos.id}
+                              type="button"
+                              onClick={() => applyStyleUpdate({ logoPosition: pos.id as any })}
+                              className={`py-1.5 px-2 rounded-xl text-xs font-semibold border transition-all ${
+                                (globalStyle.logoPosition || 'top-right') === pos.id
+                                  ? 'bg-purple-600 border-purple-400 text-white shadow'
+                                  : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                              }`}
+                            >
+                              {pos.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Size and Opacity sliders */}
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <div className="flex justify-between text-[11px]">
+                            <span className="text-slate-400">גודל לוגו:</span>
+                            <span className="font-mono text-purple-300 font-bold">{globalStyle.logoSize || 64}px</span>
+                          </div>
+                          <input
+                            type="range"
+                            min={24}
+                            max={160}
+                            value={globalStyle.logoSize || 64}
+                            onChange={(e) => applyStyleUpdate({ logoSize: parseInt(e.target.value) })}
+                            className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-purple-500"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <div className="flex justify-between text-[11px]">
+                            <span className="text-slate-400">שקיפות:</span>
+                            <span className="font-mono text-purple-300 font-bold">{globalStyle.logoOpacity !== undefined ? globalStyle.logoOpacity : 90}%</span>
+                          </div>
+                          <input
+                            type="range"
+                            min={20}
+                            max={100}
+                            value={globalStyle.logoOpacity !== undefined ? globalStyle.logoOpacity : 90}
+                            onChange={(e) => applyStyleUpdate({ logoOpacity: parseInt(e.target.value) })}
+                            className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-purple-500"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Save permanent logo buttons */}
+                      <div className="pt-1 flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={handleSaveLogoPermanent}
+                          className={`flex-1 py-1.5 px-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                            logoSaveSuccess 
+                              ? 'bg-emerald-600 text-white' 
+                              : 'bg-purple-600 hover:bg-purple-500 text-white shadow-md'
+                          }`}
+                        >
+                          <Check className="w-3.5 h-3.5" />
+                          <span>{logoSaveSuccess ? 'נשמר כלוגו קבוע במערכת! ✅' : 'שמור כלוגו קבוע כברירת מחדל'}</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={handleClearPermanentLogo}
+                          className="py-1.5 px-2.5 rounded-xl bg-slate-900 hover:bg-rose-950/40 text-slate-400 hover:text-rose-300 border border-slate-800 hover:border-rose-500/40 text-[11px] font-semibold transition-all"
+                          title="הסר לוגו ברירת מחדל שמור"
+                        >
+                          הסר קבוע
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* 2. Font Selector & Custom Font Uploader */}
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
                     <label className="text-xs font-bold text-slate-300">גופן כתוביות (Font Family)</label>
@@ -2418,22 +3163,114 @@ export default function SubtitleStudio({
                       <option key={i} value={f.value}>{f.name}</option>
                     ))}
                   </select>
+
+                  {/* List of uploaded custom fonts with delete option */}
+                  {customFonts.length > 0 && (
+                    <div className="space-y-1 pt-1">
+                      <span className="text-[10px] text-slate-400 font-bold">פונטים אישיים שמורים:</span>
+                      <div className="flex flex-wrap gap-1.5">
+                        {customFonts.map((cf, i) => (
+                          <div key={i} className="flex items-center gap-1 bg-slate-900 px-2 py-0.5 rounded-lg border border-slate-800 text-[10px] text-purple-300">
+                            <span>{cf.name.replace('פונט אישי: ', '')}</span>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteCustomFont(cf.value)}
+                              className="text-slate-500 hover:text-rose-400 ml-1"
+                              title="מחק פונט שמור זה"
+                            >
+                              <X className="w-2.5 h-2.5" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
-                {/* Font Size & Weight */}
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-slate-400">גודל גופן ({globalStyle.fontSize}px)</label>
-                    <input
-                      type="range"
-                      min={16}
-                      max={56}
-                      value={globalStyle.fontSize || 28}
-                      onChange={(e) => applyStyleUpdate({ fontSize: parseInt(e.target.value) })}
-                      className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-purple-500"
-                    />
+                {/* 3. Subtitle Font Size & Quick Presets */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-slate-300">גודל כתוביות (Font Size)</label>
+                    <span className="text-xs font-mono font-bold text-purple-400">{globalStyle.fontSize || 28}px</span>
                   </div>
 
+                  {/* Size Preset Buttons */}
+                  <div className="grid grid-cols-5 gap-1">
+                    {[
+                      { size: 20, label: 'קטן (20)' },
+                      { size: 28, label: 'רגיל (28)' },
+                      { size: 36, label: 'גדול (36)' },
+                      { size: 48, label: 'טיקטוק (48)' },
+                      { size: 60, label: 'ענק (60)' }
+                    ].map(p => (
+                      <button
+                        key={p.size}
+                        type="button"
+                        onClick={() => applyStyleUpdate({ fontSize: p.size })}
+                        className={`py-1 rounded-lg text-[10px] font-bold border transition-all ${
+                          globalStyle.fontSize === p.size
+                            ? 'bg-purple-600 border-purple-400 text-white'
+                            : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <input
+                    type="range"
+                    min={14}
+                    max={72}
+                    value={globalStyle.fontSize || 28}
+                    onChange={(e) => applyStyleUpdate({ fontSize: parseInt(e.target.value) })}
+                    className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-purple-500"
+                  />
+                </div>
+
+                {/* 4. Words Per Line (כמות מילים בשורה) */}
+                <div className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                      <SlidersHorizontal className="w-3.5 h-3.5 text-purple-400" />
+                      <label className="text-xs font-bold text-white">כמות מילים בשורה (Words Per Line)</label>
+                    </div>
+                    <span className="px-2 py-0.5 rounded-lg bg-purple-600/30 text-purple-300 font-mono font-bold text-xs">
+                      {globalStyle.maxWordsPerLine || wordsPerLine || 4} מילים
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-slate-400">קובע כמה מילים מקסימום יוצגו בכל שורה על המסך. שובר שורות באופן קצבי ומושלם.</p>
+
+                  <input
+                    type="range"
+                    min={1}
+                    max={8}
+                    value={globalStyle.maxWordsPerLine || wordsPerLine || 4}
+                    onChange={(e) => {
+                      const val = parseInt(e.target.value);
+                      setWordsPerLine(val);
+                      applyStyleUpdate({ maxWordsPerLine: val });
+                    }}
+                    className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-purple-500"
+                  />
+                  <div className="flex justify-between text-[9px] text-slate-500 font-mono">
+                    <span>1-2 (רילס מהיר)</span>
+                    <span>3-4 (מומלץ)</span>
+                    <span>6-8 (משפט שלם)</span>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => handleBatchRechunk(globalStyle.maxWordsPerLine || wordsPerLine || 4)}
+                    disabled={subtitles.length === 0}
+                    className="w-full py-1.5 rounded-xl bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 text-[11px] font-bold border border-purple-500/30 transition-all"
+                  >
+                    חלק מחדש את {selectedIds.length > 0 ? `${selectedIds.length} הכתוביות הנבחרות` : 'כל הכתוביות'} לפי {globalStyle.maxWordsPerLine || wordsPerLine || 4} מילים
+                  </button>
+                </div>
+
+                {/* Font Weight & Text Alignment */}
+                <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1.5">
                     <label className="text-xs font-semibold text-slate-400">משקל גופן</label>
                     <div className="grid grid-cols-3 gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800">
@@ -2456,33 +3293,31 @@ export default function SubtitleStudio({
                       ))}
                     </div>
                   </div>
-                </div>
 
-                {/* Text Alignment */}
-                <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-slate-400">יישור טקסט</label>
-                  <div className="grid grid-cols-3 gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800">
-                    {[
-                      { id: 'right', label: 'לימין (עברית)', icon: AlignRight },
-                      { id: 'center', label: 'למרכז', icon: AlignCenter },
-                      { id: 'left', label: 'לשמאל (אנגלית)', icon: AlignLeft }
-                    ].map((a) => {
-                      const Icon = a.icon;
-                      return (
-                        <button
-                          key={a.id}
-                          onClick={() => applyStyleUpdate({ textAlign: a.id as any })}
-                          className={`py-1.5 rounded-lg text-xs font-bold flex items-center justify-center gap-1 transition-all ${
-                            (globalStyle.textAlign || 'center') === a.id 
-                              ? 'bg-purple-600 text-white' 
-                              : 'text-slate-400 hover:text-white'
-                          }`}
-                        >
-                          <Icon className="w-3.5 h-3.5" />
-                          <span>{a.label}</span>
-                        </button>
-                      );
-                    })}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-slate-400">יישור טקסט</label>
+                    <div className="grid grid-cols-3 gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800">
+                      {[
+                        { id: 'right', label: 'ימין', icon: AlignRight },
+                        { id: 'center', label: 'מרכז', icon: AlignCenter },
+                        { id: 'left', label: 'שמאל', icon: AlignLeft }
+                      ].map((a) => {
+                        const Icon = a.icon;
+                        return (
+                          <button
+                            key={a.id}
+                            onClick={() => applyStyleUpdate({ textAlign: a.id as any })}
+                            className={`py-1.5 rounded-lg text-xs font-bold flex items-center justify-center gap-1 transition-all ${
+                              (globalStyle.textAlign || 'center') === a.id 
+                                ? 'bg-purple-600 text-white' 
+                                : 'text-slate-400 hover:text-white'
+                            }`}
+                          >
+                            <Icon className="w-3.5 h-3.5" />
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
                 </div>
 
@@ -2605,43 +3440,85 @@ export default function SubtitleStudio({
                   </div>
                 </div>
 
-                {/* Vertical Position */}
-                <div className="space-y-1.5">
+                {/* 5. Physical Position Controls (9-Point Grid & Sliders) */}
+                <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-3">
                   <div className="flex items-center justify-between">
-                    <label className="text-xs font-bold text-slate-300">מיקום אנכי על המסך</label>
-                    <span className="text-[11px] font-mono text-purple-400">
-                      {typeof globalStyle.positionY === 'number' ? `${globalStyle.positionY}%` : globalStyle.positionY}
+                    <div className="flex items-center gap-1.5">
+                      <Move className="w-3.5 h-3.5 text-purple-400" />
+                      <label className="text-xs font-bold text-white">מיקום פיזי על המסך</label>
+                    </div>
+                    <span className="text-[11px] font-mono text-purple-300">
+                      X: {globalStyle.positionX ?? 50}% | Y: {globalStyle.positionY ?? 80}%
                     </span>
                   </div>
-                  
-                  <div className="grid grid-cols-3 gap-2 mb-2">
-                    {[
-                      { id: 15, label: 'למעלה (15%)' },
-                      { id: 50, label: 'במרכז (50%)' },
-                      { id: 82, label: 'למטה (82%)' }
-                    ].map((p) => (
-                      <button
-                        key={p.id}
-                        onClick={() => applyStyleUpdate({ positionY: p.id })}
-                        className={`py-1.5 rounded-xl text-xs font-semibold border transition-all ${
-                          globalStyle.positionY === p.id 
-                            ? 'bg-purple-600 border-purple-400 text-white' 
-                            : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
-                        }`}
-                      >
-                        {p.label}
-                      </button>
-                    ))}
+
+                  {/* 9-Point Alignment Grid */}
+                  <div className="space-y-1">
+                    <span className="text-[10px] text-slate-400 font-semibold">יישור מהיר (9 נקודות עיגון):</span>
+                    <div className="grid grid-cols-3 gap-1 max-w-[200px] mx-auto bg-slate-900 p-1.5 rounded-xl border border-slate-800">
+                      {[
+                        { label: '↖️', y: 15, x: 25 },
+                        { label: '⬆️', y: 15, x: 50 },
+                        { label: '↗️', y: 15, x: 75 },
+                        { label: '⬅️', y: 50, x: 25 },
+                        { label: '🎯', y: 50, x: 50 },
+                        { label: '➡️', y: 50, x: 75 },
+                        { label: '↙️', y: 82, x: 25 },
+                        { label: '⬇️', y: 82, x: 50 },
+                        { label: '↘️', y: 82, x: 75 }
+                      ].map((pt, pIdx) => (
+                        <button
+                          key={pIdx}
+                          type="button"
+                          onClick={() => applyStyleUpdate({ positionX: pt.x, positionY: pt.y })}
+                          className={`py-1 rounded-lg text-xs font-bold transition-all ${
+                            globalStyle.positionX === pt.x && globalStyle.positionY === pt.y
+                              ? 'bg-purple-600 text-white shadow'
+                              : 'hover:bg-slate-800 text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          {pt.label}
+                        </button>
+                      ))}
+                    </div>
                   </div>
 
-                  <input
-                    type="range"
-                    min={10}
-                    max={90}
-                    value={typeof globalStyle.positionY === 'number' ? globalStyle.positionY : 80}
-                    onChange={(e) => applyStyleUpdate({ positionY: parseInt(e.target.value) })}
-                    className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-purple-500"
-                  />
+                  {/* Sliders for fine-tuning */}
+                  <div className="space-y-2 pt-1">
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-[11px]">
+                        <span className="text-slate-400">גובה אנכי (Y):</span>
+                        <span className="font-mono text-purple-300 font-bold">{globalStyle.positionY ?? 80}%</span>
+                      </div>
+                      <input
+                        type="range"
+                        min={8}
+                        max={92}
+                        value={typeof globalStyle.positionY === 'number' ? globalStyle.positionY : 80}
+                        onChange={(e) => applyStyleUpdate({ positionY: parseInt(e.target.value) })}
+                        className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-purple-500"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-[11px]">
+                        <span className="text-slate-400">מיקום אופקי (X):</span>
+                        <span className="font-mono text-purple-300 font-bold">{globalStyle.positionX ?? 50}%</span>
+                      </div>
+                      <input
+                        type="range"
+                        min={10}
+                        max={90}
+                        value={typeof globalStyle.positionX === 'number' ? globalStyle.positionX : 50}
+                        onChange={(e) => applyStyleUpdate({ positionX: parseInt(e.target.value) })}
+                        className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-purple-500"
+                      />
+                    </div>
+                  </div>
+
+                  <p className="text-[10px] text-purple-300/80 text-center font-medium">
+                    💡 טיפ: ניתן ללחוץ ולגרור את הכתובית עם העכבר ישירות מעל תצוגת הווידאו!
+                  </p>
                 </div>
               </div>
             )}

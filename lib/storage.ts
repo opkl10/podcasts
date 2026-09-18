@@ -878,5 +878,51 @@ export function getOrCreateActiveGamingSession(): Episode {
   return newSession;
 }
 
+// Persistent Custom Fonts Registry
+export interface StoredCustomFont {
+  name: string;
+  value: string;
+  dataUrl: string;
+  uploadedAt?: string;
+}
+
+const STORAGE_KEY_CUSTOM_FONTS = 'castflow_custom_fonts';
+
+export function getStoredCustomFonts(): StoredCustomFont[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_CUSTOM_FONTS);
+    if (raw) {
+      return JSON.parse(raw);
+    }
+  } catch (e) {
+    console.error('Failed to load custom fonts from localStorage', e);
+  }
+  return [];
+}
+
+export function saveStoredCustomFont(font: StoredCustomFont): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const existing = getStoredCustomFonts();
+    const filtered = existing.filter(f => f.value !== font.value && f.name !== font.name);
+    filtered.push({ ...font, uploadedAt: font.uploadedAt || new Date().toISOString() });
+    localStorage.setItem(STORAGE_KEY_CUSTOM_FONTS, JSON.stringify(filtered));
+  } catch (e) {
+    console.error('Failed to save custom font to localStorage', e);
+  }
+}
+
+export function deleteStoredCustomFont(fontValue: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const existing = getStoredCustomFonts();
+    const filtered = existing.filter(f => f.value !== fontValue && f.name !== fontValue);
+    localStorage.setItem(STORAGE_KEY_CUSTOM_FONTS, JSON.stringify(filtered));
+  } catch (e) {
+    console.error('Failed to delete custom font from localStorage', e);
+  }
+}
+
 
 

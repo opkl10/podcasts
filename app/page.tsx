@@ -309,12 +309,21 @@ export default function DashboardPage() {
               </Link>
 
               <Link
+                href="/subtitles"
+                className="flex items-center justify-center gap-2 px-4 py-3.5 rounded-xl bg-gradient-to-r from-purple-700 via-indigo-700 to-blue-700 hover:from-purple-600 hover:to-indigo-600 text-white font-black text-xs sm:text-sm shadow-xl shadow-purple-700/40 hover:scale-[1.02] active:scale-95 transition-all text-center whitespace-nowrap border border-purple-400/30"
+                title="אולפן כתוביות עצמאי: בחירה מרובה, לוגו מותג קבוע, גופנים אישיים, מיקום חופשי וכמות מילים בשורה"
+              >
+                <Subtitles className="w-4 h-4 text-purple-200" />
+                <span>🎬 אולפן כתוביות עצמאי</span>
+              </Link>
+
+              <Link
                 href="/gaming"
                 className="flex items-center justify-center gap-2 px-4 py-3.5 rounded-xl bg-gradient-to-r from-purple-600 via-fuchsia-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-black text-xs sm:text-sm shadow-xl shadow-purple-600/40 hover:scale-[1.02] active:scale-95 transition-all text-center whitespace-nowrap border border-purple-400/30"
                 title="כניסה ישירה לאולפן גיימינג ויוצרים ב-60FPS"
               >
                 <Gamepad2 className="w-4 h-4 text-purple-200" />
-                <span>🎮 אולפן גיימינג ב-60FPS</span>
+                <span>🎮 אולפן גיימינג</span>
               </Link>
 
               <button

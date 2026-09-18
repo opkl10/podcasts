@@ -93,6 +93,7 @@ export interface SubtitleStyle {
   activeWordAnimation?: 'none' | 'color-pop' | 'glow' | 'bounce' | 'background-box';
   textAlign?: 'right' | 'center' | 'left';
   positionY?: 'bottom' | 'center' | 'top' | number; // percentage from top (10 - 90)
+  positionX?: number; // percentage from left (10 - 90, default 50)
   positionPreset?: 'bottom-low' | 'bottom-standard' | 'center' | 'top-banner';
   boxStyle?: 'none' | 'rounded-badge' | 'full-bar' | 'shadow-glow' | 'glassmorphism' | 'pill-badge';
   isBold?: boolean;
@@ -101,6 +102,15 @@ export interface SubtitleStyle {
   lineHeight?: number;
   animation?: 'none' | 'karaoke-pop' | 'fade' | 'bounce' | 'slide-up' | 'zoom-in';
   themePreset?: string;
+  maxWordsPerLine?: number; // כמות מילים מקסימלית בשורה
+  // Brand Logo Overlay
+  logoEnabled?: boolean;
+  logoUrl?: string;
+  logoPosition?: 'top-right' | 'top-left' | 'bottom-right' | 'bottom-left' | 'top-center' | 'bottom-center';
+  logoSize?: number; // in px (20 - 180)
+  logoOpacity?: number; // 0 - 100
+  logoOffsetX?: number; // px
+  logoOffsetY?: number; // px
 }
 
 export interface SubtitleItem {
