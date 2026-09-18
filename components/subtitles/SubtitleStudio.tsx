@@ -376,7 +376,9 @@ export default function SubtitleStudio({
   // Subtitles AI Translation State
   const [isTranslateModalOpen, setIsTranslateModalOpen] = useState(false);
   const [isTranslating, setIsTranslating] = useState(false);
-  const [selectedTargetLang, setSelectedTargetLang] = useState('en');
+  const [selectedTargetLang, setSelectedTargetLang] = useState('he');
+  const [selectedSourceLang, setSelectedSourceLang] = useState('auto');
+  const [selectedTranslateScope, setSelectedTranslateScope] = useState<'all' | 'selected'>('all');
   const [transcribeProgress, setTranscribeProgress] = useState<{ current: number; total: number } | null>(null);
 
   // ElevenLabs Voiceover Handler
@@ -884,28 +886,91 @@ export default function SubtitleStudio({
     }
   };
 
-  // 2. AI Subtitles Translation Handler (Translate to English, Spanish, French, Russian, Arabic, etc.)
-  const handleTranslateSubtitles = async (targetLang: string) => {
-    if (subtitles.length === 0) {
+  // 2. AI Subtitles Translation Handlers (Translate English to Hebrew, Hebrew to English, etc.)
+  const handleTranslateSingleSubtitle = async (item: SubtitleItem, targetLang = 'he') => {
+    try {
+      const currentSettings = getAISettings();
+      const res = await fetch('/api/ai/translate-subtitles', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          subtitles: [item],
+          targetLanguage: targetLang,
+          sourceLanguage: 'auto',
+          apiKey: currentSettings.geminiApiKey,
+          openaiApiKey: currentSettings.openaiApiKey
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.subtitles && Array.isArray(data.subtitles) && data.subtitles.length > 0) {
+        const translatedText = data.subtitles[0].text;
+        setSubtitles(prev => prev.map(s => s.id === item.id ? { ...s, text: translatedText } : s));
+      } else {
+        alert(data.error || 'שגיאה בתרגום הכתובית.');
+      }
+    } catch (e: any) {
+      alert('שגיאה בתרגום: ' + e.message);
+    }
+  };
+
+  const handleBatchTranslateSelected = async (targetLang = 'he') => {
+    if (selectedIds.length === 0) return;
+    const items = subtitles.filter(s => selectedIds.includes(s.id));
+    if (items.length === 0) return;
+
+    setIsTranslating(true);
+    try {
+      const currentSettings = getAISettings();
+      const res = await fetch('/api/ai/translate-subtitles', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          subtitles: items,
+          targetLanguage: targetLang,
+          sourceLanguage: 'auto',
+          apiKey: currentSettings.geminiApiKey,
+          openaiApiKey: currentSettings.openaiApiKey
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.subtitles && Array.isArray(data.subtitles) && data.subtitles.length > 0) {
+        const map = new Map<string, string>(data.subtitles.map((s: SubtitleItem) => [s.id, String(s.text || '')]));
+        setSubtitles(prev => prev.map(s => map.has(s.id) ? { ...s, text: map.get(s.id) || s.text } : s));
+        alert(`תורגמו בהצלחה ${data.subtitles.length} כתוביות שנבחרו! (${data.source || 'מנוע תרגום'})`);
+      } else {
+        alert(data.error || 'שגיאה בתרגום הכתוביות שנבחרו.');
+      }
+    } catch (err: any) {
+      alert('שגיאה בתרגום: ' + err.message);
+    } finally {
+      setIsTranslating(false);
+    }
+  };
+
+  const handleTranslateSubtitles = async (
+    targetLang: string = selectedTargetLang, 
+    sourceLang: string = selectedSourceLang, 
+    scope: 'all' | 'selected' = selectedTranslateScope
+  ) => {
+    const itemsToTranslate = (scope === 'selected' && selectedIds.length > 0)
+      ? subtitles.filter(s => selectedIds.includes(s.id))
+      : subtitles;
+
+    if (itemsToTranslate.length === 0) {
       alert('אין כתוביות לתרגום.');
       return;
     }
 
     const currentSettings = getAISettings();
-    if (!currentSettings.geminiApiKey?.trim() && !currentSettings.openaiApiKey?.trim()) {
-      setIsAIModalOpen(true);
-      return;
-    }
-
     setIsTranslating(true);
     try {
       const res = await fetch('/api/ai/translate-subtitles', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          subtitles,
+          subtitles: itemsToTranslate,
           targetLanguage: targetLang,
-          sourceLanguage: 'he',
+          sourceLanguage: sourceLang,
           apiKey: currentSettings.geminiApiKey,
           openaiApiKey: currentSettings.openaiApiKey
         })
@@ -913,15 +978,18 @@ export default function SubtitleStudio({
 
       const data = await res.json();
       if (res.ok && data.subtitles && Array.isArray(data.subtitles) && data.subtitles.length > 0) {
-        setSubtitles(data.subtitles);
-        const updated: Episode = { ...episode, subtitles: data.subtitles };
-        saveEpisode(updated);
-        if (onUpdateEpisode) onUpdateEpisode(updated);
+        const translationMap = new Map<string, string>(data.subtitles.map((s: SubtitleItem) => [s.id, String(s.text || '')]));
+        setSubtitles(prev => prev.map(s => {
+          if (translationMap.has(s.id)) {
+            return { ...s, text: translationMap.get(s.id) || s.text };
+          }
+          return s;
+        }));
         setIsTranslating(false);
         setIsTranslateModalOpen(false);
-        alert(`התרגום הושלם בהצלחה! תורגמו ${data.subtitles.length} כתוביות תוך שמירה על כל התזמונים.`);
+        alert(`התרגום הושלם בהצלחה! תורגמו ${data.subtitles.length} כתוביות (${data.source || 'מנוע תרגום'}).`);
       } else {
-        alert(data.error || 'שגיאה בתרגום הכתוביות. בדקו את מפתח ה-API בהגדרות.');
+        alert(data.error || 'שגיאה בתרגום הכתוביות.');
         setIsTranslating(false);
       }
     } catch (err: any) {
@@ -1789,15 +1857,22 @@ export default function SubtitleStudio({
 
             {/* AI Keys Settings Modal Trigger */}
             <button
+              type="button"
               onClick={() => setIsAIModalOpen(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 border border-slate-700 transition-colors relative"
-              title="הגדרות מפתחות Gemini & ElevenLabs API"
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all border ${
+                aiSettings.geminiApiKey || aiSettings.openaiApiKey
+                  ? 'bg-emerald-950/40 hover:bg-emerald-900/40 text-emerald-300 border-emerald-500/40 shadow-sm'
+                  : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
+              }`}
+              title="הגדרות מפתחות AI (Gemini, OpenAI, ElevenLabs)"
             >
               <Key className="w-3.5 h-3.5 text-amber-400" />
-              <span>מפתחות AI</span>
-              {(aiSettings.geminiApiKey || aiSettings.elevenLabsApiKey) && (
-                <span className="w-2 h-2 rounded-full bg-emerald-400 shadow" />
-              )}
+              <span>{aiSettings.geminiApiKey ? 'Gemini מחובר' : 'הגדר מפתח AI'}</span>
+              <span className={`w-2 h-2 rounded-full ${
+                aiSettings.geminiApiKey || aiSettings.openaiApiKey
+                  ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]'
+                  : 'bg-slate-500'
+              }`} />
             </button>
 
             {/* Export SRT */}
@@ -2486,6 +2561,18 @@ export default function SubtitleStudio({
                         ))}
                       </div>
 
+                      {/* Batch Translate Selected */}
+                      <button
+                        type="button"
+                        onClick={() => handleBatchTranslateSelected('he')}
+                        disabled={isTranslating}
+                        className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-blue-600/30 hover:bg-blue-600/50 text-blue-200 border border-blue-500/40 text-[11px] font-bold transition-all disabled:opacity-50"
+                        title="תרגם את כל הכתוביות הנבחרות לעברית (או מאנגלית לעברית)"
+                      >
+                        <Globe className="w-3 h-3 text-blue-400" />
+                        <span>תרגם לעברית</span>
+                      </button>
+
                       {/* Delete Selected */}
                       <button
                         type="button"
@@ -2757,6 +2844,16 @@ export default function SubtitleStudio({
                                 title="קפיצה לזמן זה בווידאו"
                               >
                                 <Play className="w-3 h-3" />
+                              </button>
+
+                              {/* Quick Single-Card Translate Button */}
+                              <button
+                                type="button"
+                                onClick={() => handleTranslateSingleSubtitle(sub, /[a-zA-Z]/.test(sub.text) ? 'he' : 'en')}
+                                className="p-1 rounded-lg hover:bg-slate-800 text-blue-400 hover:text-blue-300 transition-colors"
+                                title={/[a-zA-Z]/.test(sub.text) ? "תרגם כתובית זו לעברית" : "תרגם כתובית זו לאנגלית"}
+                              >
+                                <Globe className="w-3.5 h-3.5" />
                               </button>
 
                               {/* ElevenLabs AI Voiceover Generator */}
@@ -3678,25 +3775,105 @@ export default function SubtitleStudio({
               </div>
             </div>
 
-            <div className="space-y-3 mb-6">
+            {/* Engine Status Banner */}
+            <div className="mb-4 p-3 rounded-2xl bg-slate-900/90 border border-slate-800 flex items-center justify-between text-xs">
+              <div className="flex items-center gap-2">
+                <span className={`w-2.5 h-2.5 rounded-full ${aiSettings.geminiApiKey || aiSettings.openaiApiKey ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]' : 'bg-blue-400'}`} />
+                <span className="text-slate-300 font-semibold">
+                  {aiSettings.geminiApiKey 
+                    ? 'מנוע: Google Gemini AI' 
+                    : aiSettings.openaiApiKey 
+                    ? 'מנוע: OpenAI GPT-4o' 
+                    : 'מנוע: תרגום מובנה מהיר (חינם ללא מפתח)'}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsTranslateModalOpen(false);
+                  setIsAIModalOpen(true);
+                }}
+                className="text-[11px] text-indigo-400 hover:text-indigo-300 font-bold underline"
+              >
+                הגדרות AI
+              </button>
+            </div>
+
+            {/* Scope Selection (if subtitles selected) */}
+            {selectedIds.length > 0 && (
+              <div className="space-y-1.5 mb-4">
+                <label className="block text-xs font-bold text-slate-300">היקף התרגום:</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedTranslateScope('selected')}
+                    className={`py-2 px-3 rounded-xl border text-xs font-bold transition-all ${
+                      selectedTranslateScope === 'selected'
+                        ? 'bg-purple-600/30 border-purple-500 text-purple-200 shadow-md'
+                        : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    רק {selectedIds.length} נבחרות
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedTranslateScope('all')}
+                    className={`py-2 px-3 rounded-xl border text-xs font-bold transition-all ${
+                      selectedTranslateScope === 'all'
+                        ? 'bg-purple-600/30 border-purple-500 text-purple-200 shadow-md'
+                        : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    כל {subtitles.length} הכתוביות
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Source Language Selection */}
+            <div className="space-y-1.5 mb-4">
+              <label className="block text-xs font-bold text-slate-300">שפת מקור:</label>
+              <div className="grid grid-cols-3 gap-1.5">
+                {[
+                  { code: 'auto', label: '✨ זיהוי אוטומטי' },
+                  { code: 'en', label: '🇺🇸 אנגלית' },
+                  { code: 'he', label: '🇮🇱 עברית' }
+                ].map((src) => (
+                  <button
+                    key={src.code}
+                    type="button"
+                    onClick={() => setSelectedSourceLang(src.code)}
+                    className={`py-2 px-2 rounded-xl border text-xs font-bold transition-all text-center ${
+                      selectedSourceLang === src.code
+                        ? 'bg-indigo-600/30 border-indigo-500 text-indigo-200 shadow-md'
+                        : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    {src.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Target Language Selection */}
+            <div className="space-y-2 mb-6">
               <label className="block text-xs font-bold text-slate-300">בחר שפת יעד לתרגום:</label>
               <div className="grid grid-cols-2 gap-2">
                 {[
+                  { code: 'he', label: '🇮🇱 עברית (Hebrew)' },
                   { code: 'en', label: '🇺🇸 אנגלית (English)' },
                   { code: 'es', label: '🇪🇸 ספרדית (Español)' },
                   { code: 'fr', label: '🇫🇷 צרפתית (Français)' },
                   { code: 'ru', label: '🇷🇺 רוסית (Русский)' },
-                  { code: 'ar', label: '🇸🇦 ערבית (العربية)' },
-                  { code: 'de', label: '🇩🇪 גרמנית (Deutsch)' },
-                  { code: 'it', label: '🇮🇹 איטלקית (Italiano)' },
-                  { code: 'he', label: '🇮🇱 עברית (עריכה)' }
+                  { code: 'ar', label: '🇸🇦 ערבית (العربية)' }
                 ].map((lang) => (
                   <button
                     key={lang.code}
+                    type="button"
                     onClick={() => setSelectedTargetLang(lang.code)}
                     className={`p-2.5 rounded-xl border text-xs font-bold text-right transition-all flex items-center justify-between ${
                       selectedTargetLang === lang.code
-                        ? 'bg-blue-600/20 border-blue-500 text-blue-300 shadow-md'
+                        ? 'bg-blue-600/30 border-blue-500 text-blue-200 shadow-md'
                         : 'bg-slate-900 border-slate-800 text-slate-300 hover:bg-slate-800'
                     }`}
                   >
@@ -3709,13 +3886,15 @@ export default function SubtitleStudio({
 
             <div className="flex items-center gap-2">
               <button
+                type="button"
                 onClick={() => setIsTranslateModalOpen(false)}
                 className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition-all"
               >
                 ביטול
               </button>
               <button
-                onClick={() => handleTranslateSubtitles(selectedTargetLang)}
+                type="button"
+                onClick={() => handleTranslateSubtitles(selectedTargetLang, selectedSourceLang, selectedTranslateScope)}
                 disabled={isTranslating}
                 className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-xs font-bold shadow-lg shadow-blue-600/30 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
               >
@@ -3727,7 +3906,7 @@ export default function SubtitleStudio({
                 ) : (
                   <>
                     <Sparkles className="w-4 h-4" />
-                    <span>בצע תרגום AI עכשיו</span>
+                    <span>תרגם עכשיו לעברית</span>
                   </>
                 )}
               </button>

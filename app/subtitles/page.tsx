@@ -23,9 +23,12 @@ import {
   Clock,
   Layers,
   Check,
-  X
+  X,
+  Key
 } from 'lucide-react';
 import Link from 'next/link';
+import SubtitleAISettingsModal from '@/components/subtitles/SubtitleAISettingsModal';
+import { getAISettings } from '@/lib/apiConfig';
 
 function SubtitlesHubContent() {
   const router = useRouter();
@@ -38,7 +41,14 @@ function SubtitlesHubContent() {
   const [mediaUrl, setMediaUrl] = useState<string | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const [isSelectEpisodeModalOpen, setIsSelectEpisodeModalOpen] = useState(false);
+  const [isAIModalOpen, setIsAIModalOpen] = useState(false);
+  const [hasAIKey, setHasAIKey] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+
+  useEffect(() => {
+    const s = getAISettings();
+    setHasAIKey(!!(s.geminiApiKey?.trim() || s.openaiApiKey?.trim()));
+  }, [isAIModalOpen]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -188,6 +198,22 @@ function SubtitlesHubContent() {
         </div>
 
         <div className="flex items-center gap-2">
+          {/* AI Settings Button */}
+          <button
+            type="button"
+            onClick={() => setIsAIModalOpen(true)}
+            className={`px-3.5 py-1.5 rounded-xl border text-xs font-bold transition-all flex items-center gap-1.5 ${
+              hasAIKey 
+                ? 'bg-emerald-950/40 hover:bg-emerald-900/40 text-emerald-300 border-emerald-500/40 shadow-sm' 
+                : 'bg-slate-900 hover:bg-slate-800 text-slate-200 border-slate-700'
+            }`}
+            title="הגדרות מפתחות AI (Gemini, OpenAI, ElevenLabs)"
+          >
+            <Key className="w-3.5 h-3.5 text-amber-400" />
+            <span>{hasAIKey ? 'Gemini מחובר' : 'הגדר מפתח AI'}</span>
+            <span className={`w-2 h-2 rounded-full ${hasAIKey ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]' : 'bg-slate-500'}`} />
+          </button>
+
           <button
             onClick={handleStartBlankProject}
             className="px-3.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-200 text-xs font-bold transition-all flex items-center gap-1.5"
@@ -407,6 +433,12 @@ function SubtitlesHubContent() {
           </div>
         </div>
       )}
+
+      {/* AI Settings Modal */}
+      <SubtitleAISettingsModal
+        isOpen={isAIModalOpen}
+        onClose={() => setIsAIModalOpen(false)}
+      />
     </div>
   );
 }

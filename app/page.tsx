@@ -37,15 +37,18 @@ import {
   FileJson,
   AlertCircle,
   CheckCircle2,
-  Gamepad2
+  Gamepad2,
+  Key
 } from 'lucide-react';
+import SubtitleAISettingsModal from '@/components/subtitles/SubtitleAISettingsModal';
+import { getAISettings } from '@/lib/apiConfig';
 
 export default function DashboardPage() {
   const [episodes, setEpisodes] = useState<Episode[]>([]);
   const [podcasts, setPodcasts] = useState<PodcastShow[]>([]);
   const [selectedPodcastId, setSelectedPodcastId] = useState<string>('all');
   const [activeFilter, setActiveFilter] = useState<string>('all');
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState<string>('');
   const [mainView, setMainView] = useState<'episodes' | 'gaming' | 'vault'>('episodes');
   const [subtitleEpisode, setSubtitleEpisode] = useState<Episode | null>(null);
   const [audiogramEpisode, setAudiogramEpisode] = useState<Episode | null>(null);
@@ -54,8 +57,15 @@ export default function DashboardPage() {
   const [isDbModalOpen, setIsDbModalOpen] = useState(false);
   const [isCloudModalOpen, setIsCloudModalOpen] = useState(false);
   const [isImportEpisodesModalOpen, setIsImportEpisodesModalOpen] = useState(false);
+  const [isAIModalOpen, setIsAIModalOpen] = useState(false);
+  const [hasAIKey, setHasAIKey] = useState(false);
   const [isLoaded, setIsLoaded] = useState(false);
   const importAudioFileInputRef = React.useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const s = getAISettings();
+    setHasAIKey(!!(s.geminiApiKey?.trim() || s.openaiApiKey?.trim()));
+  }, [isAIModalOpen]);
 
   const handleImportAudioAsNewEpisode = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const fileList = e.target.files;
@@ -333,6 +343,21 @@ export default function DashboardPage() {
               >
                 <Upload className="w-4 h-4 text-emerald-400" />
                 <span>העלאת הקלטות</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setIsAIModalOpen(true)}
+                className={`flex items-center justify-center gap-1.5 px-4 py-3.5 rounded-xl border font-bold text-xs shadow-lg transition-all active:scale-95 whitespace-nowrap ${
+                  hasAIKey
+                    ? 'bg-emerald-950/40 hover:bg-emerald-900/40 text-emerald-300 border-emerald-500/40'
+                    : 'bg-slate-900/90 hover:bg-slate-800 text-slate-200 hover:text-white border-slate-700/80'
+                }`}
+                title="הגדרות מפתחות AI (Google Gemini & OpenAI)"
+              >
+                <Key className="w-4 h-4 text-amber-400" />
+                <span>{hasAIKey ? 'Gemini מחובר' : 'מפתחות AI'}</span>
+                <span className={`w-2 h-2 rounded-full ${hasAIKey ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]' : 'bg-slate-500'}`} />
               </button>
 
               <button
@@ -741,6 +766,12 @@ export default function DashboardPage() {
           }}
         />
       )}
+
+      {/* Global AI Keys Settings Modal */}
+      <SubtitleAISettingsModal
+        isOpen={isAIModalOpen}
+        onClose={() => setIsAIModalOpen(false)}
+      />
     </div>
   );
 }
