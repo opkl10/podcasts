@@ -8,12 +8,12 @@
 # 1. ניווט לתיקיית הפרויקט
 cd /Users/omerokon/.gemini/antigravity/scratch/podcast-studio
 
-# 2. התחברות ל-Vercel (במידה ועדיין לא מחובר)
-vercel login
+# 2. התחברות לחשבון Vercel (בפעם הראשונה - יש לבחור Continue with GitHub או להזין מייל)
+npx vercel login
 
-# 3. קישור הפרויקט לחשבון (בפעם הראשונה בלבד)
-vercel link
-
-# 4. העלאת עדכון לשרת (Production)
-vercel --prod
+# 3. העלאה ועדכון לשרת (Production) - הפרויקט כבר מקושר ישירות ל-podcasts-73hz
+npx vercel --prod --yes
 ```
+
+> טיפ: להתקנה גלובלית קבועה של הפקודה `vercel` במחשב: `npm install -g vercel`
+
