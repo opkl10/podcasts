@@ -84,8 +84,14 @@ export interface SubtitleStyle {
   textColor?: string;
   backgroundColor?: string;
   backgroundOpacity?: number; // 0 - 100
+  backgroundEnabled?: boolean; // הפעלה/ביטול רקע לכתוביות
+  backgroundPaddingX?: number; // רוחב שולי רקע (4-48px)
+  backgroundPaddingY?: number; // גובה שולי רקע (2-32px)
+  backgroundBorderRadius?: number; // עיגול פינות רקע (0-36px)
+  strokeEnabled?: boolean; // הפעלה/ביטול קו מתאר
   strokeColor?: string;
-  strokeWidth?: number;
+  strokeWidth?: number; // עובי קו מתאר (0-10px)
+  shadowEnabled?: boolean; // הפעלה/ביטול צל והילה
   textShadow?: 'none' | 'soft' | 'hard-outline' | 'neon-glow' | 'cinema-blur';
   shadowColor?: string;
   shadowBlur?: number;

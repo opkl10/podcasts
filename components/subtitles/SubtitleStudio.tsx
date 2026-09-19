@@ -109,27 +109,72 @@ interface SubtitleStudioProps {
   initialMediaFile?: File | null;
 }
 
+function getRgbaColor(hexOrRgba?: string, opacityPercent: number = 80): string {
+  if (!hexOrRgba) return 'transparent';
+  if (hexOrRgba.startsWith('#')) {
+    const hex = hexOrRgba.replace('#', '');
+    const fullHex = hex.length === 3 ? hex.split('').map(c => c + c).join('') : hex;
+    const r = parseInt(fullHex.substring(0, 2), 16) || 0;
+    const g = parseInt(fullHex.substring(2, 4), 16) || 0;
+    const b = parseInt(fullHex.substring(4, 6), 16) || 0;
+    const a = Math.max(0, Math.min(1, opacityPercent / 100));
+    return `rgba(${r}, ${g}, ${b}, ${a})`;
+  }
+  if (hexOrRgba.startsWith('rgb(')) {
+    return hexOrRgba.replace('rgb(', 'rgba(').replace(')', `, ${opacityPercent / 100})`);
+  }
+  if (hexOrRgba.startsWith('rgba(')) {
+    return hexOrRgba.replace(/[\d\.]+\)$/, `${(opacityPercent / 100).toFixed(2)})`);
+  }
+  return hexOrRgba;
+}
+
+function getHexColor(colorStr?: string): string {
+  if (!colorStr) return '#000000';
+  if (colorStr.startsWith('#')) return colorStr.substring(0, 7);
+  const match = colorStr.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+  if (match) {
+    const r = parseInt(match[1]).toString(16).padStart(2, '0');
+    const g = parseInt(match[2]).toString(16).padStart(2, '0');
+    const b = parseInt(match[3]).toString(16).padStart(2, '0');
+    return `#${r}${g}${b}`;
+  }
+  return '#000000';
+}
+
 const DEFAULT_STYLE: SubtitleStyle = {
   fontFamily: 'Rubik, sans-serif',
   fontSize: 28,
   fontWeight: 'bold',
   textColor: '#FFFFFF',
-  backgroundColor: 'rgba(0, 0, 0, 0.75)',
+  // Background
+  backgroundEnabled: true,
+  backgroundColor: '#000000',
   backgroundOpacity: 80,
+  backgroundPaddingX: 20,
+  backgroundPaddingY: 10,
+  backgroundBorderRadius: 16,
+  boxStyle: 'rounded-badge',
+  // Stroke / Outline
+  strokeEnabled: true,
   strokeColor: '#000000',
   strokeWidth: 2,
+  // Shadow & Glow
+  shadowEnabled: true,
   textShadow: 'soft',
   shadowColor: 'rgba(0,0,0,0.85)',
+  shadowBlur: 8,
+  // Text & Animation
   highlightWordColor: '#FACC15',
   activeWordAnimation: 'color-pop',
   textAlign: 'center',
   positionY: 80,
   positionX: 50,
-  boxStyle: 'rounded-badge',
   isBold: true,
   letterSpacing: 0.5,
   animation: 'karaoke-pop',
   maxWordsPerLine: 4,
+  // Logo
   logoEnabled: false,
   logoPosition: 'top-right',
   logoSize: 64,
@@ -149,10 +194,13 @@ const SUBTITLE_THEMES = [
       fontWeight: '900' as const,
       textColor: '#FFFFFF',
       highlightWordColor: '#FACC15',
+      backgroundEnabled: false,
       boxStyle: 'none' as const,
-      textShadow: 'hard-outline' as const,
+      strokeEnabled: true,
       strokeWidth: 2,
       strokeColor: '#000000',
+      shadowEnabled: true,
+      textShadow: 'hard-outline' as const,
       activeWordAnimation: 'color-pop' as const,
       positionY: 78,
       textAlign: 'center' as const
@@ -167,10 +215,16 @@ const SUBTITLE_THEMES = [
       fontSize: 26,
       fontWeight: 'bold' as const,
       textColor: '#FFFFFF',
-      backgroundColor: 'rgba(0, 0, 0, 0.75)',
+      backgroundEnabled: true,
+      backgroundColor: '#000000',
+      backgroundOpacity: 75,
+      backgroundPaddingX: 24,
+      backgroundPaddingY: 10,
       boxStyle: 'pill-badge' as const,
-      textShadow: 'soft' as const,
+      strokeEnabled: false,
       strokeWidth: 0,
+      shadowEnabled: true,
+      textShadow: 'soft' as const,
       activeWordAnimation: 'none' as const,
       positionY: 84,
       textAlign: 'center' as const
@@ -185,12 +239,19 @@ const SUBTITLE_THEMES = [
       fontSize: 28,
       fontWeight: 'bold' as const,
       textColor: '#F59E0B',
-      backgroundColor: 'rgba(15, 23, 42, 0.85)',
+      backgroundEnabled: true,
+      backgroundColor: '#0f172a',
+      backgroundOpacity: 85,
+      backgroundPaddingX: 20,
+      backgroundPaddingY: 10,
+      backgroundBorderRadius: 16,
       boxStyle: 'glassmorphism' as const,
-      textShadow: 'neon-glow' as const,
-      shadowColor: '#F59E0B',
+      strokeEnabled: true,
       strokeWidth: 1,
       strokeColor: '#D97706',
+      shadowEnabled: true,
+      textShadow: 'neon-glow' as const,
+      shadowColor: '#F59E0B',
       activeWordAnimation: 'glow' as const,
       positionY: 80,
       textAlign: 'center' as const
@@ -206,11 +267,18 @@ const SUBTITLE_THEMES = [
       fontWeight: '800' as const,
       textColor: '#06B6D4',
       highlightWordColor: '#F43F5E',
-      backgroundColor: 'rgba(8, 12, 22, 0.9)',
+      backgroundEnabled: true,
+      backgroundColor: '#080c16',
+      backgroundOpacity: 90,
+      backgroundPaddingX: 20,
+      backgroundPaddingY: 10,
+      backgroundBorderRadius: 16,
       boxStyle: 'rounded-badge' as const,
+      strokeEnabled: false,
+      strokeWidth: 0,
+      shadowEnabled: true,
       textShadow: 'neon-glow' as const,
       shadowColor: '#06B6D4',
-      strokeWidth: 0,
       activeWordAnimation: 'color-pop' as const,
       positionY: 76,
       textAlign: 'center' as const
@@ -225,10 +293,13 @@ const SUBTITLE_THEMES = [
       fontSize: 30,
       fontWeight: 'bold' as const,
       textColor: '#FDE047',
+      backgroundEnabled: false,
       boxStyle: 'none' as const,
-      textShadow: 'hard-outline' as const,
+      strokeEnabled: true,
       strokeWidth: 3,
       strokeColor: '#000000',
+      shadowEnabled: true,
+      textShadow: 'hard-outline' as const,
       activeWordAnimation: 'none' as const,
       positionY: 82,
       textAlign: 'center' as const
@@ -243,9 +314,12 @@ const SUBTITLE_THEMES = [
       fontSize: 24,
       fontWeight: '500' as const,
       textColor: '#F8FAFC',
+      backgroundEnabled: false,
       boxStyle: 'none' as const,
-      textShadow: 'soft' as const,
+      strokeEnabled: false,
       strokeWidth: 0,
+      shadowEnabled: false,
+      textShadow: 'soft' as const,
       activeWordAnimation: 'none' as const,
       positionY: 85,
       textAlign: 'center' as const
@@ -2255,27 +2329,51 @@ export default function SubtitleStudio({
                   ? 50
                   : 82;
 
+                const isStrokeActive = st.strokeEnabled !== false && (st.strokeWidth ?? 2) > 0;
+                const strokeWidthVal = isStrokeActive ? (st.strokeWidth ?? 2) : 0;
+                const strokeColorVal = st.strokeColor || '#000000';
+                const strokeCss = isStrokeActive ? `${strokeWidthVal}px ${strokeColorVal}` : '0px transparent';
+
+                const isBgActive = st.backgroundEnabled !== false && st.boxStyle !== 'none';
+                const bgOpacity = typeof st.backgroundOpacity === 'number' ? st.backgroundOpacity : 80;
+                const effectiveBgColor = isBgActive 
+                  ? getRgbaColor(st.backgroundColor || '#000000', bgOpacity) 
+                  : 'transparent';
+
+                const padX = isBgActive ? (st.backgroundPaddingX ?? (st.boxStyle === 'pill-badge' ? 24 : 20)) : 0;
+                const padY = isBgActive ? (st.backgroundPaddingY ?? 10) : 0;
+                const borderRadius = !isBgActive 
+                  ? '0px'
+                  : st.boxStyle === 'pill-badge'
+                  ? '9999px'
+                  : st.boxStyle === 'full-bar'
+                  ? '0px'
+                  : `${st.backgroundBorderRadius ?? 16}px`;
+
+                const isShadowActive = st.shadowEnabled !== false && st.textShadow !== 'none';
                 const getShadow = () => {
-                  if (st.textShadow === 'none') return 'none';
+                  if (!isShadowActive) return 'none';
+                  const blur = st.shadowBlur ?? 8;
+                  const shadowCol = st.shadowColor || 'rgba(0,0,0,0.85)';
                   if (st.textShadow === 'hard-outline') {
                     return '2px 2px 0 #000, -2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000, 0 3px 6px rgba(0,0,0,0.9)';
                   }
                   if (st.textShadow === 'neon-glow') {
                     const glowCol = st.shadowColor || st.highlightWordColor || '#06b6d4';
-                    return `0 0 10px ${glowCol}, 0 0 20px ${glowCol}, 0 2px 8px rgba(0,0,0,0.9)`;
+                    return `0 0 ${blur}px ${glowCol}, 0 0 ${blur * 2}px ${glowCol}, 0 2px 8px rgba(0,0,0,0.9)`;
                   }
                   if (st.textShadow === 'cinema-blur') {
-                    return '0 4px 20px rgba(0,0,0,0.95)';
+                    return `0 4px ${Math.max(blur, 16)}px ${shadowCol}`;
                   }
-                  return '0 2px 8px rgba(0,0,0,0.85)';
+                  return `0 2px ${blur}px ${shadowCol}`;
                 };
 
                 const getBoxClasses = () => {
-                  if (st.boxStyle === 'pill-badge') return 'rounded-full px-6 py-2 shadow-2xl';
-                  if (st.boxStyle === 'glassmorphism') return 'rounded-2xl px-5 py-2.5 backdrop-blur-md border border-white/15 shadow-2xl';
-                  if (st.boxStyle === 'full-bar') return 'w-full rounded-none px-6 py-3 shadow-2xl';
-                  if (st.boxStyle === 'rounded-badge') return 'rounded-2xl px-5 py-2.5 shadow-xl';
-                  return 'p-0 bg-transparent';
+                  if (!isBgActive) return 'p-0 bg-transparent';
+                  if (st.boxStyle === 'pill-badge') return 'shadow-2xl';
+                  if (st.boxStyle === 'glassmorphism') return 'backdrop-blur-md border border-white/15 shadow-2xl';
+                  if (st.boxStyle === 'full-bar') return 'w-full shadow-2xl';
+                  return 'shadow-xl';
                 };
 
                 const words = activeSubtitle.text.trim().split(/\s+/).filter(Boolean);
@@ -2352,10 +2450,10 @@ export default function SubtitleStudio({
                         fontSize: `${st.fontSize || 28}px`,
                         color: st.textColor || '#FFFFFF',
                         fontWeight: st.fontWeight === '900' ? 900 : st.fontWeight === '800' ? 800 : st.isBold || st.fontWeight === 'bold' ? 'bold' : 'normal',
-                        backgroundColor: st.boxStyle === 'none' 
-                          ? 'transparent' 
-                          : (st.backgroundColor || 'rgba(0,0,0,0.8)'),
-                        WebkitTextStroke: `${st.strokeWidth || 0}px ${st.strokeColor || '#000000'}`,
+                        backgroundColor: effectiveBgColor,
+                        padding: `${padY}px ${padX}px`,
+                        borderRadius: borderRadius,
+                        WebkitTextStroke: strokeCss,
                         textShadow: getShadow(),
                         lineHeight: st.lineHeight || 1.3,
                         letterSpacing: `${st.letterSpacing || 0}px`,
@@ -3565,122 +3663,504 @@ export default function SubtitleStudio({
                   </div>
                 </div>
 
-                {/* Box / Background Style */}
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-slate-300">סגנון רקע ותגית</label>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                    {[
-                      { id: 'none', label: 'ללא רקע (טקסט נקי)' },
-                      { id: 'rounded-badge', label: 'תגית מעוגלת' },
-                      { id: 'pill-badge', label: 'גלולה מעוגלת (Pill)' },
-                      { id: 'glassmorphism', label: 'זכוכית מטושטשת' },
-                      { id: 'full-bar', label: 'פס מלא לרוחב' }
-                    ].map((b) => (
-                      <button
-                        key={b.id}
-                        onClick={() => applyStyleUpdate({ boxStyle: b.id as any })}
-                        className={`py-2 px-2 rounded-xl text-xs font-semibold border transition-all ${
-                          globalStyle.boxStyle === b.id 
-                            ? 'bg-purple-600 border-purple-400 text-white shadow' 
-                            : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
-                        }`}
-                      >
-                        {b.label}
-                      </button>
-                    ))}
+                {/* 5. קו מתאר לכתוביות (Text Outline / Stroke) */}
+                <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-3.5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className={`p-1.5 rounded-lg ${globalStyle.strokeEnabled !== false && (globalStyle.strokeWidth || 0) > 0 ? 'bg-purple-600/20 text-purple-400' : 'bg-slate-900 text-slate-500'}`}>
+                        <Sparkle className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-bold text-white">קו מתאר לכתוביות (Outline / Stroke)</h4>
+                        <p className="text-[10px] text-slate-400">הדגשת גבולות האותיות להפרדה מושלמת מהרקע</p>
+                      </div>
+                    </div>
+                    {/* Toggle Button */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const isCurrentlyOn = globalStyle.strokeEnabled !== false && (globalStyle.strokeWidth || 0) > 0;
+                        if (isCurrentlyOn) {
+                          applyStyleUpdate({ strokeEnabled: false });
+                        } else {
+                          applyStyleUpdate({ strokeEnabled: true, strokeWidth: Math.max(1, globalStyle.strokeWidth || 2) });
+                        }
+                      }}
+                      className={`px-3 py-1 rounded-full text-xs font-bold transition-all flex items-center gap-1.5 ${
+                        globalStyle.strokeEnabled !== false && (globalStyle.strokeWidth || 0) > 0
+                          ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/20'
+                          : 'bg-slate-800 text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      <span className={`w-2 h-2 rounded-full ${globalStyle.strokeEnabled !== false && (globalStyle.strokeWidth || 0) > 0 ? 'bg-white animate-pulse' : 'bg-slate-500'}`} />
+                      {globalStyle.strokeEnabled !== false && (globalStyle.strokeWidth || 0) > 0 ? 'קו מתאר פעיל' : 'כבוי'}
+                    </button>
                   </div>
+
+                  {/* Outline Controls (Only if Enabled) */}
+                  {globalStyle.strokeEnabled !== false && (globalStyle.strokeWidth || 0) > 0 && (
+                    <div className="space-y-3 pt-2 border-t border-slate-900 animate-in fade-in-50 duration-200">
+                      {/* Outline Thickness Slider & Presets */}
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="text-slate-300 font-semibold">עובי קו המתאר (גודל קו המתאר):</span>
+                          <span className="font-mono font-bold text-purple-400 bg-purple-950/60 px-2 py-0.5 rounded-md border border-purple-800/40">
+                            {globalStyle.strokeWidth || 2}px
+                          </span>
+                        </div>
+
+                        {/* Quick thickness presets */}
+                        <div className="grid grid-cols-4 gap-1.5">
+                          {[
+                            { width: 1, label: 'דק (1px)' },
+                            { width: 2, label: 'סטנדרטי (2px)' },
+                            { width: 3, label: 'בולט (3px)' },
+                            { width: 5, label: 'עבה (5px)' }
+                          ].map((p) => (
+                            <button
+                              key={p.width}
+                              type="button"
+                              onClick={() => applyStyleUpdate({ strokeWidth: p.width, strokeEnabled: true })}
+                              className={`py-1 rounded-lg text-[10px] font-bold border transition-all ${
+                                globalStyle.strokeWidth === p.width
+                                  ? 'bg-purple-600 border-purple-400 text-white'
+                                  : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                              }`}
+                            >
+                              {p.label}
+                            </button>
+                          ))}
+                        </div>
+
+                        <input
+                          type="range"
+                          min={1}
+                          max={8}
+                          step={1}
+                          value={globalStyle.strokeWidth || 2}
+                          onChange={(e) => applyStyleUpdate({ strokeWidth: parseInt(e.target.value), strokeEnabled: true })}
+                          className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-purple-500"
+                        />
+                        <div className="flex justify-between text-[9px] text-slate-500 font-mono">
+                          <span>1px (עדין)</span>
+                          <span>2px-3px (מומלץ)</span>
+                          <span>8px (עבה מאוד)</span>
+                        </div>
+                      </div>
+
+                      {/* Outline Color */}
+                      <div className="space-y-1.5">
+                        <label className="text-[11px] font-semibold text-slate-300">צבע קו המתאר</label>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="color"
+                            value={globalStyle.strokeColor || '#000000'}
+                            onChange={(e) => applyStyleUpdate({ strokeColor: e.target.value, strokeEnabled: true })}
+                            className="w-10 h-8 rounded-lg bg-transparent cursor-pointer border border-slate-700 p-0.5"
+                          />
+                          {/* Color presets */}
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            {[
+                              { color: '#000000', label: 'שחור' },
+                              { color: '#FFFFFF', label: 'לבן' },
+                              { color: '#D97706', label: 'זהב' },
+                              { color: '#06B6D4', label: 'ניאון' },
+                              { color: '#9333EA', label: 'סגול' },
+                              { color: '#DC2626', label: 'אדום' }
+                            ].map((c) => (
+                              <button
+                                key={c.color}
+                                type="button"
+                                onClick={() => applyStyleUpdate({ strokeColor: c.color, strokeEnabled: true })}
+                                title={c.label}
+                                className={`w-6 h-6 rounded-full border-2 transition-transform hover:scale-110 ${
+                                  (globalStyle.strokeColor || '#000000').toLowerCase() === c.color.toLowerCase()
+                                    ? 'border-purple-400 scale-110 shadow-sm shadow-purple-400'
+                                    : 'border-slate-700'
+                                }`}
+                                style={{ backgroundColor: c.color }}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
-                {/* Text Shadow & Glow Effects */}
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-slate-300">אפקטי צל וזוהר</label>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                    {[
-                      { id: 'none', label: 'ללא אפקט' },
-                      { id: 'soft', label: 'צל רך (Soft)' },
-                      { id: 'hard-outline', label: 'מסגרת חדה (Outline)' },
-                      { id: 'neon-glow', label: 'זוהר ניאון (Glow)' },
-                      { id: 'cinema-blur', label: 'טשטוש קולנועי' }
-                    ].map((s) => (
-                      <button
-                        key={s.id}
-                        onClick={() => applyStyleUpdate({ textShadow: s.id as any })}
-                        className={`py-2 px-2 rounded-xl text-xs font-semibold border transition-all ${
-                          (globalStyle.textShadow || 'soft') === s.id 
-                            ? 'bg-purple-600 border-purple-400 text-white shadow' 
-                            : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
-                        }`}
-                      >
-                        {s.label}
-                      </button>
-                    ))}
+                {/* 6. רקע לכתוביות (Subtitle Background Box) */}
+                <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-3.5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className={`p-1.5 rounded-lg ${globalStyle.backgroundEnabled !== false && globalStyle.boxStyle !== 'none' ? 'bg-purple-600/20 text-purple-400' : 'bg-slate-900 text-slate-500'}`}>
+                        <Layers className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-bold text-white">רקע כתוביות (Background Box)</h4>
+                        <p className="text-[10px] text-slate-400">צורת תיבה, גודל שוליים, רדיוס פינות ושקיפות</p>
+                      </div>
+                    </div>
+                    {/* Toggle Button */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const isBgActive = globalStyle.backgroundEnabled !== false && globalStyle.boxStyle !== 'none';
+                        if (isBgActive) {
+                          applyStyleUpdate({ backgroundEnabled: false, boxStyle: 'none' });
+                        } else {
+                          applyStyleUpdate({ 
+                            backgroundEnabled: true, 
+                            boxStyle: (globalStyle.boxStyle === 'none' || !globalStyle.boxStyle) ? 'rounded-badge' : globalStyle.boxStyle,
+                            backgroundColor: globalStyle.backgroundColor || '#000000',
+                            backgroundOpacity: globalStyle.backgroundOpacity ?? 80
+                          });
+                        }
+                      }}
+                      className={`px-3 py-1 rounded-full text-xs font-bold transition-all flex items-center gap-1.5 ${
+                        globalStyle.backgroundEnabled !== false && globalStyle.boxStyle !== 'none'
+                          ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/20'
+                          : 'bg-slate-800 text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      <span className={`w-2 h-2 rounded-full ${globalStyle.backgroundEnabled !== false && globalStyle.boxStyle !== 'none' ? 'bg-white animate-pulse' : 'bg-slate-500'}`} />
+                      {globalStyle.backgroundEnabled !== false && globalStyle.boxStyle !== 'none' ? 'רקע פעיל' : 'ללא רקע'}
+                    </button>
                   </div>
+
+                  {/* Background Controls (Only if Enabled) */}
+                  {globalStyle.backgroundEnabled !== false && globalStyle.boxStyle !== 'none' && (
+                    <div className="space-y-3.5 pt-2 border-t border-slate-900 animate-in fade-in-50 duration-200">
+                      {/* Box Shape Presets */}
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-semibold text-slate-300">סגנון צורת הרקע</label>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+                          {[
+                            { id: 'rounded-badge', label: 'תגית מעוגלת' },
+                            { id: 'pill-badge', label: 'גלולה (Pill)' },
+                            { id: 'glassmorphism', label: 'זכוכית מטושטשת' },
+                            { id: 'full-bar', label: 'פס תחתון מלא' }
+                          ].map((b) => (
+                            <button
+                              key={b.id}
+                              type="button"
+                              onClick={() => applyStyleUpdate({ boxStyle: b.id as any, backgroundEnabled: true })}
+                              className={`py-2 px-1.5 rounded-xl text-xs font-semibold border transition-all text-center ${
+                                globalStyle.boxStyle === b.id 
+                                  ? 'bg-purple-600 border-purple-400 text-white shadow' 
+                                  : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                              }`}
+                            >
+                              {b.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Padding / Size: Horizontal & Vertical */}
+                      <div className="space-y-2 p-3 rounded-xl bg-slate-900/80 border border-slate-800/80">
+                        <div className="text-xs font-bold text-slate-200 flex items-center justify-between">
+                          <span>גודל הרקע (שוליים פנימיים - Padding)</span>
+                          <span className="text-[10px] text-purple-300 font-mono">
+                            {globalStyle.backgroundPaddingX ?? 20}px × {globalStyle.backgroundPaddingY ?? 10}px
+                          </span>
+                        </div>
+
+                        {/* Horizontal Padding (Width of background) */}
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between text-[11px]">
+                            <span className="text-slate-400">רוחב שוליים אופקיים (רוחב הרקע):</span>
+                            <span className="font-mono font-bold text-purple-300">{globalStyle.backgroundPaddingX ?? 20}px</span>
+                          </div>
+                          <input
+                            type="range"
+                            min={4}
+                            max={48}
+                            step={2}
+                            value={globalStyle.backgroundPaddingX ?? 20}
+                            onChange={(e) => applyStyleUpdate({ backgroundPaddingX: parseInt(e.target.value), backgroundEnabled: true })}
+                            className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-purple-500"
+                          />
+                        </div>
+
+                        {/* Vertical Padding (Height of background) */}
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between text-[11px]">
+                            <span className="text-slate-400">גובה שוליים אנכיים (עובי/גובה הרקע):</span>
+                            <span className="font-mono font-bold text-purple-300">{globalStyle.backgroundPaddingY ?? 10}px</span>
+                          </div>
+                          <input
+                            type="range"
+                            min={2}
+                            max={32}
+                            step={2}
+                            value={globalStyle.backgroundPaddingY ?? 10}
+                            onChange={(e) => applyStyleUpdate({ backgroundPaddingY: parseInt(e.target.value), backgroundEnabled: true })}
+                            className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-purple-500"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Border Radius (Corner Rounding) - Only if not Pill */}
+                      {globalStyle.boxStyle !== 'pill-badge' && globalStyle.boxStyle !== 'full-bar' && (
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="text-slate-300 font-semibold">עיגול פינות הרקע (Corner Radius):</span>
+                            <span className="font-mono font-bold text-purple-400 bg-purple-950/60 px-2 py-0.5 rounded-md border border-purple-800/40">
+                              {globalStyle.backgroundBorderRadius ?? 16}px
+                            </span>
+                          </div>
+                          <input
+                            type="range"
+                            min={0}
+                            max={36}
+                            step={2}
+                            value={globalStyle.backgroundBorderRadius ?? 16}
+                            onChange={(e) => applyStyleUpdate({ backgroundBorderRadius: parseInt(e.target.value), backgroundEnabled: true })}
+                            className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-purple-500"
+                          />
+                          <div className="flex justify-between text-[9px] text-slate-500 font-mono">
+                            <span>0px (מרובע חד)</span>
+                            <span>16px (מעוגל רגיל)</span>
+                            <span>36px (מעוגל עמוק)</span>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Color & Opacity Controls */}
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs font-semibold text-slate-300">צבע ושקיפות הרקע</label>
+                          <span className="text-xs font-mono font-bold text-purple-400">
+                            אטימות: {globalStyle.backgroundOpacity ?? 80}%
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-2.5">
+                          <input
+                            type="color"
+                            value={getHexColor(globalStyle.backgroundColor)}
+                            onChange={(e) => applyStyleUpdate({ backgroundColor: e.target.value, backgroundEnabled: true })}
+                            className="w-10 h-8 rounded-lg bg-transparent cursor-pointer border border-slate-700 p-0.5"
+                          />
+                          
+                          {/* Opacity slider */}
+                          <div className="flex-1 space-y-1">
+                            <input
+                              type="range"
+                              min={10}
+                              max={100}
+                              step={5}
+                              value={globalStyle.backgroundOpacity ?? 80}
+                              onChange={(e) => applyStyleUpdate({ backgroundOpacity: parseInt(e.target.value), backgroundEnabled: true })}
+                              className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-purple-500"
+                            />
+                          </div>
+
+                          {/* Quick Swatches */}
+                          <div className="flex items-center gap-1">
+                            {[
+                              { color: '#000000', label: 'שחור' },
+                              { color: '#0f172a', label: 'כחול לילה' },
+                              { color: '#2e1065', label: 'סגול עמוק' },
+                              { color: '#1e293b', label: 'גרפיט' },
+                              { color: '#ffffff', label: 'לבן' }
+                            ].map((c) => (
+                              <button
+                                key={c.color}
+                                type="button"
+                                onClick={() => applyStyleUpdate({ backgroundColor: c.color, backgroundEnabled: true })}
+                                title={c.label}
+                                className={`w-5 h-5 rounded-full border transition-transform hover:scale-110 ${
+                                  getHexColor(globalStyle.backgroundColor).toLowerCase() === c.color.toLowerCase()
+                                    ? 'border-purple-400 scale-110'
+                                    : 'border-slate-700'
+                                }`}
+                                style={{ backgroundColor: c.color }}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
-                {/* Active Karaoke Word Animation */}
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-slate-300">אפקט הדגשת מילה מדוברת (Karaoke Pop)</label>
-                  <div className="grid grid-cols-3 gap-2">
-                    {[
-                      { id: 'color-pop', label: 'צהוב קופץ (TikTok)' },
-                      { id: 'glow', label: 'זוהר ניאון למילה' },
-                      { id: 'none', label: 'ללא הדגשת מילה' }
-                    ].map((anim) => (
-                      <button
-                        key={anim.id}
-                        onClick={() => applyStyleUpdate({ activeWordAnimation: anim.id as any })}
-                        className={`py-2 px-2 rounded-xl text-xs font-semibold border transition-all ${
-                          (globalStyle.activeWordAnimation || 'color-pop') === anim.id 
-                            ? 'bg-purple-600 border-purple-400 text-white shadow' 
-                            : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
-                        }`}
-                      >
-                        {anim.label}
-                      </button>
-                    ))}
+                {/* 7. צל, עומק וזוהר (Shadow & Glow Effects) */}
+                <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-3.5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className={`p-1.5 rounded-lg ${globalStyle.shadowEnabled !== false && globalStyle.textShadow !== 'none' ? 'bg-purple-600/20 text-purple-400' : 'bg-slate-900 text-slate-500'}`}>
+                        <Sparkles className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-bold text-white">אפקטי צל וזוהר (Shadow & Glow)</h4>
+                        <p className="text-[10px] text-slate-400">עומק תלת-ממדי, הילת ניאון או טשטוש קולנועי</p>
+                      </div>
+                    </div>
+                    {/* Toggle Button */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const isShadowOn = globalStyle.shadowEnabled !== false && globalStyle.textShadow !== 'none';
+                        if (isShadowOn) {
+                          applyStyleUpdate({ shadowEnabled: false, textShadow: 'none' });
+                        } else {
+                          applyStyleUpdate({ 
+                            shadowEnabled: true, 
+                            textShadow: (globalStyle.textShadow === 'none' || !globalStyle.textShadow) ? 'soft' : globalStyle.textShadow 
+                          });
+                        }
+                      }}
+                      className={`px-3 py-1 rounded-full text-xs font-bold transition-all flex items-center gap-1.5 ${
+                        globalStyle.shadowEnabled !== false && globalStyle.textShadow !== 'none'
+                          ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/20'
+                          : 'bg-slate-800 text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      <span className={`w-2 h-2 rounded-full ${globalStyle.shadowEnabled !== false && globalStyle.textShadow !== 'none' ? 'bg-white animate-pulse' : 'bg-slate-500'}`} />
+                      {globalStyle.shadowEnabled !== false && globalStyle.textShadow !== 'none' ? 'צל פעיל' : 'ללא צל'}
+                    </button>
                   </div>
+
+                  {/* Shadow Controls (Only if Enabled) */}
+                  {globalStyle.shadowEnabled !== false && globalStyle.textShadow !== 'none' && (
+                    <div className="space-y-3 pt-2 border-t border-slate-900 animate-in fade-in-50 duration-200">
+                      {/* Shadow Style Buttons */}
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+                        {[
+                          { id: 'soft', label: 'צל רך (Soft)' },
+                          { id: 'hard-outline', label: 'מסגרת חדה' },
+                          { id: 'neon-glow', label: 'זוהר ניאון' },
+                          { id: 'cinema-blur', label: 'טשטוש קולנועי' }
+                        ].map((s) => (
+                          <button
+                            key={s.id}
+                            type="button"
+                            onClick={() => applyStyleUpdate({ textShadow: s.id as any, shadowEnabled: true })}
+                            className={`py-2 px-1 rounded-xl text-xs font-semibold border transition-all text-center ${
+                              globalStyle.textShadow === s.id 
+                                ? 'bg-purple-600 border-purple-400 text-white shadow' 
+                                : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                            }`}
+                          >
+                            {s.label}
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* Blur slider */}
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="text-slate-300 font-semibold">עוצמת טשטוש וגודל צל:</span>
+                          <span className="font-mono font-bold text-purple-400 bg-purple-950/60 px-2 py-0.5 rounded-md border border-purple-800/40">
+                            {globalStyle.shadowBlur ?? 8}px
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min={2}
+                          max={30}
+                          value={globalStyle.shadowBlur ?? 8}
+                          onChange={(e) => applyStyleUpdate({ shadowBlur: parseInt(e.target.value), shadowEnabled: true })}
+                          className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-purple-500"
+                        />
+                      </div>
+
+                      {/* Shadow Color */}
+                      <div className="space-y-1.5">
+                        <label className="text-[11px] font-semibold text-slate-300">צבע הצל / ההילה</label>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="color"
+                            value={getHexColor(globalStyle.shadowColor)}
+                            onChange={(e) => applyStyleUpdate({ shadowColor: e.target.value, shadowEnabled: true })}
+                            className="w-10 h-8 rounded-lg bg-transparent cursor-pointer border border-slate-700 p-0.5"
+                          />
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            {[
+                              { color: '#000000', label: 'שחור' },
+                              { color: '#06b6d4', label: 'טורקיז' },
+                              { color: '#f59e0b', label: 'זהב' },
+                              { color: '#a855f7', label: 'סגול' },
+                              { color: '#f43f5e', label: 'ורוד' }
+                            ].map((c) => (
+                              <button
+                                key={c.color}
+                                type="button"
+                                onClick={() => applyStyleUpdate({ shadowColor: c.color, shadowEnabled: true })}
+                                title={c.label}
+                                className={`w-6 h-6 rounded-full border-2 transition-transform hover:scale-110 ${
+                                  getHexColor(globalStyle.shadowColor).toLowerCase() === c.color.toLowerCase()
+                                    ? 'border-purple-400 scale-110'
+                                    : 'border-slate-700'
+                                }`}
+                                style={{ backgroundColor: c.color }}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
-                {/* Colors */}
-                <div className="grid grid-cols-4 gap-2">
-                  <div className="space-y-1">
-                    <label className="text-[11px] text-slate-400">צבע טקסט</label>
-                    <input
-                      type="color"
-                      value={globalStyle.textColor || '#FFFFFF'}
-                      onChange={(e) => applyStyleUpdate({ textColor: e.target.value })}
-                      className="w-full h-8 rounded-lg bg-transparent cursor-pointer border border-slate-700"
-                    />
+                {/* 8. צבעי טקסט ואפקט קריוקי למילה מדוברת */}
+                <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-3.5">
+                  <h4 className="text-xs font-bold text-white flex items-center gap-2">
+                    <Palette className="w-4 h-4 text-purple-400" />
+                    <span>צבעי טקסט ואפקט מילה מדוברת (Karaoke)</span>
+                  </h4>
+
+                  {/* Active Karaoke Word Animation Selector */}
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] font-semibold text-slate-300">אפקט הדגשת המילה המדוברת</label>
+                    <div className="grid grid-cols-3 gap-2">
+                      {[
+                        { id: 'color-pop', label: 'צהוב קופץ (TikTok)' },
+                        { id: 'glow', label: 'זוהר ניאון למילה' },
+                        { id: 'none', label: 'ללא הדגשת מילה' }
+                      ].map((anim) => (
+                        <button
+                          key={anim.id}
+                          type="button"
+                          onClick={() => applyStyleUpdate({ activeWordAnimation: anim.id as any })}
+                          className={`py-2 px-2 rounded-xl text-xs font-semibold border transition-all text-center ${
+                            (globalStyle.activeWordAnimation || 'color-pop') === anim.id 
+                              ? 'bg-purple-600 border-purple-400 text-white shadow' 
+                              : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          {anim.label}
+                        </button>
+                      ))}
+                    </div>
                   </div>
 
-                  <div className="space-y-1">
-                    <label className="text-[11px] text-slate-400">צבע מילה מודגשת</label>
-                    <input
-                      type="color"
-                      value={globalStyle.highlightWordColor || '#FACC15'}
-                      onChange={(e) => applyStyleUpdate({ highlightWordColor: e.target.value })}
-                      className="w-full h-8 rounded-lg bg-transparent cursor-pointer border border-slate-700"
-                    />
-                  </div>
+                  {/* Text & Highlight Word Colors */}
+                  <div className="grid grid-cols-2 gap-3 pt-1">
+                    <div className="space-y-1.5 p-2.5 rounded-xl bg-slate-900 border border-slate-800">
+                      <label className="text-[11px] font-semibold text-slate-300 block">צבע טקסט ראשי</label>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="color"
+                          value={globalStyle.textColor || '#FFFFFF'}
+                          onChange={(e) => applyStyleUpdate({ textColor: e.target.value })}
+                          className="w-full h-8 rounded-lg bg-transparent cursor-pointer border border-slate-700"
+                        />
+                      </div>
+                    </div>
 
-                  <div className="space-y-1">
-                    <label className="text-[11px] text-slate-400">צבע רקע</label>
-                    <input
-                      type="color"
-                      value={(globalStyle.backgroundColor && globalStyle.backgroundColor.startsWith('#')) ? globalStyle.backgroundColor : '#000000'}
-                      onChange={(e) => applyStyleUpdate({ backgroundColor: e.target.value })}
-                      className="w-full h-8 rounded-lg bg-transparent cursor-pointer border border-slate-700"
-                    />
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="text-[11px] text-slate-400">צבע קו מתאר</label>
-                    <input
-                      type="color"
-                      value={globalStyle.strokeColor || '#000000'}
-                      onChange={(e) => applyStyleUpdate({ strokeColor: e.target.value })}
-                      className="w-full h-8 rounded-lg bg-transparent cursor-pointer border border-slate-700"
-                    />
+                    <div className="space-y-1.5 p-2.5 rounded-xl bg-slate-900 border border-slate-800">
+                      <label className="text-[11px] font-semibold text-slate-300 block">צבע מילה מודגשת (קריוקי)</label>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="color"
+                          value={globalStyle.highlightWordColor || '#FACC15'}
+                          onChange={(e) => applyStyleUpdate({ highlightWordColor: e.target.value })}
+                          className="w-full h-8 rounded-lg bg-transparent cursor-pointer border border-slate-700"
+                        />
+                      </div>
+                    </div>
                   </div>
                 </div>
 
