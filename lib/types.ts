@@ -117,6 +117,10 @@ export interface SubtitleStyle {
   logoOpacity?: number; // 0 - 100
   logoOffsetX?: number; // px
   logoOffsetY?: number; // px
+  // Multi-Speaker Diarization Settings
+  showSpeakerBadge?: boolean; // הצגת תגית שם הדובר מעל הכתובית בווידאו
+  speakerColors?: Record<string, string>; // מפת צבעים מותאמת אישית לכל דובר (שם דובר -> צבע HEX)
+  colorCodeSubtitleBySpeaker?: boolean; // הדגשת מסגרת/טקסט הכתובית בצבע הדובר
 }
 
 export interface SubtitleItem {

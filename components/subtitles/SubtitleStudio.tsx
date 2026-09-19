@@ -39,7 +39,9 @@ import {
   sliceAudioBlobIntoChunks,
   blobToBase64,
   trimAudioBlob,
-  extractAndEnhanceAudioSnippet
+  extractAndEnhanceAudioSnippet,
+  getSpeakerColor,
+  DEFAULT_SPEAKER_COLORS
 } from '@/lib/audioUtils';
 import { 
   Subtitles, 
@@ -93,7 +95,9 @@ import {
   FileUp,
   Sparkle,
   LayoutTemplate,
-  SlidersHorizontal
+  SlidersHorizontal,
+  User,
+  Users
 } from 'lucide-react';
 import { getAISettings, AISettingsConfig } from '@/lib/apiConfig';
 import SubtitleAISettingsModal from './SubtitleAISettingsModal';
@@ -511,6 +515,12 @@ export default function SubtitleStudio({
   // Active Tab in Sidebar
   const [sidebarTab, setSidebarTab] = useState<'editor' | 'style' | 'pacing'>('editor');
 
+  // Multi-Speaker Diarization State
+  const [speakerFilter, setSpeakerFilter] = useState<string>('all');
+  const [activeSpeakerPopoverId, setActiveSpeakerPopoverId] = useState<string | null>(null);
+  const [customSpeakerInput, setCustomSpeakerInput] = useState<string>('');
+  const [isDiarizingSubtitles, setIsDiarizingSubtitles] = useState<boolean>(false);
+
   useEffect(() => {
     if (isOpen) {
       setAISettings(getAISettings());
@@ -754,12 +764,14 @@ export default function SubtitleStudio({
             const geminiPrompt = isTranslatingToHebrew
               ? `אתה מודל תמלול ותרגום אודיו מקצועי לסרטונים ופודקאסטים.
 האזן ישירות לאודיו (באנגלית או בכל שפה אחרת), תמלל ותרגם את כל מה שנאמר ישירות לעברית טבעית, שוטפת ומדויקת.
+זהה הבדלים בין דוברים שונים (Speaker Diarization): סמן כל שורה עם שדה "speaker" ("דובר 1", "דובר 2" או שמותיהם). כאשר הדובר מתחלף, התחל שורה חדשה.
 חלק לכתוביות קצרות של ${wordsPerLine} עד ${wordsPerLine + 2} מילים בשורה, עם תזמונים (startTime, endTime) בשניות (משך קטע זה: ${clipDuration} שניות).
-החזר אך ורק מערך JSON תקין: [{"startTime": 0.5, "endTime": 3.0, "text": "תרגום מדויק לעברית"}]`
+החזר אך ורק מערך JSON תקין: [{"startTime": 0.5, "endTime": 3.0, "speaker": "דובר 1", "text": "תרגום מדויק לעברית"}]`
               : `אתה מודל תמלול אודיו מקצועי לפודקאסטים בעברית.
 תמלל בדיוק של 100% מילה במילה את הדיבור באודיו לעברית (Verbatim Hebrew Speech-to-Text).
+זהה הבדלים בין דוברים שונים (Speaker Diarization): סמן כל שורה עם שדה "speaker" ("דובר 1", "דובר 2" או שמותיהם). כאשר הדובר מתחלף, התחל שורה חדשה.
 חלק לכתוביות קצרות של ${wordsPerLine} עד ${wordsPerLine + 2} מילים בשורה, עם תזמונים (startTime, endTime) בשניות (משך קטע זה: ${clipDuration} שניות).
-החזר אך ורק מערך JSON תקין: [{"startTime": 0.5, "endTime": 3.0, "text": "טקסט שנאמר"}]`;
+החזר אך ורק מערך JSON תקין: [{"startTime": 0.5, "endTime": 3.0, "speaker": "דובר 1", "text": "טקסט שנאמר"}]`;
 
             const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${currentSettings.geminiApiKey.trim()}`;
             const gRes = await fetch(geminiUrl, {
@@ -780,7 +792,11 @@ export default function SubtitleStudio({
               const rawText = gJson.candidates?.[0]?.content?.parts?.[0]?.text;
               if (rawText) {
                 const parsed = JSON.parse(rawText.replace(/```json/g, '').replace(/```/g, '').trim());
-                clipSubs = Array.isArray(parsed) ? parsed : (parsed.subtitles || []);
+                const rawList = Array.isArray(parsed) ? parsed : (parsed.subtitles || []);
+                clipSubs = rawList.map((s: any) => ({
+                  ...s,
+                  speaker: s.speaker ? String(s.speaker).trim() : undefined
+                }));
               }
             }
           } catch (gErr) {
@@ -920,12 +936,14 @@ export default function SubtitleStudio({
             const geminiPrompt = isTranslatingToHebrew
               ? `אתה מודל תמלול ותרגום אודיו מקצועי לסרטונים ופודקאסטים.
 האזן ישירות לאודיו (באנגלית או בכל שפה אחרת), תמלל ותרגם את כל מה שנאמר ישירות לעברית טבעית, שוטפת ומדויקת.
+זהה הבדלים בין דוברים שונים (Speaker Diarization): סמן כל שורה עם שדה "speaker" ("דובר 1", "דובר 2" או שמותיהם). כאשר הדובר מתחלף, התחל שורה חדשה.
 חלק לכתוביות קצרות של ${wordsPerLine} עד ${wordsPerLine + 2} מילים בשורה, עם תזמונים (startTime, endTime) בשניות (משך מקטע זה: ${chunk.durationSec} שניות).
-החזר אך ורק מערך JSON תקין: [{"startTime": 0.5, "endTime": 3.0, "text": "תרגום מדויק לעברית"}]`
+החזר אך ורק מערך JSON תקין: [{"startTime": 0.5, "endTime": 3.0, "speaker": "דובר 1", "text": "תרגום מדויק לעברית"}]`
               : `אתה מודל תמלול אודיו מקצועי לפודקאסטים בעברית.
 תמלל בדיוק של 100% מילה במילה את הדיבור באודיו לעברית (Verbatim Hebrew Speech-to-Text).
+זהה הבדלים בין דוברים שונים (Speaker Diarization): סמן כל שורה עם שדה "speaker" ("דובר 1", "דובר 2" או שמותיהם). כאשר הדובר מתחלף, התחל שורה חדשה.
 חלק לכתוביות קצרות של ${wordsPerLine} עד ${wordsPerLine + 2} מילים בשורה, עם תזמונים (startTime, endTime) בשניות (משך מקטע זה: ${chunk.durationSec} שניות).
-החזר אך ורק מערך JSON תקין: [{"startTime": 0.5, "endTime": 3.0, "text": "טקסט שנאמר"}]`;
+החזר אך ורק מערך JSON תקין: [{"startTime": 0.5, "endTime": 3.0, "speaker": "דובר 1", "text": "טקסט שנאמר"}]`;
 
             const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${currentSettings.geminiApiKey.trim()}`;
             const gRes = await fetch(geminiUrl, {
@@ -948,7 +966,10 @@ export default function SubtitleStudio({
               if (rawText) {
                 const parsed = JSON.parse(rawText.replace(/```json/g, '').replace(/```/g, '').trim());
                 const list = Array.isArray(parsed) ? parsed : (parsed.subtitles || []);
-                chunkSubs = list;
+                chunkSubs = list.map((s: any) => ({
+                  ...s,
+                  speaker: s.speaker ? String(s.speaker).trim() : undefined
+                }));
               }
             }
           } catch (gErr) {
@@ -1313,6 +1334,93 @@ export default function SubtitleStudio({
       console.warn('Deep decode error:', e);
     } finally {
       setRefiningSubtitleId(null);
+    }
+  };
+
+  // Multi-Speaker Diarization Handlers
+  const projectSpeakers = Array.from(
+    new Set(subtitles.map(s => s.speaker?.trim()).filter(Boolean))
+  ) as string[];
+
+  const handleAssignSpeaker = (subtitleId: string, newSpeaker: string, applyToSelected: boolean = false) => {
+    const cleanSpeaker = newSpeaker.trim();
+    if (!cleanSpeaker) return;
+    const targetIds = applyToSelected && selectedIds.includes(subtitleId) ? selectedIds : [subtitleId];
+    const updatedSubs = subtitles.map(s => targetIds.includes(s.id) ? { ...s, speaker: cleanSpeaker } : s);
+    setSubtitles(updatedSubs);
+    const updated = { ...episode, subtitles: updatedSubs };
+    if (!updated.id.startsWith('standalone_')) saveEpisode(updated);
+    if (onUpdateEpisode) onUpdateEpisode(updated);
+    setActiveSpeakerPopoverId(null);
+  };
+
+  const handleRenameSpeakerGlobally = (oldName: string, newName: string) => {
+    const cleanOld = oldName.trim();
+    const cleanNew = newName.trim();
+    if (!cleanOld || !cleanNew || cleanOld === cleanNew) return;
+
+    const updatedSubs = subtitles.map(s => s.speaker === cleanOld ? { ...s, speaker: cleanNew } : s);
+    
+    // Also update custom speaker colors map if oldName had custom color
+    if (globalStyle.speakerColors && globalStyle.speakerColors[cleanOld]) {
+      const existingColors = { ...(globalStyle.speakerColors || {}) };
+      existingColors[cleanNew] = existingColors[cleanOld];
+      delete existingColors[cleanOld];
+      applyStyleUpdate({ speakerColors: existingColors });
+    }
+
+    setSubtitles(updatedSubs);
+    const updated = { ...episode, subtitles: updatedSubs };
+    if (!updated.id.startsWith('standalone_')) saveEpisode(updated);
+    if (onUpdateEpisode) onUpdateEpisode(updated);
+  };
+
+  const handleAutoDiarizeSubtitles = async () => {
+    if (!subtitles || subtitles.length === 0) {
+      alert('אין כתוביות לזיהוי דוברים.');
+      return;
+    }
+
+    const currentSettings = getAISettings();
+    if (!currentSettings.geminiApiKey?.trim() && !currentSettings.openaiApiKey?.trim()) {
+      setIsAIModalOpen(true);
+      return;
+    }
+
+    setIsDiarizingSubtitles(true);
+    setTranscribeStatus('מנתח את מבנה השיחה ומזהה חילופי דוברים עם AI...');
+
+    try {
+      const res = await fetch('/api/ai/diarize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          subtitles,
+          knownSpeakers: projectSpeakers,
+          contextHint: episode.title || activeClip?.title || '',
+          apiKey: currentSettings.geminiApiKey,
+          openaiApiKey: currentSettings.openaiApiKey
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.subtitles && Array.isArray(data.subtitles) && data.subtitles.length > 0) {
+          setSubtitles(data.subtitles);
+          const updated = { ...episode, subtitles: data.subtitles };
+          if (!updated.id.startsWith('standalone_')) saveEpisode(updated);
+          if (onUpdateEpisode) onUpdateEpisode(updated);
+          alert(`✨ זיהוי הדוברים הושלם בהצלחה!\nזוהו ${data.speakers?.length || 2} דוברים שונים ותויגו כל ${data.diarizedCount || data.subtitles.length} שורות הכתוביות.`);
+        }
+      } else {
+        const err = await res.json().catch(() => ({}));
+        alert(err.error || 'שגיאה בזיהוי דוברים. נסו שנית.');
+      }
+    } catch (e: any) {
+      alert(`שגיאה בחיבור לשרת ה-AI: ${e.message}`);
+    } finally {
+      setIsDiarizingSubtitles(false);
+      setTranscribeStatus('');
     }
   };
 
@@ -2581,6 +2689,27 @@ export default function SubtitleStudio({
                       <span>מיקום חופשי ({posX}%, {posY}%)</span>
                     </div>
 
+                    {/* Speaker Diarization Floating Badge */}
+                    {activeSubtitle.speaker?.trim() && st.showSpeakerBadge !== false && (() => {
+                      const spkName = activeSubtitle.speaker!.trim();
+                      const spkColor = getSpeakerColor(spkName, st.speakerColors);
+                      return (
+                        <div className="mb-1.5 flex items-center justify-center pointer-events-none">
+                          <span
+                            style={{
+                              backgroundColor: spkColor,
+                              color: '#FFFFFF',
+                              boxShadow: `0 2px 12px ${spkColor}80`
+                            }}
+                            className="px-2.5 py-0.5 rounded-full text-[11px] font-black shadow-lg border border-white/30 tracking-wide inline-flex items-center gap-1.5 backdrop-blur-md transition-all select-none"
+                          >
+                            <User className="w-2.5 h-2.5 inline" />
+                            <span>{spkName}</span>
+                          </span>
+                        </div>
+                      );
+                    })()}
+
                     <div
                       style={{
                         display: 'inline-block',
@@ -2591,13 +2720,16 @@ export default function SubtitleStudio({
                         backgroundColor: effectiveBgColor,
                         padding: `${padY}px ${padX}px`,
                         borderRadius: borderRadius,
+                        border: (st.colorCodeSubtitleBySpeaker && activeSubtitle.speaker?.trim()) 
+                          ? `2px solid ${getSpeakerColor(activeSubtitle.speaker.trim(), st.speakerColors)}`
+                          : '1px solid transparent',
                         WebkitTextStroke: strokeCss,
                         textShadow: getShadow(),
                         lineHeight: st.lineHeight || 1.3,
                         letterSpacing: `${st.letterSpacing || 0}px`,
                         direction: 'rtl'
                       }}
-                      className={`${getBoxClasses()} animate-in zoom-in-95 duration-100 transition-all border border-transparent group-hover/drag:border-purple-400/40`}
+                      className={`${getBoxClasses()} animate-in zoom-in-95 duration-100 transition-all group-hover/drag:border-purple-400/40`}
                     >
                       {wordLines.map((lineWords, lineIdx) => (
                         <div key={lineIdx} className="leading-snug">
@@ -3040,25 +3172,95 @@ export default function SubtitleStudio({
                   </div>
                 )}
 
+                {/* Multi-Speaker Diarization Toolbar & Filter Bar */}
+                {subtitles.length > 0 && (
+                  <div className="mb-2 p-2 rounded-xl bg-slate-950/80 border border-slate-800/80 space-y-1.5 shrink-0">
+                    <div className="flex items-center justify-between gap-1">
+                      <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-300">
+                        <Users className="w-3.5 h-3.5 text-purple-400" />
+                        <span>סינון לפי דובר:</span>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={handleAutoDiarizeSubtitles}
+                        disabled={isDiarizingSubtitles}
+                        className="px-2.5 py-1 rounded-lg bg-gradient-to-r from-purple-600/30 to-indigo-600/30 hover:from-purple-600/50 hover:to-indigo-600/50 border border-purple-500/40 text-[10px] text-purple-200 hover:text-white font-bold transition-all flex items-center gap-1"
+                        title="זיהוי והבדלה אוטומטית בין דוברים על בסיס שיחה ובינה מלאכותית"
+                      >
+                        <Sparkles className="w-3 h-3 text-amber-400" />
+                        <span>{isDiarizingSubtitles ? 'מזהה דוברים...' : '✨ זהה דוברים עם AI'}</span>
+                      </button>
+                    </div>
+
+                    {/* Speaker filter buttons */}
+                    <div className="flex flex-wrap items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setSpeakerFilter('all')}
+                        className={`px-2 py-0.5 rounded-lg text-[10px] font-bold transition-all ${
+                          speakerFilter === 'all'
+                            ? 'bg-purple-600 text-white shadow'
+                            : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
+                        }`}
+                      >
+                        כל הדוברים ({subtitles.length})
+                      </button>
+
+                      {projectSpeakers.map((spk) => {
+                        const count = subtitles.filter(s => s.speaker === spk).length;
+                        const spkColor = getSpeakerColor(spk, globalStyle.speakerColors);
+                        const isCurrent = speakerFilter === spk;
+                        return (
+                          <button
+                            key={spk}
+                            type="button"
+                            onClick={() => setSpeakerFilter(isCurrent ? 'all' : spk)}
+                            className={`px-2 py-0.5 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1 border ${
+                              isCurrent
+                                ? 'text-white shadow'
+                                : 'text-slate-300 hover:text-white bg-slate-900'
+                            }`}
+                            style={{
+                              backgroundColor: isCurrent ? spkColor : undefined,
+                              borderColor: `${spkColor}80`
+                            }}
+                          >
+                            <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: isCurrent ? '#FFFFFF' : spkColor }} />
+                            <span>{spk}</span>
+                            <span className="opacity-75 font-mono text-[9px]">({count})</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
                 {/* Subtitle List */}
                 <div className="flex-1 overflow-y-auto space-y-2.5 py-2 pr-1">
                   {(() => {
-                    const displayedSubs = (filterSubtitlesByClip && activeClip)
-                      ? subtitles.filter(s => s.startTime >= activeClip.startTime - 0.5 && s.endTime <= activeClip.endTime + 0.5)
-                      : subtitles;
+                    const displayedSubs = subtitles.filter(s => {
+                      if (filterSubtitlesByClip && activeClip) {
+                        if (s.startTime < activeClip.startTime - 0.5 || s.endTime > activeClip.endTime + 0.5) return false;
+                      }
+                      if (speakerFilter !== 'all') {
+                        if ((s.speaker?.trim() || 'דובר 1') !== speakerFilter) return false;
+                      }
+                      return true;
+                    });
 
                     if (subtitles.length > 0 && displayedSubs.length === 0) {
                       return (
                         <div className="py-8 px-5 text-center rounded-3xl bg-slate-900/60 border border-slate-800/80 space-y-3">
                           <p className="text-xs text-slate-300 font-bold">
-                            לא נמצאו כתוביות בטווח הקטע &quot;{activeClip?.title}&quot; ({formatSrtTimestamp(activeClip?.startTime || 0).slice(3, 8)} - {formatSrtTimestamp(activeClip?.endTime || 0).slice(3, 8)})
+                            לא נמצאו כתוביות בסינון הנוכחי
                           </p>
                           <button
                             type="button"
-                            onClick={() => handleTranscribeRecordedAudio()}
-                            className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-rose-600 text-white font-bold text-xs shadow-lg"
+                            onClick={() => { setFilterSubtitlesByClip(false); setSpeakerFilter('all'); }}
+                            className="px-4 py-2 rounded-xl bg-purple-600 text-white font-bold text-xs shadow-lg"
                           >
-                            ✨ תמלל קטע זה עכשיו עם AI
+                            אפס סינון והצג הכל
                           </button>
                         </div>
                       );
@@ -3097,6 +3299,140 @@ export default function SubtitleStudio({
                               <span className="text-[10px] font-mono text-purple-300 bg-purple-950/40 px-1.5 py-0.5 rounded border border-purple-500/20">
                                 {Math.max(0.1, sub.endTime - sub.startTime).toFixed(2)}s
                               </span>
+
+                              {/* Interactive Speaker Badge */}
+                              {(() => {
+                                const currentSpeaker = sub.speaker?.trim() || 'דובר 1';
+                                const speakerCol = getSpeakerColor(currentSpeaker, globalStyle.speakerColors);
+                                const isPopoverOpen = activeSpeakerPopoverId === sub.id;
+
+                                return (
+                                  <div className="relative inline-block">
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setActiveSpeakerPopoverId(isPopoverOpen ? null : sub.id);
+                                        setCustomSpeakerInput(sub.speaker || '');
+                                      }}
+                                      className="px-2 py-0.5 rounded-full text-[10px] font-bold border transition-all flex items-center gap-1 hover:brightness-125"
+                                      style={{
+                                        backgroundColor: `${speakerCol}25`,
+                                        borderColor: `${speakerCol}70`,
+                                        color: speakerCol
+                                      }}
+                                      title="לחץ לשינוי או עריכת הדובר"
+                                    >
+                                      <User className="w-2.5 h-2.5" />
+                                      <span>{sub.speaker ? sub.speaker : '+ הגדר דובר'}</span>
+                                    </button>
+
+                                    {/* Speaker Picker Dropdown */}
+                                    {isPopoverOpen && (
+                                      <div 
+                                        onClick={(e) => e.stopPropagation()}
+                                        className="absolute right-0 top-full mt-1.5 z-40 w-56 p-2.5 rounded-2xl bg-slate-950/95 border border-purple-500/40 shadow-2xl backdrop-blur-xl text-xs space-y-2 animate-in fade-in zoom-in-95 duration-150"
+                                      >
+                                        <div className="flex items-center justify-between text-[11px] font-bold text-slate-300 border-b border-slate-800 pb-1.5">
+                                          <span className="flex items-center gap-1">
+                                            <Users className="w-3 h-3 text-purple-400" />
+                                            <span>שיוך דובר לכתובית</span>
+                                          </span>
+                                          <button
+                                            type="button"
+                                            onClick={() => setActiveSpeakerPopoverId(null)}
+                                            className="text-slate-500 hover:text-white"
+                                          >
+                                            <X className="w-3 h-3" />
+                                          </button>
+                                        </div>
+
+                                        {/* Quick choices from existing speakers */}
+                                        <div className="space-y-1 max-h-36 overflow-y-auto">
+                                          {Array.from(new Set([...projectSpeakers, 'דובר 1', 'דובר 2', 'דובר 3'])).map((spk) => {
+                                            const spkCol = getSpeakerColor(spk, globalStyle.speakerColors);
+                                            const isCurrent = sub.speaker === spk;
+                                            return (
+                                              <button
+                                                key={spk}
+                                                type="button"
+                                                onClick={() => handleAssignSpeaker(sub.id, spk, false)}
+                                                className={`w-full px-2 py-1 rounded-xl text-right flex items-center justify-between transition-all ${
+                                                  isCurrent ? 'bg-purple-900/40 text-white font-bold' : 'hover:bg-slate-900 text-slate-300'
+                                                }`}
+                                              >
+                                                <span className="flex items-center gap-1.5">
+                                                  <span className="w-2 h-2 rounded-full" style={{ backgroundColor: spkCol }} />
+                                                  <span className="text-[11px]">{spk}</span>
+                                                </span>
+                                                {isCurrent && <Check className="w-3 h-3 text-purple-400" />}
+                                              </button>
+                                            );
+                                          })}
+                                        </div>
+
+                                        {/* Custom Speaker Input */}
+                                        <div className="pt-1.5 border-t border-slate-800 space-y-1.5">
+                                          <div className="flex items-center gap-1">
+                                            <input
+                                              type="text"
+                                              value={customSpeakerInput}
+                                              onChange={(e) => setCustomSpeakerInput(e.target.value)}
+                                              placeholder="שם דובר חדש..."
+                                              className="flex-1 px-2 py-1 rounded-lg bg-slate-900 border border-slate-700 text-[11px] text-white focus:outline-none focus:border-purple-500"
+                                              onKeyDown={(e) => {
+                                                if (e.key === 'Enter' && customSpeakerInput.trim()) {
+                                                  handleAssignSpeaker(sub.id, customSpeakerInput.trim(), false);
+                                                }
+                                              }}
+                                            />
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                if (customSpeakerInput.trim()) {
+                                                  handleAssignSpeaker(sub.id, customSpeakerInput.trim(), false);
+                                                }
+                                              }}
+                                              className="px-2 py-1 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-[11px] font-bold"
+                                            >
+                                              שמור
+                                            </button>
+                                          </div>
+
+                                          {selectedIds.length > 1 && selectedIds.includes(sub.id) && (
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                const spk = customSpeakerInput.trim() || sub.speaker || 'דובר 1';
+                                                handleAssignSpeaker(sub.id, spk, true);
+                                              }}
+                                              className="w-full py-1 rounded-lg bg-indigo-950/60 hover:bg-indigo-900/60 border border-indigo-500/40 text-[10px] text-indigo-300 font-bold"
+                                            >
+                                              החל על כל {selectedIds.length} הכתוביות שנבחרו
+                                            </button>
+                                          )}
+
+                                          {sub.speaker && (
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                if (customSpeakerInput.trim() && customSpeakerInput.trim() !== sub.speaker) {
+                                                  handleRenameSpeakerGlobally(sub.speaker!, customSpeakerInput.trim());
+                                                  setActiveSpeakerPopoverId(null);
+                                                }
+                                              }}
+                                              disabled={!customSpeakerInput.trim() || customSpeakerInput.trim() === sub.speaker}
+                                              className="w-full py-1 rounded-lg bg-slate-900 hover:bg-slate-800 disabled:opacity-40 text-[10px] text-slate-400 font-medium"
+                                            >
+                                              שנה שם זה בכל הכתוביות
+                                            </button>
+                                          )}
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })()}
                             </div>
 
                             {/* Precision Micro-Timers with Quick Nudge Buttons */}
@@ -4424,6 +4760,134 @@ export default function SubtitleStudio({
                   <p className="text-[10px] text-purple-300/80 text-center font-medium">
                     💡 טיפ: ניתן ללחוץ ולגרור את הכתובית עם העכבר ישירות מעל תצוגת הווידאו!
                   </p>
+                </div>
+
+                {/* 10. זיהוי ועיצוב דוברים (Multi-Speaker Diarization & Colors) */}
+                <div className="p-4 rounded-2xl bg-gradient-to-r from-purple-950/30 via-indigo-950/20 to-slate-950 border border-purple-500/30 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1.5 rounded-xl bg-purple-600/20 text-purple-400">
+                        <Users className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-bold text-white">זיהוי והבדלה בין דוברים (Multi-Speaker)</h4>
+                        <p className="text-[10px] text-slate-400">תגיות שם דובר וצבע ייחודי לכל דובר בווידאו</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3 pt-2 border-t border-slate-800/80">
+                    {/* Toggle: Show Speaker Badge on Video */}
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="text-xs text-slate-200 font-bold block">הצג תגית שם דובר בווידאו</span>
+                        <span className="text-[10px] text-slate-400">תגית מרחפת מעל הכתובית עם שם הדובר</span>
+                      </div>
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={globalStyle.showSpeakerBadge !== false}
+                          onChange={(e) => applyStyleUpdate({ showSpeakerBadge: e.target.checked })}
+                          className="sr-only peer"
+                        />
+                        <div className="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-purple-600"></div>
+                      </label>
+                    </div>
+
+                    {/* Toggle: Color Code Subtitle by Speaker */}
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="text-xs text-slate-200 font-bold block">הדגש מסגרת לפי צבע הדובר</span>
+                        <span className="text-[10px] text-slate-400">צביעת קו המתאר של תיבת הכתובית בצבע הדובר</span>
+                      </div>
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={globalStyle.colorCodeSubtitleBySpeaker || false}
+                          onChange={(e) => applyStyleUpdate({ colorCodeSubtitleBySpeaker: e.target.checked })}
+                          className="sr-only peer"
+                        />
+                        <div className="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-purple-600"></div>
+                      </label>
+                    </div>
+
+                    {/* List of Detected Speakers & Color Customization */}
+                    <div className="space-y-2 pt-2 border-t border-slate-900">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                          <span>רשימת הדוברים בפרק ({projectSpeakers.length}):</span>
+                        </label>
+                        <button
+                          type="button"
+                          onClick={handleAutoDiarizeSubtitles}
+                          disabled={isDiarizingSubtitles}
+                          className="text-[10px] text-purple-400 hover:text-purple-300 flex items-center gap-1 font-bold underline transition-colors"
+                        >
+                          <Sparkles className="w-3 h-3 text-amber-400" />
+                          <span>{isDiarizingSubtitles ? 'מזהה...' : '✨ זהה דוברים עם AI'}</span>
+                        </button>
+                      </div>
+
+                      {projectSpeakers.length === 0 ? (
+                        <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800 text-center space-y-1">
+                          <p className="text-[11px] text-slate-400">
+                            טרם שויכו דוברים לכתוביות.
+                          </p>
+                          <button
+                            type="button"
+                            onClick={handleAutoDiarizeSubtitles}
+                            disabled={isDiarizingSubtitles || subtitles.length === 0}
+                            className="text-xs text-purple-400 hover:text-purple-300 font-bold underline"
+                          >
+                            לחצו כאן לזיהוי והבדלה אוטומטית בין דוברים (AI Diarization)
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          {projectSpeakers.map((spk) => {
+                            const count = subtitles.filter(s => s.speaker === spk).length;
+                            const currentCol = getSpeakerColor(spk, globalStyle.speakerColors);
+                            return (
+                              <div key={spk} className="p-2.5 rounded-xl bg-slate-950 border border-slate-800/90 flex items-center justify-between gap-2.5 shadow-sm">
+                                <div className="flex items-center gap-2 flex-1 min-w-0">
+                                  <input
+                                    type="color"
+                                    value={currentCol}
+                                    onChange={(e) => {
+                                      const newColors = { ...(globalStyle.speakerColors || {}), [spk]: e.target.value };
+                                      applyStyleUpdate({ speakerColors: newColors });
+                                    }}
+                                    className="w-7 h-7 rounded-lg cursor-pointer bg-transparent border border-slate-700 p-0.5 shrink-0"
+                                    title="שנה צבע לדובר זה"
+                                  />
+                                  <input
+                                    type="text"
+                                    defaultValue={spk}
+                                    onBlur={(e) => {
+                                      const newName = e.target.value.trim();
+                                      if (newName && newName !== spk) {
+                                        handleRenameSpeakerGlobally(spk, newName);
+                                      }
+                                    }}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') {
+                                        (e.target as HTMLInputElement).blur();
+                                      }
+                                    }}
+                                    className="flex-1 px-2 py-1 rounded-lg bg-slate-900 border border-slate-700 text-xs text-white focus:outline-none focus:border-purple-500"
+                                    title="לחץ לעריכת שם הדובר (ישנה בכל הכתוביות)"
+                                  />
+                                </div>
+                                <span className="text-[10px] font-mono text-slate-400 bg-slate-900 px-2 py-1 rounded-lg border border-slate-800 shrink-0">
+                                  {count} כתוביות
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
               </div>
             )}

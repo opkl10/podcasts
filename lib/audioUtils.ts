@@ -603,7 +603,9 @@ export function smartRebalanceSubtitles(
         id: `sub_rebalanced_${Date.now()}_${cIdx}_${Math.random().toString(36).substring(2, 5)}`,
         startTime: Number(currentStart.toFixed(2)),
         endTime: Number(chunkEnd.toFixed(2)),
-        text: chunkText
+        text: chunkText,
+        speaker: sub.speaker,
+        customStyle: sub.customStyle
       });
 
       currentStart = chunkEnd + 0.05;
@@ -631,6 +633,7 @@ export function splitSubtitleItemAtWordIndex(sub: SubtitleItem, wordIndex: numbe
     startTime: sub.startTime,
     endTime: Math.max(sub.startTime + 0.1, Number((splitTime - 0.05).toFixed(2))),
     text: part1Text,
+    speaker: sub.speaker,
     customStyle: sub.customStyle
   };
 
@@ -639,6 +642,7 @@ export function splitSubtitleItemAtWordIndex(sub: SubtitleItem, wordIndex: numbe
     startTime: splitTime,
     endTime: sub.endTime,
     text: part2Text,
+    speaker: sub.speaker,
     customStyle: sub.customStyle
   };
 
@@ -684,6 +688,7 @@ export function segmentSubtitlesByPunctuation(subtitles: SubtitleItem[]): Subtit
         startTime: Number(currentStart.toFixed(2)),
         endTime: Number(partEnd.toFixed(2)),
         text: part.trim(),
+        speaker: sub.speaker,
         customStyle: sub.customStyle
       });
 
@@ -737,6 +742,7 @@ export function segmentSubtitlesByMaxChars(subtitles: SubtitleItem[], maxChars: 
         startTime: Number(currentStart.toFixed(2)),
         endTime: Number(lineEnd.toFixed(2)),
         text: line.trim(),
+        speaker: sub.speaker,
         customStyle: sub.customStyle
       });
 
@@ -758,6 +764,7 @@ export function mergeSubtitleWithNext(subtitles: SubtitleItem[], index: number):
     startTime: current.startTime,
     endTime: next.endTime,
     text: `${current.text} ${next.text}`.trim(),
+    speaker: current.speaker || next.speaker,
     customStyle: current.customStyle
   };
 
@@ -809,3 +816,38 @@ export async function trimAudioBlob(blob: Blob, startSeconds: number, endSeconds
   return audioBufferToWav(trimmedBuffer, false);
 }
 
+// Multi-Speaker Diarization Color Palette & Utilities
+export const DEFAULT_SPEAKER_COLORS = [
+  '#06b6d4', // Cyan
+  '#f59e0b', // Amber / Gold
+  '#ec4899', // Pink / Rose
+  '#a855f7', // Purple
+  '#10b981', // Emerald
+  '#f97316', // Orange
+  '#3b82f6', // Blue
+  '#14b8a6', // Teal
+  '#e11d48'  // Crimson
+];
+
+export function getSpeakerColor(speakerName?: string, customMap?: Record<string, string>): string {
+  if (!speakerName) return '#06b6d4';
+  const cleanName = speakerName.trim();
+  if (customMap && customMap[cleanName]) {
+    return customMap[cleanName];
+  }
+  // Check for common 'דובר 1', 'דובר 2' pattern
+  const match = cleanName.match(/\d+/);
+  if (match) {
+    const num = parseInt(match[0], 10);
+    if (!isNaN(num) && num > 0) {
+      return DEFAULT_SPEAKER_COLORS[(num - 1) % DEFAULT_SPEAKER_COLORS.length];
+    }
+  }
+  // Deterministic color hash based on string
+  let hash = 0;
+  for (let i = 0; i < cleanName.length; i++) {
+    hash = cleanName.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const index = Math.abs(hash) % DEFAULT_SPEAKER_COLORS.length;
+  return DEFAULT_SPEAKER_COLORS[index];
+}

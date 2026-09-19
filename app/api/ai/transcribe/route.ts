@@ -211,12 +211,19 @@ export async function POST(req: NextRequest) {
 - שחזור פונטי והקשרי (Contextual Phonetic Recovery): אם מילה או הברה אינה נשמעת בצורה חדה או נבלעה על ידי הדובר, נתח את ההקשר התחבירי והנושאי של המשפט ושחזר בדיוק את המילה שהדובר התכוון לומר. לעולם אל תוותר ואל תדלג על אף מילה או משפט!
 - סנכרון תזמונים מדויק: התאם את ה-startTime בדיוק לרגע תחילת הגיית המילה הראשונה, ואת ה-endTime בדיוק לסיום המילה האחרונה בשורת הכתובית.` : '';
 
+      const diarizationInstructions = `
+זיהוי והבדלה בין דוברים שונים (Speaker Diarization):
+- זהה שינויים בדוברים לאורך האודיו (לפי גוון קול, טון, מגדר, תורות דיבור, או שמות שהוזכרו בשיחה).
+- לכל כתובית ספק שדה "speaker": ברירת מחדל "דובר 1", "דובר 2", "דובר 3" וכו', או שמותיהם המפורשים אם הוזכרו בהקלטה (לדוגמה: "עומר", "דניאל", "מראיין", "אורח").
+- בכל פעם שהדובר מתחלף, התחל שורת כתובית חדשה! לעולם אל תשלב דיבור של שני דוברים שונים באותה שורת כתובית.`;
+
       const prompt = translateToHebrew ? `
 אתה מודל תמלול ותרגום אודיו מקצועי ומתקדם ביותר לפודקאסטים וסרטוני תוכן.
 האזן ישירות לקובץ האודיו המצורף (שעשוי להיות באנגלית או בכל שפה אחרת).
 תמלל ותרגם את כל מה שנאמר ישירות לעברית טבעית, תקנית, קולחת ומדויקת (Speech-to-Hebrew Subtitle Translation).
 
 ${highEffortInstructions}
+${diarizationInstructions}
 
 הנחיות איכות קריטיות:
 1. תרגם 100% ממה שנאמר לעברית. חל איסור להשאיר טקסט באנגלית (למעט שמות מותגים מוכרים במידת הצורך).
@@ -229,11 +236,13 @@ ${highEffortInstructions}
   {
     "startTime": 1.2,
     "endTime": 3.8,
+    "speaker": "דובר 1",
     "text": "שלום לכולם וברוכים הבאים"
   },
   {
     "startTime": 4.1,
     "endTime": 6.9,
+    "speaker": "דובר 2",
     "text": "היום בסרטון נדבר על הנושא המרכזי"
   }
 ]
@@ -242,6 +251,7 @@ ${highEffortInstructions}
 האזן ישירות לקובץ האודיו המצורף ותמלל בדיוק של 100% מילה במילה את מה שנאמר בפועל בהקלטה.
 
 ${highEffortInstructions}
+${diarizationInstructions}
 
 הנחיות איכות קריטיות:
 1. תמלל בדיוק של 100% מילה במילה את כל המילים שנאמרו בהקלטה. חל איסור מוחלט להשמיט אף מילה, אף משפט ואף הברה.
@@ -254,11 +264,13 @@ ${highEffortInstructions}
   {
     "startTime": 1.2,
     "endTime": 3.8,
+    "speaker": "דובר 1",
     "text": "שלום לכולם וברוכים הבאים"
   },
   {
     "startTime": 4.1,
     "endTime": 6.9,
+    "speaker": "דובר 2",
     "text": "היום בפרק נדבר על הקולנוע"
   }
 ]
@@ -330,7 +342,8 @@ ${highEffortInstructions}
                   id: `sub_spoken_${Date.now()}_${idx}`,
                   startTime: Number(Number(s.startTime || s.start || idx * 3).toFixed(2)),
                   endTime: Number(Number(s.endTime || s.end || (idx + 1) * 3).toFixed(2)),
-                  text: String(s.text || s.content || '').trim()
+                  text: String(s.text || s.content || '').trim(),
+                  speaker: s.speaker ? String(s.speaker).trim() : undefined
                 })).filter((s: any) => s.text.length > 0);
 
                 if (translateToHebrew) {
