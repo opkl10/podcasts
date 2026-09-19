@@ -115,6 +115,44 @@ export async function convertBlobToMonoWav(blob: Blob): Promise<Blob> {
   return monoWav;
 }
 
+// Acoustic Speech Clarity Filter Chain:
+// 1. Highpass Filter (85 Hz) to remove low-frequency rumbles, AC hum, and microphone pops
+// 2. Peaking EQ Filter (2800 Hz, +5dB, Q 1.2) to boost the formant/intelligibility frequency band of Hebrew consonants
+// 3. DynamicsCompressorNode (threshold -32dB, knee 12dB, ratio 4:1, attack 0.003s, release 0.15s) to boost whispers and low-volume mumbling
+export function applyAcousticSpeechEnhancement(
+  offlineCtx: OfflineAudioContext,
+  sourceNode: AudioNode,
+  destinationNode: AudioNode
+) {
+  try {
+    const highpass = offlineCtx.createBiquadFilter();
+    highpass.type = 'highpass';
+    highpass.frequency.value = 85;
+
+    const speechPresence = offlineCtx.createBiquadFilter();
+    speechPresence.type = 'peaking';
+    speechPresence.frequency.value = 2800;
+    speechPresence.Q.value = 1.2;
+    speechPresence.gain.value = 5.0; // +5dB boost to speech intelligibility
+
+    const compressor = offlineCtx.createDynamicsCompressor();
+    compressor.threshold.value = -32;
+    compressor.knee.value = 12;
+    compressor.ratio.value = 4.0;
+    compressor.attack.value = 0.003;
+    compressor.release.value = 0.15;
+
+    // Chain: Source -> Highpass -> SpeechPresence -> Compressor -> Destination
+    sourceNode.connect(highpass);
+    highpass.connect(speechPresence);
+    speechPresence.connect(compressor);
+    compressor.connect(destinationNode);
+  } catch (err) {
+    console.warn('Acoustic speech enhancement fallback to direct connection:', err);
+    sourceNode.connect(destinationNode);
+  }
+}
+
 // Convert any Audio/Video Blob to Ultra-Lightweight 16kHz Speech-Optimized Mono WAV
 export async function convertBlobToSpeechMonoWav(blob: Blob, targetSampleRate = 16000): Promise<Blob> {
   try {
@@ -132,7 +170,7 @@ export async function convertBlobToSpeechMonoWav(blob: Blob, targetSampleRate = 
 
     const source = offlineContext.createBufferSource();
     source.buffer = audioBuffer;
-    source.connect(offlineContext.destination);
+    applyAcousticSpeechEnhancement(offlineContext, source, offlineContext.destination);
     source.start(0);
 
     const resampledBuffer = await offlineContext.startRendering();
@@ -211,7 +249,7 @@ export async function sliceAudioBlobIntoChunks(
 
       const source = offlineCtx.createBufferSource();
       source.buffer = sliceBuffer;
-      source.connect(offlineCtx.destination);
+      applyAcousticSpeechEnhancement(offlineCtx, source, offlineCtx.destination);
       source.start(0);
 
       const resampledBuffer = await offlineCtx.startRendering();
@@ -240,6 +278,55 @@ export async function sliceAudioBlobIntoChunks(
       total: 1
     }];
   }
+}
+
+// Extract and Enhance a specific short audio snippet for granular re-decoding of unclear/mumbled speech
+export async function extractAndEnhanceAudioSnippet(
+  blob: Blob,
+  startSec: number,
+  endSec: number,
+  targetSampleRate = 16000
+): Promise<Blob> {
+  const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+  const audioContext = new AudioCtx();
+  const arrayBuffer = await blob.arrayBuffer();
+  const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+  await audioContext.close();
+
+  // Add 0.4s safety padding on each side to avoid clipping the first or last syllable
+  const paddedStart = Math.max(0, startSec - 0.4);
+  const paddedEnd = Math.min(audioBuffer.duration, endSec + 0.4);
+  const duration = Math.max(0.2, paddedEnd - paddedStart);
+
+  const startSample = Math.floor(paddedStart * audioBuffer.sampleRate);
+  const endSample = Math.min(audioBuffer.length, Math.floor(paddedEnd * audioBuffer.sampleRate));
+  const sampleLength = endSample - startSample;
+
+  const offlineCtx = new OfflineAudioContext(
+    1,
+    Math.ceil(duration * targetSampleRate),
+    targetSampleRate
+  );
+
+  const snippetBuffer = offlineCtx.createBuffer(
+    audioBuffer.numberOfChannels,
+    sampleLength,
+    audioBuffer.sampleRate
+  );
+
+  for (let c = 0; c < audioBuffer.numberOfChannels; c++) {
+    const channelData = audioBuffer.getChannelData(c).subarray(startSample, endSample);
+    snippetBuffer.copyToChannel(channelData, c, 0);
+  }
+
+  const source = offlineCtx.createBufferSource();
+  source.buffer = snippetBuffer;
+
+  applyAcousticSpeechEnhancement(offlineCtx, source, offlineCtx.destination);
+  source.start(0);
+
+  const renderedBuffer = await offlineCtx.startRendering();
+  return audioBufferToWav(renderedBuffer, true);
 }
 
 // Format seconds into SRT Timestamp (00:00:00,000)

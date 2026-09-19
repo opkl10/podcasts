@@ -39,7 +39,8 @@ export async function POST(req: NextRequest) {
       openaiApiKey,
       provider = 'auto',
       spokenLanguage = 'auto',
-      translateToHebrew = false
+      translateToHebrew = false,
+      highEffortMode = true
     } = body;
 
     const geminiKey = (apiKey && apiKey.trim()) 
@@ -89,7 +90,9 @@ export async function POST(req: NextRequest) {
           formData.append('language', spokenLanguage);
         }
         if (spokenLanguage === 'he' || (!spokenLanguage && !translateToHebrew)) {
-          formData.append('prompt', 'תמלול עברית מלא ומדויק מילה במילה.');
+          formData.append('prompt', highEffortMode 
+            ? 'תמלול עברית מלא ומדויק מילה במילה. פענוח מדויק גם של דיבור עמום, חלש, מהיר או ממלמל, ללא דילוג על מילים.'
+            : 'תמלול עברית מלא ומדויק מילה במילה.');
         }
         formData.append('temperature', '0');
         formData.append('response_format', 'verbose_json');
@@ -122,7 +125,9 @@ export async function POST(req: NextRequest) {
             formData.append('language', spokenLanguage);
           }
           if (spokenLanguage === 'he' || (!spokenLanguage && !translateToHebrew)) {
-            formData.append('prompt', 'תמלול עברית מלא ומדויק מילה במילה.');
+            formData.append('prompt', highEffortMode 
+              ? 'תמלול עברית מלא ומדויק מילה במילה. פענוח מדויק גם של דיבור עמום, חלש, מהיר או ממלמל, ללא דילוג על מילים.'
+              : 'תמלול עברית מלא ומדויק מילה במילה.');
           }
           formData.append('temperature', '0');
 
@@ -200,10 +205,18 @@ export async function POST(req: NextRequest) {
 
     // 2. Google Gemini Audio Understanding Pipeline
     if (geminiKey) {
+      const highEffortInstructions = highEffortMode ? `
+הנחיות התאמצות ודיוק מרבי (High-Effort Deep Acoustic & Contextual Recognition):
+- הקדש מאמץ אקוסטי והקשרי מקסימלי לפענוח קטעים עמומים, דיבור חלש, לחישות, דיבור מהיר, בליעת מילים, מלמול, או רעשי רקע.
+- שחזור פונטי והקשרי (Contextual Phonetic Recovery): אם מילה או הברה אינה נשמעת בצורה חדה או נבלעה על ידי הדובר, נתח את ההקשר התחבירי והנושאי של המשפט ושחזר בדיוק את המילה שהדובר התכוון לומר. לעולם אל תוותר ואל תדלג על אף מילה או משפט!
+- סנכרון תזמונים מדויק: התאם את ה-startTime בדיוק לרגע תחילת הגיית המילה הראשונה, ואת ה-endTime בדיוק לסיום המילה האחרונה בשורת הכתובית.` : '';
+
       const prompt = translateToHebrew ? `
 אתה מודל תמלול ותרגום אודיו מקצועי ומתקדם ביותר לפודקאסטים וסרטוני תוכן.
 האזן ישירות לקובץ האודיו המצורף (שעשוי להיות באנגלית או בכל שפה אחרת).
 תמלל ותרגם את כל מה שנאמר ישירות לעברית טבעית, תקנית, קולחת ומדויקת (Speech-to-Hebrew Subtitle Translation).
+
+${highEffortInstructions}
 
 הנחיות איכות קריטיות:
 1. תרגם 100% ממה שנאמר לעברית. חל איסור להשאיר טקסט באנגלית (למעט שמות מותגים מוכרים במידת הצורך).
@@ -225,8 +238,10 @@ export async function POST(req: NextRequest) {
   }
 ]
 ` : `
-אתה מודל תמלול אודיו מקצועי ומתקדם ביותר לפודקאסטים וסרטונים בעברית.
-האזן ישירות לקובץ האודיו המצורף ותמלל בדיוק של 100% מילה במילה את מה שנאמר בפועל בהקלטה (Verbatim Hebrew Speech-to-Text).
+אתה מודל תמלול אודיו מקצועי ומתקדם ביותר לפודקאסטים וסרטונים בעברית ברמת דיוק פונטית מקסימלית (Deep Verbatim Hebrew Speech-to-Text).
+האזן ישירות לקובץ האודיו המצורף ותמלל בדיוק של 100% מילה במילה את מה שנאמר בפועל בהקלטה.
+
+${highEffortInstructions}
 
 הנחיות איכות קריטיות:
 1. תמלל בדיוק של 100% מילה במילה את כל המילים שנאמרו בהקלטה. חל איסור מוחלט להשמיט אף מילה, אף משפט ואף הברה.
@@ -249,7 +264,9 @@ export async function POST(req: NextRequest) {
 ]
 `;
 
-      const models = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-1.5-flash-8b'];
+      const models = highEffortMode 
+        ? ['gemini-2.0-flash', 'gemini-1.5-pro', 'gemini-1.5-flash'] 
+        : ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-1.5-flash-8b'];
       
       for (const model of models) {
         try {
@@ -275,7 +292,7 @@ export async function POST(req: NextRequest) {
               }
             ],
             generationConfig: {
-              temperature: 0.1
+              temperature: highEffortMode ? 0.05 : 0.1
             }
           };
 

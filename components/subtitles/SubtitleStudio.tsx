@@ -38,7 +38,8 @@ import {
   generateSubtitlesFromTopics,
   sliceAudioBlobIntoChunks,
   blobToBase64,
-  trimAudioBlob
+  trimAudioBlob,
+  extractAndEnhanceAudioSnippet
 } from '@/lib/audioUtils';
 import { 
   Subtitles, 
@@ -374,6 +375,9 @@ export default function SubtitleStudio({
   const [filterSubtitlesByClip, setFilterSubtitlesByClip] = useState<boolean>(!!initialClipId);
   const [isShortsAspect, setIsShortsAspect] = useState<boolean>(!!initialClipId);
   const [isStandaloneMedia, setIsStandaloneMedia] = useState<boolean>(false);
+  const [highEffortMode, setHighEffortMode] = useState<boolean>(true);
+  const [isRefining, setIsRefining] = useState<boolean>(false);
+  const [refiningSubtitleId, setRefiningSubtitleId] = useState<string | null>(null);
 
   // Active Highlight Clip if one is chosen
   const activeClip: HighlightClip | undefined = selectedTranscriptionScope !== 'full'
@@ -730,7 +734,8 @@ export default function SubtitleStudio({
               openaiApiKey: currentSettings.openaiApiKey,
               provider: currentSettings.transcriptionProvider,
               spokenLanguage: spokenLang,
-              translateToHebrew: isTranslatingToHebrew
+              translateToHebrew: isTranslatingToHebrew,
+              highEffortMode
             })
           });
           if (res.ok) {
@@ -894,7 +899,8 @@ export default function SubtitleStudio({
               openaiApiKey: currentSettings.openaiApiKey,
               provider: currentSettings.transcriptionProvider,
               spokenLanguage: spokenLang,
-              translateToHebrew: isTranslatingToHebrew
+              translateToHebrew: isTranslatingToHebrew,
+              highEffortMode
             })
           });
 
@@ -1186,6 +1192,127 @@ export default function SubtitleStudio({
     } catch (err: any) {
       setIsTranslating(false);
       alert('שגיאה בתרגום: ' + err.message);
+    }
+  };
+
+  // 3. AI Subtitle Precision & Grammar/Speech Recovery (דיוק כתוביות בעזרת AI)
+  const handleRefineSubtitles = async () => {
+    if (subtitles.length === 0) {
+      alert('אין כתוביות לדיוק. נא לתמלל או להוסיף כתוביות תחילה.');
+      return;
+    }
+
+    const currentSettings = getAISettings();
+    if (!currentSettings.geminiApiKey?.trim() && !currentSettings.openaiApiKey?.trim()) {
+      setIsAIModalOpen(true);
+      return;
+    }
+
+    const targets = selectedIds.length > 0
+      ? subtitles.filter(s => selectedIds.includes(s.id))
+      : subtitles;
+
+    setIsRefining(true);
+    setTranscribeStatus(`מנתח ומדייק ${targets.length} כתוביות בעזרת AI...`);
+
+    try {
+      const res = await fetch('/api/ai/refine-subtitles', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          subtitles: targets,
+          contextHint: episode.title || activeClip?.title || '',
+          apiKey: currentSettings.geminiApiKey,
+          openaiApiKey: currentSettings.openaiApiKey
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.subtitles && Array.isArray(data.subtitles)) {
+          const refinedMap = new Map<string, string>();
+          data.subtitles.forEach((s: SubtitleItem) => {
+            if (s.id && s.text) refinedMap.set(s.id, s.text);
+          });
+
+          const updatedSubs = subtitles.map(s => {
+            const newText = refinedMap.get(s.id);
+            return newText ? { ...s, text: newText } : s;
+          });
+
+          setSubtitles(updatedSubs);
+          const updated = { ...episode, subtitles: updatedSubs };
+          if (!updated.id.startsWith('standalone_')) saveEpisode(updated);
+          if (onUpdateEpisode) onUpdateEpisode(updated);
+
+          alert(`🎯 דיוק הכתוביות הושלם בהצלחה!\nשופצו ודויקו ${data.changesCount || 0} שורות כתוביות לפיסוק ודיוק מקסימלי.`);
+        }
+      } else {
+        const errJson = await res.json().catch(() => ({}));
+        alert(`שגיאה בדיוק כתוביות: ${errJson.error || 'נסה שוב'}`);
+      }
+    } catch (err: any) {
+      console.error('Refine error:', err);
+      alert('שגיאת רשת בדיוק כתוביות.');
+    } finally {
+      setIsRefining(false);
+      setTranscribeStatus('');
+    }
+  };
+
+  // 4. Deep decode for a single unclear/muffled subtitle item (התאמץ לפענח שוב קטע זה)
+  const handleDeepDecodeSubtitle = async (sub: SubtitleItem) => {
+    const currentSettings = getAISettings();
+    if (!currentSettings.geminiApiKey?.trim() && !currentSettings.openaiApiKey?.trim()) {
+      setIsAIModalOpen(true);
+      return;
+    }
+
+    const audioBlob = await resolveMediaBlob();
+    if (!audioBlob) {
+      alert('לא נמצא קובץ וידאו או אודיו לפענוח מקטע זה.');
+      return;
+    }
+
+    setRefiningSubtitleId(sub.id);
+    try {
+      const snippetBlob = await extractAndEnhanceAudioSnippet(audioBlob, sub.startTime, sub.endTime);
+      const snippetBase64 = await blobToBase64(snippetBlob);
+
+      const res = await fetch('/api/ai/transcribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          audioBase64: snippetBase64,
+          mimeType: 'audio/wav',
+          wordsPerLine: 8,
+          duration: Math.max(1, sub.endTime - sub.startTime),
+          apiKey: currentSettings.geminiApiKey,
+          openaiApiKey: currentSettings.openaiApiKey,
+          provider: currentSettings.transcriptionProvider,
+          highEffortMode: true
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.subtitles && Array.isArray(data.subtitles) && data.subtitles.length > 0) {
+          const newText = data.subtitles.map((s: any) => s.text).join(' ').trim();
+          if (newText) {
+            const updatedSubs = subtitles.map(s => s.id === sub.id ? { ...s, text: cleanAndPolishHebrewSubtitleText(newText) } : s);
+            setSubtitles(updatedSubs);
+            const updated = { ...episode, subtitles: updatedSubs };
+            if (!updated.id.startsWith('standalone_')) saveEpisode(updated);
+            if (onUpdateEpisode) onUpdateEpisode(updated);
+          }
+        }
+      } else {
+        alert('לא ניתן היה לפענח שוב קטע זה. נסו שנית או ערכו ידנית.');
+      }
+    } catch (e) {
+      console.warn('Deep decode error:', e);
+    } finally {
+      setRefiningSubtitleId(null);
     }
   };
 
@@ -2046,6 +2173,17 @@ export default function SubtitleStudio({
             >
               <Globe className={`w-3.5 h-3.5 text-blue-400 ${isTranslating ? 'animate-spin' : ''}`} />
               <span>{isTranslating ? 'מתרגם...' : 'תרגם כתוביות (AI)'}</span>
+            </button>
+
+            {/* AI Precision & Subtitle Refinement Button */}
+            <button
+              onClick={handleRefineSubtitles}
+              disabled={isRefining || subtitles.length === 0}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 hover:text-white border border-purple-500/40 text-xs font-bold transition-all active:scale-98 disabled:opacity-40 shadow-sm"
+              title="דייק ותקן שגיאות שמיעה, מילים עמומות וזרימת משפטים בעזרת AI"
+            >
+              <Sparkles className={`w-3.5 h-3.5 text-purple-400 ${isRefining ? 'animate-spin' : ''}`} />
+              <span>{isRefining ? 'מדייק כתוביות...' : '🎯 דייק כתוביות (AI)'}</span>
             </button>
 
             {/* AI Keys Settings Modal Trigger */}
@@ -3170,6 +3308,18 @@ export default function SubtitleStudio({
                                 <Sparkles className="w-3 h-3" />
                                 <span>לטש</span>
                               </button>
+
+                              {/* Deep Effort / Re-Decode Unclear Subtitle */}
+                              <button
+                                type="button"
+                                onClick={() => handleDeepDecodeSubtitle(sub)}
+                                disabled={refiningSubtitleId === sub.id}
+                                className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 font-semibold border border-amber-500/30 transition-colors"
+                                title="התאמץ לפענח שוב קטע שמע זה בדיוק מירבי בעזרת AI והגברה אקוסטית"
+                              >
+                                <Wand2 className={`w-3 h-3 text-amber-400 ${refiningSubtitleId === sub.id ? 'animate-spin' : ''}`} />
+                                <span>{refiningSubtitleId === sub.id ? 'מפענח...' : '🎯 פענח שוב'}</span>
+                              </button>
                             </div>
 
                             <div className="text-slate-500 font-mono">
@@ -3190,6 +3340,37 @@ export default function SubtitleStudio({
                         <p className="text-xs text-slate-400">
                           בחרו את הדרך המועדפת עליכם ליצירת כתוביות מסונכרנות ומעוצבות:
                         </p>
+                      </div>
+
+                      {/* High-Effort Mode Toggle Banner */}
+                      <div className="flex items-center justify-between p-3 rounded-2xl bg-slate-950/80 border border-purple-500/30 text-right max-w-lg mx-auto shadow-inner">
+                        <div className="flex items-center gap-2.5">
+                          <div className={`p-2 rounded-xl transition-all ${highEffortMode ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' : 'bg-slate-900 text-slate-500 border border-slate-800'}`}>
+                            <Sparkles className="w-4 h-4" />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-xs font-bold text-white">מצב התאמצות מקסימלית (High-Effort AI)</span>
+                              <span className="px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 text-[9px] font-black border border-amber-500/30">פעיל</span>
+                            </div>
+                            <p className="text-[10px] text-slate-400 mt-0.5">
+                              הגברה אקוסטית ושחזור פונטי של דיבור עמום, חלש, מהיר או ממלמל
+                            </p>
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => setHighEffortMode(!highEffortMode)}
+                          className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all flex items-center gap-1.5 shrink-0 ${
+                            highEffortMode
+                              ? 'bg-amber-600 text-white shadow-lg shadow-amber-600/30'
+                              : 'bg-slate-800 text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          <span className={`w-2 h-2 rounded-full ${highEffortMode ? 'bg-white animate-pulse' : 'bg-slate-500'}`} />
+                          <span>{highEffortMode ? 'מופעל' : 'כבוי'}</span>
+                        </button>
                       </div>
 
                       {/* Primary 1-Click: Transcribe & Translate English/Foreign Video to Hebrew */}
