@@ -1,6 +1,32 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { smartRebalanceSubtitles, buildSubtitlesFromWhisperWords, splitTextIntoPacedSubtitles, cleanAndPolishHebrewSubtitleText } from '@/lib/audioUtils';
 
+// Free Google Translate fallback (fast, zero API key required)
+async function freeTranslateText(text: string, sourceLang: string, targetLang: string): Promise<string> {
+  const clean = text.trim();
+  if (!clean) return '';
+  try {
+    const sl = sourceLang === 'auto' ? 'auto' : sourceLang;
+    const tl = targetLang;
+    const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${encodeURIComponent(sl)}&tl=${encodeURIComponent(tl)}&dt=t&q=${encodeURIComponent(clean)}`;
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)'
+      }
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data) && Array.isArray(data[0])) {
+        const translated = data[0].map((chunk: any) => chunk[0] || '').join('').trim();
+        if (translated) return translated;
+      }
+    }
+  } catch (e) {
+    console.warn('Free translation fallback error:', e);
+  }
+  return clean;
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -11,7 +37,9 @@ export async function POST(req: NextRequest) {
       duration = 60,
       apiKey, 
       openaiApiKey,
-      provider = 'auto' 
+      provider = 'auto',
+      spokenLanguage = 'auto',
+      translateToHebrew = false
     } = body;
 
     const geminiKey = (apiKey && apiKey.trim()) 
@@ -47,14 +75,22 @@ export async function POST(req: NextRequest) {
     if ((provider === 'openai' || (!geminiKey && openaiKey)) && openaiKey) {
       try {
         const audioBuffer = Buffer.from(cleanBase64, 'base64');
-        const fileBlob = new Blob([audioBuffer], { type: 'audio/wav' });
+        const fileExt = sanitizedMime.includes('mp4') ? 'mp4' 
+          : sanitizedMime.includes('webm') ? 'webm' 
+          : sanitizedMime.includes('mpeg') || sanitizedMime.includes('mp3') ? 'mp3' 
+          : 'wav';
+        const fileBlob = new Blob([audioBuffer], { type: sanitizedMime });
 
         // Attempt A: Detailed Word-Level Verbose JSON
         let formData = new FormData();
-        formData.append('file', fileBlob, 'recording.wav');
+        formData.append('file', fileBlob, `recording.${fileExt}`);
         formData.append('model', 'whisper-1');
-        formData.append('language', 'he');
-        formData.append('prompt', 'תמלול עברית מלא ומדויק מילה במילה.');
+        if (spokenLanguage && spokenLanguage !== 'auto') {
+          formData.append('language', spokenLanguage);
+        }
+        if (spokenLanguage === 'he' || (!spokenLanguage && !translateToHebrew)) {
+          formData.append('prompt', 'תמלול עברית מלא ומדויק מילה במילה.');
+        }
         formData.append('temperature', '0');
         formData.append('response_format', 'verbose_json');
         formData.append('timestamp_granularities[]', 'word');
@@ -80,10 +116,14 @@ export async function POST(req: NextRequest) {
 
           // Retry with simple JSON format
           formData = new FormData();
-          formData.append('file', fileBlob, 'recording.wav');
+          formData.append('file', fileBlob, `recording.${fileExt}`);
           formData.append('model', 'whisper-1');
-          formData.append('language', 'he');
-          formData.append('prompt', 'תמלול עברית מלא ומדויק מילה במילה.');
+          if (spokenLanguage && spokenLanguage !== 'auto') {
+            formData.append('language', spokenLanguage);
+          }
+          if (spokenLanguage === 'he' || (!spokenLanguage && !translateToHebrew)) {
+            formData.append('prompt', 'תמלול עברית מלא ומדויק מילה במילה.');
+          }
           formData.append('temperature', '0');
 
           whisperRes = await fetch('https://api.openai.com/v1/audio/transcriptions', {
@@ -119,10 +159,19 @@ export async function POST(req: NextRequest) {
           }
 
           if (formattedSubtitles.length > 0) {
+            // If user requested Hebrew translation and output is English/other, translate each subtitle
+            if (translateToHebrew) {
+              for (let k = 0; k < formattedSubtitles.length; k++) {
+                if (/[a-zA-Z]/.test(formattedSubtitles[k].text)) {
+                  formattedSubtitles[k].text = await freeTranslateText(formattedSubtitles[k].text, spokenLanguage || 'auto', 'he');
+                }
+              }
+            }
+
             return NextResponse.json({
               success: true,
               subtitles: formattedSubtitles,
-              source: 'OpenAI Whisper (דיוק אקוסטי מילה במילה)'
+              source: translateToHebrew ? 'OpenAI Whisper + תרגום לעברית' : 'OpenAI Whisper (דיוק אקוסטי מילה במילה)'
             });
           }
         } else {
@@ -151,7 +200,31 @@ export async function POST(req: NextRequest) {
 
     // 2. Google Gemini Audio Understanding Pipeline
     if (geminiKey) {
-      const prompt = `
+      const prompt = translateToHebrew ? `
+אתה מודל תמלול ותרגום אודיו מקצועי ומתקדם ביותר לפודקאסטים וסרטוני תוכן.
+האזן ישירות לקובץ האודיו המצורף (שעשוי להיות באנגלית או בכל שפה אחרת).
+תמלל ותרגם את כל מה שנאמר ישירות לעברית טבעית, תקנית, קולחת ומדויקת (Speech-to-Hebrew Subtitle Translation).
+
+הנחיות איכות קריטיות:
+1. תרגם 100% ממה שנאמר לעברית. חל איסור להשאיר טקסט באנגלית (למעט שמות מותגים מוכרים במידת הצורך).
+2. חלק לשורות כתוביות קצרות וקצביות של ${wordsPerLine} עד ${wordsPerLine + 2} מילים בכל שורה.
+3. ספק תזמון מדויק בשניות (startTime, endTime) לכל שורת כתובית שתואם בדיוק את זמן הדיבור באודיו (משך קטע זה: ${duration} שניות).
+4. הקפד על עברית תקנית, פיסוק מדויק וללא קיצורים.
+
+החזר אך ורק מערך JSON תקין במבנה הבא:
+[
+  {
+    "startTime": 1.2,
+    "endTime": 3.8,
+    "text": "שלום לכולם וברוכים הבאים"
+  },
+  {
+    "startTime": 4.1,
+    "endTime": 6.9,
+    "text": "היום בסרטון נדבר על הנושא המרכזי"
+  }
+]
+` : `
 אתה מודל תמלול אודיו מקצועי ומתקדם ביותר לפודקאסטים וסרטונים בעברית.
 האזן ישירות לקובץ האודיו המצורף ותמלל בדיוק של 100% מילה במילה את מה שנאמר בפועל בהקלטה (Verbatim Hebrew Speech-to-Text).
 
@@ -236,24 +309,38 @@ export async function POST(req: NextRequest) {
                 : (rawSubtitles?.subtitles || rawSubtitles?.items || []);
 
               if (subsList.length > 0) {
-                const formatted = subsList.map((s: any, idx: number) => ({
+                let formatted = subsList.map((s: any, idx: number) => ({
                   id: `sub_spoken_${Date.now()}_${idx}`,
                   startTime: Number(Number(s.startTime || s.start || idx * 3).toFixed(2)),
                   endTime: Number(Number(s.endTime || s.end || (idx + 1) * 3).toFixed(2)),
                   text: String(s.text || s.content || '').trim()
                 })).filter((s: any) => s.text.length > 0);
 
+                if (translateToHebrew) {
+                  for (let k = 0; k < formatted.length; k++) {
+                    if (/[a-zA-Z]/.test(formatted[k].text)) {
+                      formatted[k].text = await freeTranslateText(formatted[k].text, spokenLanguage || 'auto', 'he');
+                    }
+                  }
+                }
+
                 const rebalanced = smartRebalanceSubtitles(formatted, wordsPerLine, 1);
 
                 return NextResponse.json({
                   success: true,
                   subtitles: rebalanced,
-                  source: `Google Gemini Audio Understanding (${model})`
+                  source: translateToHebrew 
+                    ? `Google Gemini תרגום לעברית (${model})` 
+                    : `Google Gemini Audio Understanding (${model})`
                 });
               }
 
               // 2. Verbatim Plain Text Fallback
-              const plainHebrew = cleanAndPolishHebrewSubtitleText(cleanText);
+              let plainTextToProcess = cleanText;
+              if (translateToHebrew && /[a-zA-Z]/.test(plainTextToProcess)) {
+                plainTextToProcess = await freeTranslateText(plainTextToProcess, spokenLanguage || 'auto', 'he');
+              }
+              const plainHebrew = cleanAndPolishHebrewSubtitleText(plainTextToProcess);
               if (plainHebrew.length > 0) {
                 const pacedSubtitles = splitTextIntoPacedSubtitles(
                   plainHebrew,
@@ -267,7 +354,9 @@ export async function POST(req: NextRequest) {
                   return NextResponse.json({
                     success: true,
                     subtitles: pacedSubtitles,
-                    source: `Google Gemini Audio Speech-to-Text (${model})`
+                    source: translateToHebrew 
+                      ? `Google Gemini תרגום לעברית (${model})` 
+                      : `Google Gemini Audio Speech-to-Text (${model})`
                   });
                 }
               }

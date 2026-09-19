@@ -359,8 +359,16 @@ export default function SubtitleStudio({
   // Video & Playback State
   const videoRef = useRef<HTMLVideoElement>(null);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [currentMediaBlob, setCurrentMediaBlob] = useState<Blob | File | null>(initialMediaFile || null);
   const [currentTime, setCurrentTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
+
+  // Synchronize initialMediaFile if prop changes
+  useEffect(() => {
+    if (initialMediaFile) {
+      setCurrentMediaBlob(initialMediaFile);
+    }
+  }, [initialMediaFile]);
 
   // AI Providers & API Keys State (Gemini & ElevenLabs)
   const [isAIModalOpen, setIsAIModalOpen] = useState(false);
@@ -498,6 +506,7 @@ export default function SubtitleStudio({
       const loadMedia = async () => {
         // Direct media file or url passed via props
         if (initialMediaFile) {
+          setCurrentMediaBlob(initialMediaFile);
           setVideoUrl(URL.createObjectURL(initialMediaFile));
           setIsStandaloneMedia(true);
           return;
@@ -549,8 +558,48 @@ export default function SubtitleStudio({
 
   if (!isOpen) return null;
 
-  // 1. Robust Chunked AI Transcription Engine (Supports 20+, 60+, 120+ minutes flawlessly!)
-  const handleTranscribeRecordedAudio = async () => {
+  // Safely resolve the media blob from any available source (uploaded file, blob URL, or recording)
+  const resolveMediaBlob = async (): Promise<Blob | null> => {
+    if (currentMediaBlob) return currentMediaBlob;
+    if (initialMediaFile) {
+      setCurrentMediaBlob(initialMediaFile);
+      return initialMediaFile;
+    }
+    if (videoUrl) {
+      try {
+        const res = await fetch(videoUrl);
+        if (res.ok) {
+          const b = await res.blob();
+          setCurrentMediaBlob(b);
+          return b;
+        }
+      } catch (e) {
+        console.warn('resolveMediaBlob fetch failed:', e);
+      }
+    }
+    if (episode.recording?.audioBlobKey) {
+      const b = await getMediaBlob(episode.recording.audioBlobKey);
+      if (b) return b;
+    }
+    if (episode.recording?.videoBlobKey) {
+      const b = await getMediaBlob(episode.recording.videoBlobKey);
+      if (b) return b;
+    }
+    const emerg = await getMediaBlob(`emergency_rec_${episode.id}`);
+    if (emerg) return emerg;
+    const found = await findMediaBlobForEpisode(episode.id);
+    if (found && found.blob) return found.blob;
+    return null;
+  };
+
+  // 1. Robust Chunked AI Transcription & Translation Engine (Supports external videos, 20+, 60+, 120+ minutes)
+  const handleTranscribeRecordedAudio = async (options?: {
+    spokenLanguage?: string;
+    translateToHebrew?: boolean;
+  }) => {
+    const isTranslatingToHebrew = options?.translateToHebrew ?? false;
+    const spokenLang = options?.spokenLanguage || 'auto';
+
     const currentSettings = getAISettings();
     if (!currentSettings.geminiApiKey?.trim() && !currentSettings.openaiApiKey?.trim()) {
       setIsAIModalOpen(true);
@@ -558,34 +607,16 @@ export default function SubtitleStudio({
     }
 
     setIsTranscribing(true);
-    setTranscribeStatus('מאתר את קובץ האודיו המוקלט של הפרק...');
+    setTranscribeStatus(isTranslatingToHebrew 
+      ? 'מאתר את קובץ הווידאו/השמע לצורך תמלול ותרגום לעברית...'
+      : 'מאתר את קובץ האודיו המוקלט של הפרק...');
     setTranscribeProgress(null);
 
     try {
-      let audioBlob: Blob | null = null;
-
-      // 1. Try master audio track
-      if (episode.recording?.audioBlobKey) {
-        audioBlob = await getMediaBlob(episode.recording.audioBlobKey);
-      }
-      // 2. Try main video track
-      if (!audioBlob && episode.recording?.videoBlobKey) {
-        audioBlob = await getMediaBlob(episode.recording.videoBlobKey);
-      }
-      // 3. Try crash recovery emergency blob
-      if (!audioBlob) {
-        audioBlob = await getMediaBlob(`emergency_rec_${episode.id}`);
-      }
-      // 4. Try deep scan for episode blob
-      if (!audioBlob) {
-        const found = await findMediaBlobForEpisode(episode.id);
-        if (found && found.blob) {
-          audioBlob = found.blob;
-        }
-      }
+      const audioBlob = await resolveMediaBlob();
 
       if (!audioBlob) {
-        alert('לא נמצא קובץ הקלטה שמור עבור פרק זה. נא להקליט את הפרק באולפן או להעלות קובץ שמע מהמחשב לפני הפעלת תמלול.');
+        alert('לא נמצא קובץ וידאו או הקלטה. נא להעלות קובץ וידאו/אודיו מהמחשב או להקליט באולפן לפני הפעלת התמלול.');
         setIsTranscribing(false);
         return;
       }
@@ -603,7 +634,9 @@ export default function SubtitleStudio({
         }
 
         const effectiveBlob = clipBlob || audioBlob;
-        setTranscribeStatus(`מתמלל את הקטע "${activeClip.title}" (${Math.round(clipDuration)} שנ׳) עם AI...`);
+        setTranscribeStatus(isTranslatingToHebrew
+          ? `מתמלל ומתרגם לעברית את הקטע "${activeClip.title}" (${Math.round(clipDuration)} שנ׳) עם AI...`
+          : `מתמלל את הקטע "${activeClip.title}" (${Math.round(clipDuration)} שנ׳) עם AI...`);
         
         let clipSubs: SubtitleItem[] = [];
         const clipBase64 = await blobToBase64(effectiveBlob);
@@ -616,12 +649,14 @@ export default function SubtitleStudio({
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               audioBase64: clipBase64,
-              mimeType: 'audio/wav',
+              mimeType: effectiveBlob.type || 'audio/wav',
               wordsPerLine,
               duration: clipDuration,
               apiKey: currentSettings.geminiApiKey,
               openaiApiKey: currentSettings.openaiApiKey,
-              provider: currentSettings.transcriptionProvider
+              provider: currentSettings.transcriptionProvider,
+              spokenLanguage: spokenLang,
+              translateToHebrew: isTranslatingToHebrew
             })
           });
           if (res.ok) {
@@ -637,7 +672,12 @@ export default function SubtitleStudio({
         // Attempt 2: Direct Gemini
         if (clipSubs.length === 0 && currentSettings.geminiApiKey?.trim()) {
           try {
-            const geminiPrompt = `אתה מודל תמלול אודיו מקצועי לפודקאסטים בעברית.
+            const geminiPrompt = isTranslatingToHebrew
+              ? `אתה מודל תמלול ותרגום אודיו מקצועי לסרטונים ופודקאסטים.
+האזן ישירות לאודיו (באנגלית או בכל שפה אחרת), תמלל ותרגם את כל מה שנאמר ישירות לעברית טבעית, שוטפת ומדויקת.
+חלק לכתוביות קצרות של ${wordsPerLine} עד ${wordsPerLine + 2} מילים בשורה, עם תזמונים (startTime, endTime) בשניות (משך קטע זה: ${clipDuration} שניות).
+החזר אך ורק מערך JSON תקין: [{"startTime": 0.5, "endTime": 3.0, "text": "תרגום מדויק לעברית"}]`
+              : `אתה מודל תמלול אודיו מקצועי לפודקאסטים בעברית.
 תמלל בדיוק של 100% מילה במילה את הדיבור באודיו לעברית (Verbatim Hebrew Speech-to-Text).
 חלק לכתוביות קצרות של ${wordsPerLine} עד ${wordsPerLine + 2} מילים בשורה, עם תזמונים (startTime, endTime) בשניות (משך קטע זה: ${clipDuration} שניות).
 החזר אך ורק מערך JSON תקין: [{"startTime": 0.5, "endTime": 3.0, "text": "טקסט שנאמר"}]`;
@@ -675,6 +715,29 @@ export default function SubtitleStudio({
           clipSubs = splitTextIntoPacedSubtitles(fallbackText, wordsPerLine, 1, 0, clipDuration);
         }
 
+        // If translateToHebrew was requested and any subtitle still has English, post-translate
+        if (isTranslatingToHebrew && clipSubs.some(s => /[a-zA-Z]/.test(s.text))) {
+          try {
+            const tRes = await fetch('/api/ai/translate-subtitles', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                subtitles: clipSubs,
+                targetLanguage: 'he',
+                sourceLanguage: spokenLang || 'auto',
+                apiKey: currentSettings.geminiApiKey,
+                openaiApiKey: currentSettings.openaiApiKey
+              })
+            });
+            if (tRes.ok) {
+              const tData = await tRes.json();
+              if (tData.subtitles && Array.isArray(tData.subtitles) && tData.subtitles.length > 0) {
+                clipSubs = tData.subtitles;
+              }
+            }
+          } catch (e) {}
+        }
+
         // Normalize and offset timestamps to seamlessly match episode timeline
         const offsetSubs: SubtitleItem[] = clipSubs.map((s, idx) => {
           const relStart = typeof s.startTime === 'number' ? s.startTime : idx * 3;
@@ -693,7 +756,9 @@ export default function SubtitleStudio({
 
         setSubtitles(merged);
         const updated = { ...episode, subtitles: merged };
-        saveEpisode(updated);
+        if (!updated.id.startsWith('standalone_')) {
+          saveEpisode(updated);
+        }
         if (onUpdateEpisode) onUpdateEpisode(updated);
 
         setIsTranscribing(false);
@@ -705,11 +770,16 @@ export default function SubtitleStudio({
           setCurrentTime(activeClip.startTime);
         }
 
-        alert(`✨ תמלול הקטע "${activeClip.title}" הושלם בהצלחה תוך שניות! נוצרו ${offsetSubs.length} כתוביות מדויקות לקטע זה.`);
+        const clipMsg = isTranslatingToHebrew
+          ? `✨ תמלול ותרגום הקטע "${activeClip.title}" לעברית הושלם בהצלחה! נוצרו ${offsetSubs.length} כתוביות בעברית.`
+          : `✨ תמלול הקטע "${activeClip.title}" הושלם בהצלחה תוך שניות! נוצרו ${offsetSubs.length} כתוביות מדויקות לקטע זה.`;
+        alert(clipMsg);
         return;
       }
 
-      setTranscribeStatus('מנתח ומחלק את ההקלטה למקטעי עיבוד מדויקים של 2 דקות (תמיכה מלאה בפרקים ארוכים)...');
+      setTranscribeStatus(isTranslatingToHebrew
+        ? 'מנתח ומחלק את הווידאו/השמע למקטעי עיבוד של 2 דקות לתמלול ותרגום לעברית...'
+        : 'מנתח ומחלק את ההקלטה למקטעי עיבוד מדויקים של 2 דקות (תמיכה מלאה בפרקים ארוכים)...');
       
       // Slicing into 120s (2-minute) chunks - each chunk is safely ~3.8MB
       const chunks = await sliceAudioBlobIntoChunks(audioBlob, 120);
@@ -728,7 +798,9 @@ export default function SubtitleStudio({
         const chunk = chunks[i];
         const pct = Math.round(((i + 1) / totalChunks) * 100);
         setTranscribeProgress({ current: i + 1, total: totalChunks });
-        setTranscribeStatus(`מתמלל מקטע ${i + 1} מתוך ${totalChunks} (${pct}%)... [${formatSrtTimestamp(chunk.startSec).slice(3, 8)} - ${formatSrtTimestamp(chunk.endSec).slice(3, 8)}]`);
+        setTranscribeStatus(isTranslatingToHebrew
+          ? `מתמלל ומתרגם לעברית מקטע ${i + 1} מתוך ${totalChunks} (${pct}%)... [${formatSrtTimestamp(chunk.startSec).slice(3, 8)} - ${formatSrtTimestamp(chunk.endSec).slice(3, 8)}]`
+          : `מתמלל מקטע ${i + 1} מתוך ${totalChunks} (${pct}%)... [${formatSrtTimestamp(chunk.startSec).slice(3, 8)} - ${formatSrtTimestamp(chunk.endSec).slice(3, 8)}]`);
 
         let chunkSubs: SubtitleItem[] = [];
         const chunkBase64 = await blobToBase64(chunk.blob);
@@ -741,12 +813,14 @@ export default function SubtitleStudio({
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               audioBase64: chunkBase64,
-              mimeType: 'audio/wav',
+              mimeType: chunk.blob.type || audioBlob.type || 'audio/wav',
               wordsPerLine,
               duration: chunk.durationSec,
               apiKey: currentSettings.geminiApiKey,
               openaiApiKey: currentSettings.openaiApiKey,
-              provider: currentSettings.transcriptionProvider
+              provider: currentSettings.transcriptionProvider,
+              spokenLanguage: spokenLang,
+              translateToHebrew: isTranslatingToHebrew
             })
           });
 
@@ -763,7 +837,12 @@ export default function SubtitleStudio({
         // Attempt B: Direct Browser Gemini Pipeline (if server route was bypassed)
         if (chunkSubs.length === 0 && currentSettings.geminiApiKey?.trim()) {
           try {
-            const geminiPrompt = `אתה מודל תמלול אודיו מקצועי לפודקאסטים בעברית.
+            const geminiPrompt = isTranslatingToHebrew
+              ? `אתה מודל תמלול ותרגום אודיו מקצועי לסרטונים ופודקאסטים.
+האזן ישירות לאודיו (באנגלית או בכל שפה אחרת), תמלל ותרגם את כל מה שנאמר ישירות לעברית טבעית, שוטפת ומדויקת.
+חלק לכתוביות קצרות של ${wordsPerLine} עד ${wordsPerLine + 2} מילים בשורה, עם תזמונים (startTime, endTime) בשניות (משך מקטע זה: ${chunk.durationSec} שניות).
+החזר אך ורק מערך JSON תקין: [{"startTime": 0.5, "endTime": 3.0, "text": "תרגום מדויק לעברית"}]`
+              : `אתה מודל תמלול אודיו מקצועי לפודקאסטים בעברית.
 תמלל בדיוק של 100% מילה במילה את הדיבור באודיו לעברית (Verbatim Hebrew Speech-to-Text).
 חלק לכתוביות קצרות של ${wordsPerLine} עד ${wordsPerLine + 2} מילים בשורה, עם תזמונים (startTime, endTime) בשניות (משך מקטע זה: ${chunk.durationSec} שניות).
 החזר אך ורק מערך JSON תקין: [{"startTime": 0.5, "endTime": 3.0, "text": "טקסט שנאמר"}]`;
@@ -803,8 +882,12 @@ export default function SubtitleStudio({
             const formData = new FormData();
             formData.append('file', chunk.blob, `chunk_${i}.wav`);
             formData.append('model', 'whisper-1');
-            formData.append('language', 'he');
-            formData.append('prompt', 'תמלול עברית מלא ומדויק מילה במילה.');
+            if (spokenLang && spokenLang !== 'auto') {
+              formData.append('language', spokenLang);
+            }
+            if (spokenLang === 'he' || (!spokenLang && !isTranslatingToHebrew)) {
+              formData.append('prompt', 'תמלול עברית מלא ומדויק מילה במילה.');
+            }
             formData.append('temperature', '0');
             formData.append('response_format', 'verbose_json');
             formData.append('timestamp_granularities[]', 'word');
@@ -848,14 +931,46 @@ export default function SubtitleStudio({
       }
 
       if (accumulatedSubtitles.length > 0) {
+        // If Hebrew translation was requested and non-Hebrew characters exist, run final translation pass
+        if (isTranslatingToHebrew && accumulatedSubtitles.some(s => /[a-zA-Z]/.test(s.text))) {
+          try {
+            setTranscribeStatus('משלים תרגום סופי לעברית...');
+            const tRes = await fetch('/api/ai/translate-subtitles', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                subtitles: accumulatedSubtitles,
+                targetLanguage: 'he',
+                sourceLanguage: spokenLang || 'auto',
+                apiKey: currentSettings.geminiApiKey,
+                openaiApiKey: currentSettings.openaiApiKey
+              })
+            });
+            if (tRes.ok) {
+              const tData = await tRes.json();
+              if (tData.subtitles && Array.isArray(tData.subtitles) && tData.subtitles.length > 0) {
+                accumulatedSubtitles = tData.subtitles;
+              }
+            }
+          } catch (tErr) {
+            console.warn('Post-translation pass error:', tErr);
+          }
+        }
+
         const sorted = accumulatedSubtitles.sort((a, b) => a.startTime - b.startTime);
         setSubtitles(sorted);
         const updated: Episode = { ...episode, subtitles: sorted };
-        saveEpisode(updated);
+        if (!updated.id.startsWith('standalone_')) {
+          saveEpisode(updated);
+        }
         if (onUpdateEpisode) onUpdateEpisode(updated);
         setIsTranscribing(false);
         setTranscribeProgress(null);
-        alert(`התמלול הושלם בהצלחה! נוצרו ${sorted.length} כתוביות מסונכרנות על פני כל ${totalChunks} המקטעים של הפרק.`);
+
+        const successAlert = isTranslatingToHebrew
+          ? `✨ תמלול ותרגום הסרטון לעברית הושלם בהצלחה! נוצרו ${sorted.length} כתוביות בעברית עם סנכרון תזמונים מלא.`
+          : `✨ התמלול הושלם בהצלחה! נוצרו ${sorted.length} כתוביות מסונכרנות על פני כל ${totalChunks} המקטעים של הפרק.`;
+        alert(successAlert);
         return;
       }
 
@@ -866,7 +981,9 @@ export default function SubtitleStudio({
         if (generated.length > 0) {
           setSubtitles(generated);
           const updated: Episode = { ...episode, subtitles: generated };
-          saveEpisode(updated);
+          if (!updated.id.startsWith('standalone_')) {
+            saveEpisode(updated);
+          }
           if (onUpdateEpisode) onUpdateEpisode(updated);
           setIsTranscribing(false);
           setTranscribeProgress(null);
@@ -878,7 +995,7 @@ export default function SubtitleStudio({
       setIsTranscribing(false);
       setTranscribeProgress(null);
       setIsAIModalOpen(true);
-      alert('לא התקבל תמלול. נא לבדוק את מפתח ה-API בהגדרות ה-AI ולוודא שההקלטה מכילה דיבור ברור.');
+      alert('לא התקבל תמלול. נא לוודא שמוגדר מפתח API פעיל בהגדרות ה-AI ולוודא שהקובץ מכיל דיבור ברור.');
     } catch (err: any) {
       setIsTranscribing(false);
       setTranscribeProgress(null);
@@ -1072,6 +1189,7 @@ export default function SubtitleStudio({
   const handleUploadDirectAudioForTranscribe = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    setCurrentMediaBlob(file);
 
     try {
       setTranscribeStatus('טוען ושומר את קובץ השמע...');
@@ -1235,6 +1353,7 @@ export default function SubtitleStudio({
   const handleDirectMediaUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    setCurrentMediaBlob(file);
     const url = URL.createObjectURL(file);
     setVideoUrl(url);
     setIsStandaloneMedia(true);
@@ -1791,7 +1910,7 @@ export default function SubtitleStudio({
 
             {/* AI Transcribe Spoken Audio Button */}
             <button
-              onClick={handleTranscribeRecordedAudio}
+              onClick={() => handleTranscribeRecordedAudio()}
               disabled={isTranscribing}
               className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold text-white shadow-lg transition-all active:scale-98 disabled:opacity-50 ${
                 activeClip 
@@ -1847,9 +1966,9 @@ export default function SubtitleStudio({
             {/* AI Subtitle Translate Button */}
             <button
               onClick={() => setIsTranslateModalOpen(true)}
-              disabled={subtitles.length === 0 || isTranslating}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 hover:text-white border border-blue-500/40 text-xs font-bold transition-all active:scale-98 disabled:opacity-40"
-              title="תרגם את כל הכתוביות לשפה אחרת (אנגלית, ספרדית, צרפתית, רוסית, ערבית וכו') באמצעות AI"
+              disabled={isTranslating}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 hover:text-white border border-blue-500/40 text-xs font-bold transition-all active:scale-98 disabled:opacity-40 shadow-sm"
+              title={subtitles.length > 0 ? "תרגם את הכתוביות לשפה אחרת (עברית, אנגלית וכו') באמצעות AI" : "תמלול ותרגום סרטון חיצוני לעברית באמצעות AI"}
             >
               <Globe className={`w-3.5 h-3.5 text-blue-400 ${isTranslating ? 'animate-spin' : ''}`} />
               <span>{isTranslating ? 'מתרגם...' : 'תרגם כתוביות (AI)'}</span>
@@ -2700,7 +2819,7 @@ export default function SubtitleStudio({
                           </p>
                           <button
                             type="button"
-                            onClick={handleTranscribeRecordedAudio}
+                            onClick={() => handleTranscribeRecordedAudio()}
                             className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-rose-600 text-white font-bold text-xs shadow-lg"
                           >
                             ✨ תמלל קטע זה עכשיו עם AI
@@ -2975,12 +3094,40 @@ export default function SubtitleStudio({
                         </p>
                       </div>
 
+                      {/* Primary 1-Click: Transcribe & Translate English/Foreign Video to Hebrew */}
+                      <button
+                        type="button"
+                        onClick={() => handleTranscribeRecordedAudio({ spokenLanguage: 'auto', translateToHebrew: true })}
+                        disabled={isTranscribing}
+                        className="w-full p-3.5 rounded-2xl bg-gradient-to-r from-purple-900/40 via-indigo-900/30 to-blue-900/40 hover:from-purple-900/60 hover:to-blue-900/60 border-2 border-purple-500/50 hover:border-purple-400 text-white transition-all text-right group shadow-xl shadow-purple-950/40 relative overflow-hidden active:scale-99"
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-xl bg-purple-600/30 border border-purple-400/40 flex items-center justify-center text-purple-300 group-hover:scale-110 transition-transform shadow-md">
+                              <Globe className="w-5 h-5 text-purple-300" />
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span className="font-black text-sm text-white">✨ תמלל ותרגם סרטון באנגלית לעברית (AI)</span>
+                                <span className="px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 text-[10px] font-black border border-purple-500/30">מומלץ</span>
+                              </div>
+                              <p className="text-xs text-slate-300 mt-0.5">
+                                מאזין לדיבור בסרטון (באנגלית או בכל שפה), מתמלל ומתרגם ישירות לכתוביות בעברית עם סנכרון תזמונים מדויק
+                              </p>
+                            </div>
+                          </div>
+                          <div className="px-3 py-1.5 rounded-xl bg-purple-600/30 group-hover:bg-purple-600/50 text-purple-200 text-xs font-bold transition-all shrink-0">
+                            הפעל עכשיו ←
+                          </div>
+                        </div>
+                      </button>
+
                       {/* 4 Action Cards */}
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1 text-right">
                         {/* 1. Speech-to-Text AI */}
                         <button
                           type="button"
-                          onClick={handleTranscribeRecordedAudio}
+                          onClick={() => handleTranscribeRecordedAudio()}
                           disabled={isTranscribing}
                           className="p-3 rounded-2xl bg-gradient-to-tr from-amber-500/10 to-orange-500/10 hover:from-amber-500/20 hover:to-orange-500/20 border border-amber-500/30 text-amber-200 transition-all text-right group shadow-md"
                         >
@@ -3769,8 +3916,14 @@ export default function SubtitleStudio({
                   <Globe className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="text-sm font-black text-white">תרגום כתוביות חכם (AI Translate)</h3>
-                  <p className="text-xs text-slate-400">תרגום כל {subtitles.length} הכתוביות תוך שמירה מדויקת על כל התזמונים</p>
+                  <h3 className="text-sm font-black text-white">
+                    {subtitles.length === 0 ? 'תמלול ותרגום סרטון חיצוני (AI)' : 'תרגום כתוביות חכם (AI Translate)'}
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    {subtitles.length === 0 
+                      ? 'האזנה לדיבור בסרטון ותרגום ישיר לכתוביות בעברית' 
+                      : `תרגום כל ${subtitles.length} הכתוביות תוך שמירה מדויקת על כל התזמונים`}
+                  </p>
                 </div>
               </div>
             </div>
@@ -3799,118 +3952,196 @@ export default function SubtitleStudio({
               </button>
             </div>
 
-            {/* Scope Selection (if subtitles selected) */}
-            {selectedIds.length > 0 && (
-              <div className="space-y-1.5 mb-4">
-                <label className="block text-xs font-bold text-slate-300">היקף התרגום:</label>
-                <div className="grid grid-cols-2 gap-2">
+            {subtitles.length === 0 ? (
+              /* Dedicated Flow for External Video with No Subtitles Yet */
+              <div className="space-y-4">
+                <div className="p-3.5 rounded-2xl bg-gradient-to-tr from-purple-950/40 via-indigo-950/30 to-blue-950/40 border border-purple-500/40 text-right space-y-1.5">
+                  <div className="flex items-center gap-2 text-purple-300 font-bold text-xs">
+                    <Sparkles className="w-4 h-4 text-purple-400" />
+                    <span>תמלול ותרגום סרטון ישירות לעברית</span>
+                  </div>
+                  <p className="text-xs text-slate-300 leading-relaxed">
+                    זיהינו סרטון/קובץ שמע טעון בנגן. מנוע ה-AI יאזין לדיבור בסרטון (באנגלית או בכל שפה), יתמלל אותו ויתרגם אותו ישירות לכתוביות בעברית עם סנכרון תזמונים מדויק!
+                  </p>
+                </div>
+
+                {/* Source Language Selection */}
+                <div className="space-y-1.5 text-right">
+                  <label className="block text-xs font-bold text-slate-300">שפת הדיבור בסרטון המקורי:</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedSourceLang('auto')}
+                      className={`py-2 px-3 rounded-xl border text-xs font-bold transition-all text-center ${
+                        selectedSourceLang === 'auto'
+                          ? 'bg-purple-600/30 border-purple-500 text-purple-200 shadow-md'
+                          : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      ✨ זיהוי אוטומטי (מומלץ)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedSourceLang('en')}
+                      className={`py-2 px-3 rounded-xl border text-xs font-bold transition-all text-center ${
+                        selectedSourceLang === 'en'
+                          ? 'bg-purple-600/30 border-purple-500 text-purple-200 shadow-md'
+                          : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      🇺🇸 אנגלית (English)
+                    </button>
+                  </div>
+                </div>
+
+                {/* Target Language Selection */}
+                <div className="space-y-1.5 text-right">
+                  <label className="block text-xs font-bold text-slate-300">שפת הכתוביות שיווצרו:</label>
+                  <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between text-xs text-emerald-300 font-bold">
+                    <span>🇮🇱 עברית (Hebrew) - תרגום מדויק</span>
+                    <Check className="w-4 h-4 text-emerald-400" />
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 pt-2">
                   <button
                     type="button"
-                    onClick={() => setSelectedTranslateScope('selected')}
-                    className={`py-2 px-3 rounded-xl border text-xs font-bold transition-all ${
-                      selectedTranslateScope === 'selected'
-                        ? 'bg-purple-600/30 border-purple-500 text-purple-200 shadow-md'
-                        : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
-                    }`}
+                    onClick={() => setIsTranslateModalOpen(false)}
+                    className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition-all"
                   >
-                    רק {selectedIds.length} נבחרות
+                    ביטול
                   </button>
                   <button
                     type="button"
-                    onClick={() => setSelectedTranslateScope('all')}
-                    className={`py-2 px-3 rounded-xl border text-xs font-bold transition-all ${
-                      selectedTranslateScope === 'all'
-                        ? 'bg-purple-600/30 border-purple-500 text-purple-200 shadow-md'
-                        : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
-                    }`}
+                    onClick={() => {
+                      setIsTranslateModalOpen(false);
+                      handleTranscribeRecordedAudio({ spokenLanguage: selectedSourceLang, translateToHebrew: true });
+                    }}
+                    disabled={isTranscribing}
+                    className="flex-2 py-2.5 px-4 rounded-xl bg-gradient-to-r from-purple-600 via-indigo-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 text-white text-xs font-black shadow-lg shadow-purple-600/30 transition-all flex items-center justify-center gap-2 active:scale-98"
                   >
-                    כל {subtitles.length} הכתוביות
+                    <Sparkles className="w-4 h-4 text-amber-300" />
+                    <span>תמלל ותרגם סרטון לעברית (AI)</span>
                   </button>
                 </div>
               </div>
-            )}
-
-            {/* Source Language Selection */}
-            <div className="space-y-1.5 mb-4">
-              <label className="block text-xs font-bold text-slate-300">שפת מקור:</label>
-              <div className="grid grid-cols-3 gap-1.5">
-                {[
-                  { code: 'auto', label: '✨ זיהוי אוטומטי' },
-                  { code: 'en', label: '🇺🇸 אנגלית' },
-                  { code: 'he', label: '🇮🇱 עברית' }
-                ].map((src) => (
-                  <button
-                    key={src.code}
-                    type="button"
-                    onClick={() => setSelectedSourceLang(src.code)}
-                    className={`py-2 px-2 rounded-xl border text-xs font-bold transition-all text-center ${
-                      selectedSourceLang === src.code
-                        ? 'bg-indigo-600/30 border-indigo-500 text-indigo-200 shadow-md'
-                        : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
-                    }`}
-                  >
-                    {src.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Target Language Selection */}
-            <div className="space-y-2 mb-6">
-              <label className="block text-xs font-bold text-slate-300">בחר שפת יעד לתרגום:</label>
-              <div className="grid grid-cols-2 gap-2">
-                {[
-                  { code: 'he', label: '🇮🇱 עברית (Hebrew)' },
-                  { code: 'en', label: '🇺🇸 אנגלית (English)' },
-                  { code: 'es', label: '🇪🇸 ספרדית (Español)' },
-                  { code: 'fr', label: '🇫🇷 צרפתית (Français)' },
-                  { code: 'ru', label: '🇷🇺 רוסית (Русский)' },
-                  { code: 'ar', label: '🇸🇦 ערבית (العربية)' }
-                ].map((lang) => (
-                  <button
-                    key={lang.code}
-                    type="button"
-                    onClick={() => setSelectedTargetLang(lang.code)}
-                    className={`p-2.5 rounded-xl border text-xs font-bold text-right transition-all flex items-center justify-between ${
-                      selectedTargetLang === lang.code
-                        ? 'bg-blue-600/30 border-blue-500 text-blue-200 shadow-md'
-                        : 'bg-slate-900 border-slate-800 text-slate-300 hover:bg-slate-800'
-                    }`}
-                  >
-                    <span>{lang.label}</span>
-                    {selectedTargetLang === lang.code && <Check className="w-3.5 h-3.5 text-blue-400" />}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setIsTranslateModalOpen(false)}
-                className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition-all"
-              >
-                ביטול
-              </button>
-              <button
-                type="button"
-                onClick={() => handleTranslateSubtitles(selectedTargetLang, selectedSourceLang, selectedTranslateScope)}
-                disabled={isTranslating}
-                className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-xs font-bold shadow-lg shadow-blue-600/30 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
-              >
-                {isTranslating ? (
-                  <>
-                    <RotateCw className="w-4 h-4 animate-spin" />
-                    <span>מתרגם כתוביות...</span>
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="w-4 h-4" />
-                    <span>תרגם עכשיו לעברית</span>
-                  </>
+            ) : (
+              /* Existing Subtitle Translation Flow when Subtitles already exist */
+              <>
+                {/* Scope Selection (if subtitles selected) */}
+                {selectedIds.length > 0 && (
+                  <div className="space-y-1.5 mb-4">
+                    <label className="block text-xs font-bold text-slate-300">היקף התרגום:</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedTranslateScope('selected')}
+                        className={`py-2 px-3 rounded-xl border text-xs font-bold transition-all ${
+                          selectedTranslateScope === 'selected'
+                            ? 'bg-purple-600/30 border-purple-500 text-purple-200 shadow-md'
+                            : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                        }`}
+                      >
+                        רק {selectedIds.length} נבחרות
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedTranslateScope('all')}
+                        className={`py-2 px-3 rounded-xl border text-xs font-bold transition-all ${
+                          selectedTranslateScope === 'all'
+                            ? 'bg-purple-600/30 border-purple-500 text-purple-200 shadow-md'
+                            : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                        }`}
+                      >
+                        כל {subtitles.length} הכתוביות
+                      </button>
+                    </div>
+                  </div>
                 )}
-              </button>
-            </div>
+
+                {/* Source Language Selection */}
+                <div className="space-y-1.5 mb-4">
+                  <label className="block text-xs font-bold text-slate-300">שפת מקור:</label>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {[
+                      { code: 'auto', label: '✨ זיהוי אוטומטי' },
+                      { code: 'en', label: '🇺🇸 אנגלית' },
+                      { code: 'he', label: '🇮🇱 עברית' }
+                    ].map((src) => (
+                      <button
+                        key={src.code}
+                        type="button"
+                        onClick={() => setSelectedSourceLang(src.code)}
+                        className={`py-2 px-2 rounded-xl border text-xs font-bold transition-all text-center ${
+                          selectedSourceLang === src.code
+                            ? 'bg-indigo-600/30 border-indigo-500 text-indigo-200 shadow-md'
+                            : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                        }`}
+                      >
+                        {src.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Target Language Selection */}
+                <div className="space-y-2 mb-6">
+                  <label className="block text-xs font-bold text-slate-300">בחר שפת יעד לתרגום:</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {[
+                      { code: 'he', label: '🇮🇱 עברית (Hebrew)' },
+                      { code: 'en', label: '🇺🇸 אנגלית (English)' },
+                      { code: 'es', label: '🇪🇸 ספרדית (Español)' },
+                      { code: 'fr', label: '🇫🇷 צרפתית (Français)' },
+                      { code: 'ru', label: '🇷🇺 רוסית (Русский)' },
+                      { code: 'ar', label: '🇸🇦 ערבית (العربية)' }
+                    ].map((lang) => (
+                      <button
+                        key={lang.code}
+                        type="button"
+                        onClick={() => setSelectedTargetLang(lang.code)}
+                        className={`p-2.5 rounded-xl border text-xs font-bold text-right transition-all flex items-center justify-between ${
+                          selectedTargetLang === lang.code
+                            ? 'bg-blue-600/30 border-blue-500 text-blue-200 shadow-md'
+                            : 'bg-slate-900 border-slate-800 text-slate-300 hover:bg-slate-800'
+                        }`}
+                      >
+                        <span>{lang.label}</span>
+                        {selectedTargetLang === lang.code && <Check className="w-3.5 h-3.5 text-blue-400" />}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsTranslateModalOpen(false)}
+                    className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition-all"
+                  >
+                    ביטול
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleTranslateSubtitles(selectedTargetLang, selectedSourceLang, selectedTranslateScope)}
+                    disabled={isTranslating}
+                    className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-xs font-bold shadow-lg shadow-blue-600/30 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                  >
+                    {isTranslating ? (
+                      <>
+                        <RotateCw className="w-4 h-4 animate-spin" />
+                        <span>מתרגם כתוביות...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="w-4 h-4" />
+                        <span>תרגם עכשיו לעברית</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}

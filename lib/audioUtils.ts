@@ -170,63 +170,76 @@ export async function sliceAudioBlobIntoChunks(
   chunkDurationSec: number = 120, // 2-minute chunks (safely ~3.8 MB each)
   targetSampleRate = 16000
 ): Promise<AudioChunk[]> {
-  const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-  const audioContext = new AudioCtx();
-  const arrayBuffer = await blob.arrayBuffer();
-  const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-  await audioContext.close();
+  try {
+    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+    const audioContext = new AudioCtx();
+    const arrayBuffer = await blob.arrayBuffer();
+    const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+    await audioContext.close();
 
-  const totalDuration = audioBuffer.duration;
-  const numChunks = Math.max(1, Math.ceil(totalDuration / chunkDurationSec));
-  const chunks: AudioChunk[] = [];
+    const totalDuration = audioBuffer.duration;
+    const numChunks = Math.max(1, Math.ceil(totalDuration / chunkDurationSec));
+    const chunks: AudioChunk[] = [];
 
-  for (let i = 0; i < numChunks; i++) {
-    const startSec = i * chunkDurationSec;
-    const endSec = Math.min(totalDuration, (i + 1) * chunkDurationSec);
-    const duration = endSec - startSec;
+    for (let i = 0; i < numChunks; i++) {
+      const startSec = i * chunkDurationSec;
+      const endSec = Math.min(totalDuration, (i + 1) * chunkDurationSec);
+      const duration = endSec - startSec;
 
-    if (duration <= 0.2) continue;
+      if (duration <= 0.2) continue;
 
-    const startSample = Math.floor(startSec * audioBuffer.sampleRate);
-    const endSample = Math.min(audioBuffer.length, Math.floor(endSec * audioBuffer.sampleRate));
-    const sampleLength = endSample - startSample;
+      const startSample = Math.floor(startSec * audioBuffer.sampleRate);
+      const endSample = Math.min(audioBuffer.length, Math.floor(endSec * audioBuffer.sampleRate));
+      const sampleLength = endSample - startSample;
 
-    const offlineCtx = new OfflineAudioContext(
-      1,
-      Math.ceil(duration * targetSampleRate),
-      targetSampleRate
-    );
+      const offlineCtx = new OfflineAudioContext(
+        1,
+        Math.ceil(duration * targetSampleRate),
+        targetSampleRate
+      );
 
-    const sliceBuffer = offlineCtx.createBuffer(
-      audioBuffer.numberOfChannels,
-      sampleLength,
-      audioBuffer.sampleRate
-    );
+      const sliceBuffer = offlineCtx.createBuffer(
+        audioBuffer.numberOfChannels,
+        sampleLength,
+        audioBuffer.sampleRate
+      );
 
-    for (let c = 0; c < audioBuffer.numberOfChannels; c++) {
-      const channelData = audioBuffer.getChannelData(c).subarray(startSample, endSample);
-      sliceBuffer.copyToChannel(channelData, c, 0);
+      for (let c = 0; c < audioBuffer.numberOfChannels; c++) {
+        const channelData = audioBuffer.getChannelData(c).subarray(startSample, endSample);
+        sliceBuffer.copyToChannel(channelData, c, 0);
+      }
+
+      const source = offlineCtx.createBufferSource();
+      source.buffer = sliceBuffer;
+      source.connect(offlineCtx.destination);
+      source.start(0);
+
+      const resampledBuffer = await offlineCtx.startRendering();
+      const chunkBlob = audioBufferToWav(resampledBuffer, true);
+
+      chunks.push({
+        blob: chunkBlob,
+        startSec,
+        endSec,
+        durationSec: duration,
+        index: i,
+        total: numChunks
+      });
     }
 
-    const source = offlineCtx.createBufferSource();
-    source.buffer = sliceBuffer;
-    source.connect(offlineCtx.destination);
-    source.start(0);
-
-    const resampledBuffer = await offlineCtx.startRendering();
-    const chunkBlob = audioBufferToWav(resampledBuffer, true);
-
-    chunks.push({
-      blob: chunkBlob,
-      startSec,
-      endSec,
-      durationSec: duration,
-      index: i,
-      total: numChunks
-    });
+    return chunks;
+  } catch (decodeErr) {
+    console.warn('sliceAudioBlobIntoChunks decodeAudioData fallback to single chunk:', decodeErr);
+    // Fallback: Return the original media blob directly as a single chunk
+    return [{
+      blob,
+      startSec: 0,
+      endSec: 120,
+      durationSec: 120,
+      index: 0,
+      total: 1
+    }];
   }
-
-  return chunks;
 }
 
 // Format seconds into SRT Timestamp (00:00:00,000)
