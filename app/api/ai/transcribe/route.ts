@@ -156,6 +156,14 @@ export async function POST(req: NextRequest) {
               }
             }
 
+            // Clean filler words and automatically convert dates & numbers to digits
+            formattedSubtitles = formattedSubtitles
+              .map(s => ({
+                ...s,
+                text: cleanAndPolishHebrewSubtitleText(s.text, { removeFillers: true, formatDatesAndNumbers: true })
+              }))
+              .filter(s => s.text.trim().length > 0);
+
             return NextResponse.json({
               success: true,
               subtitles: formattedSubtitles,
@@ -205,8 +213,8 @@ export async function POST(req: NextRequest) {
         }
         if (spokenLanguage === 'he' || (!spokenLanguage && !translateToHebrew)) {
           formData.append('prompt', highEffortMode 
-            ? 'תמלול עברית מלא ומדויק מילה במילה. פענוח מדויק גם של דיבור עמום, חלש, מהיר או ממלמל, ללא דילוג על מילים.'
-            : 'תמלול עברית מלא ומדויק מילה במילה.');
+            ? 'תמלול עברית מלא ומדויק מילה במילה. ללא מילות היסוס כגון אה ואממ. תאריכים ומספרים נכתבים תמיד בספרות (למשל: 19 בספטמבר 2026, 24 שעות, 100%). פענוח מדויק גם של דיבור עמום, חלש, מהיר או ממלמל, ללא דילוג על מילים.'
+            : 'תמלול עברית מדויק ללא מילות היסוס כגון אה ואממ. תאריכים ומספרים נכתבים תמיד בספרות (למשל: 19 בספטמבר 2026, 24 שעות, 100%).');
         }
         formData.append('temperature', '0');
         formData.append('response_format', 'verbose_json');
@@ -240,8 +248,8 @@ export async function POST(req: NextRequest) {
           }
           if (spokenLanguage === 'he' || (!spokenLanguage && !translateToHebrew)) {
             formData.append('prompt', highEffortMode 
-              ? 'תמלול עברית מלא ומדויק מילה במילה. פענוח מדויק גם של דיבור עמום, חלש, מהיר או ממלמל, ללא דילוג על מילים.'
-              : 'תמלול עברית מלא ומדויק מילה במילה.');
+              ? 'תמלול עברית מלא ומדויק מילה במילה. ללא מילות היסוס כגון אה ואממ. תאריכים ומספרים נכתבים תמיד בספרות (למשל: 19 בספטמבר 2026, 24 שעות, 100%). פענוח מדויק גם של דיבור עמום, חלש, מהיר או ממלמל, ללא דילוג על מילים.'
+              : 'תמלול עברית מדויק ללא מילות היסוס כגון אה ואממ. תאריכים ומספרים נכתבים תמיד בספרות (למשל: 19 בספטמבר 2026, 24 שעות, 100%).');
           }
           formData.append('temperature', '0');
 
@@ -286,6 +294,14 @@ export async function POST(req: NextRequest) {
                 }
               }
             }
+
+            // Clean filler words and automatically convert dates & numbers to digits
+            formattedSubtitles = formattedSubtitles
+              .map(s => ({
+                ...s,
+                text: cleanAndPolishHebrewSubtitleText(s.text, { removeFillers: true, formatDatesAndNumbers: true })
+              }))
+              .filter(s => s.text.trim().length > 0);
 
             return NextResponse.json({
               success: true,
@@ -339,11 +355,13 @@ export async function POST(req: NextRequest) {
 ${highEffortInstructions}
 ${diarizationInstructions}
 
-הנחיות איכות קריטיות:
+ הנחיות איכות קריטיות:
 1. תרגם 100% ממה שנאמר לעברית. חל איסור להשאיר טקסט באנגלית (למעט שמות מותגים מוכרים במידת הצורך).
 2. חלק לשורות כתוביות קצרות וקצביות של ${wordsPerLine} עד ${wordsPerLine + 2} מילים בכל שורה.
 3. ספק תזמון מדויק בשניות (startTime, endTime) לכל שורת כתובית שתואם בדיוק את זמן הדיבור באודיו (משך קטע זה: ${duration} שניות).
 4. הקפד על עברית תקנית, פיסוק מדויק וללא קיצורים.
+5. הסרת מילות היסוס: חל איסור לכלול מילות היסוס ורעשי גמגום כגון 'אה', 'אהה', 'אמ', 'אממ', 'המ', 'uh', 'um' וכדומה. שמור על כתוביות רציפות וקולחות.
+6. המרת תאריכים ומספרים לספרות אוטומטית: כתוב תמיד תאריכים ומספרים בספרות ולא במילים! לדוגמה: '19 בספטמבר 2026' (ולא 'תשעה עשר בספטמבר אלפיים עשרים ושש'), '24 שעות', '100%', '7 באוקטובר 2023'.
 
 החזר אך ורק מערך JSON תקין במבנה הבא:
 [
@@ -368,10 +386,12 @@ ${highEffortInstructions}
 ${diarizationInstructions}
 
 הנחיות איכות קריטיות:
-1. תמלל בדיוק של 100% מילה במילה את כל המילים שנאמרו בהקלטה. חל איסור מוחלט להשמיט אף מילה, אף משפט ואף הברה.
+1. תמלל בדיוק של 100% מילה במילה את כל המילים שנאמרו בהקלטה. חל איסור מוחלט להשמיט אף משפט או רעיון.
 2. חלק לשורות כתוביות קצרות וקצביות של ${wordsPerLine} עד ${wordsPerLine + 2} מילים בכל שורה.
 3. ספק תזמון מדויק בשניות (startTime, endTime) לכל שורת כתובית שתואם בדיוק את זמן הדיבור באודיו (משך כולל: ${duration} שניות).
 4. הקפד על עברית תקנית, פיסוק מדויק וללא קיצורים.
+5. הסרת מילות היסוס: חל איסור לכלול מילות היסוס ורעשי גמגום כגון 'אה', 'אהה', 'אמ', 'אממ', 'המ', 'uh', 'um' וכדומה. שמור על כתוביות רציפות וקולחות.
+6. המרת תאריכים ומספרים לספרות אוטומטית: כתוב תמיד תאריכים ומספרים בספרות ולא במילים! לדוגמה: '19 בספטמבר 2026' (ולא 'תשעה עשר בספטמבר אלפיים עשרים ושש'), '24 שעות', '100%', '7 באוקטובר 2023'.
 
 החזר אך ורק מערך JSON תקין במבנה הבא:
 [
@@ -456,7 +476,7 @@ ${diarizationInstructions}
                   id: `sub_spoken_${Date.now()}_${idx}`,
                   startTime: Number(Number(s.startTime || s.start || idx * 3).toFixed(2)),
                   endTime: Number(Number(s.endTime || s.end || (idx + 1) * 3).toFixed(2)),
-                  text: String(s.text || s.content || '').trim(),
+                  text: cleanAndPolishHebrewSubtitleText(String(s.text || s.content || '').trim(), { removeFillers: true, formatDatesAndNumbers: true }),
                   speaker: s.speaker ? String(s.speaker).trim() : undefined
                 })).filter((s: any) => s.text.length > 0);
 
@@ -466,6 +486,10 @@ ${diarizationInstructions}
                       formatted[k].text = await freeTranslateText(formatted[k].text, spokenLanguage || 'auto', 'he');
                     }
                   }
+                  formatted = formatted.map((s: any) => ({
+                    ...s,
+                    text: cleanAndPolishHebrewSubtitleText(s.text, { removeFillers: true, formatDatesAndNumbers: true })
+                  })).filter((s: any) => s.text.length > 0);
                 }
 
                 const rebalanced = smartRebalanceSubtitles(formatted, wordsPerLine, 1);
@@ -484,7 +508,7 @@ ${diarizationInstructions}
               if (translateToHebrew && /[a-zA-Z]/.test(plainTextToProcess)) {
                 plainTextToProcess = await freeTranslateText(plainTextToProcess, spokenLanguage || 'auto', 'he');
               }
-              const plainHebrew = cleanAndPolishHebrewSubtitleText(plainTextToProcess);
+              const plainHebrew = cleanAndPolishHebrewSubtitleText(plainTextToProcess, { removeFillers: true, formatDatesAndNumbers: true });
               if (plainHebrew.length > 0) {
                 const pacedSubtitles = splitTextIntoPacedSubtitles(
                   plainHebrew,

@@ -31,6 +31,9 @@ import {
   mergeSubtitleWithNext,
   mergeSubtitleWithPrevious,
   cleanAndPolishHebrewSubtitleText,
+  removeHebrewFillerWords,
+  convertHebrewDatesAndWordsToNumbers,
+  processSubtitlesCleanup,
   shiftAllSubtitleTimestamps,
   buildSubtitlesFromWhisperWords,
   parseSRT,
@@ -74,6 +77,8 @@ import {
   Volume2,
   Key,
   Scissors,
+  Eraser,
+  Hash,
   GitMerge,
   RotateCw,
   FileText,
@@ -2127,21 +2132,76 @@ export default function SubtitleStudio({
     if (onUpdateEpisode) onUpdateEpisode(updated);
   };
 
-  // Clean Hebrew fillers and fix punctuation
+  // Clean single subtitle: removes fillers, formats dates/numbers to digits, fixes punctuation
   const handlePolishSingleSubtitle = (id: string) => {
-    setSubtitles(prev => prev.map(s => {
-      if (s.id === id) {
-        return { ...s, text: cleanAndPolishHebrewSubtitleText(s.text) };
-      }
-      return s;
-    }));
+    setSubtitles(prev => {
+      const next = prev.map(s => {
+        if (s.id === id) {
+          return { ...s, text: cleanAndPolishHebrewSubtitleText(s.text, { removeFillers: true, formatDatesAndNumbers: true }) };
+        }
+        return s;
+      });
+      const updated: Episode = { ...episode, subtitles: next };
+      saveEpisode(updated);
+      if (onUpdateEpisode) onUpdateEpisode(updated);
+      return next;
+    });
   };
 
+  // Remove hesitation & filler sounds ("אה", "אממ", "אהה", etc.) and prune empty cues
+  const handleRemoveFillerWords = () => {
+    if (subtitles.length === 0) return;
+    const res = processSubtitlesCleanup(subtitles, {
+      removeFillers: true,
+      formatDatesAndNumbers: false,
+      dropEmptyCues: true
+    });
+    setSubtitles(res.subtitles);
+    const updated: Episode = { ...episode, subtitles: res.subtitles };
+    saveEpisode(updated);
+    if (onUpdateEpisode) onUpdateEpisode(updated);
+
+    if (res.fillersRemoved === 0) {
+      alert('לא נמצאו מילות היסוס ("אה", "אממ") בכתוביות.');
+    } else {
+      alert(`🧹 הוסרו בהצלחה ${res.fillersRemoved} מילות היסוס ("אה", "אממ")!${res.emptyCuesDropped > 0 ? ` נמחקו ${res.emptyCuesDropped} כתוביות שהפכו לריקות.` : ''}`);
+    }
+  };
+
+  // Convert spelled-out Hebrew dates and numbers into standard digits
+  const handleFormatDatesAndNumbers = () => {
+    if (subtitles.length === 0) return;
+    const res = processSubtitlesCleanup(subtitles, {
+      removeFillers: false,
+      formatDatesAndNumbers: true,
+      dropEmptyCues: false
+    });
+    setSubtitles(res.subtitles);
+    const updated: Episode = { ...episode, subtitles: res.subtitles };
+    saveEpisode(updated);
+    if (onUpdateEpisode) onUpdateEpisode(updated);
+
+    if (res.datesConverted === 0) {
+      alert('לא נמצאו תאריכים או מספרים הדורשים המרה לספרות.');
+    } else {
+      alert(`🔢 הומרו בהצלחה ${res.datesConverted} תאריכים ומספרים לספרות תקניות (למשל: 19 בספטמבר 2026, 24 שעות, 100%)!`);
+    }
+  };
+
+  // Complete polish: remove fillers, convert dates/numbers, fix punctuation & spacing
   const handlePolishAllSubtitles = () => {
-    setSubtitles(prev => prev.map(s => ({
-      ...s,
-      text: cleanAndPolishHebrewSubtitleText(s.text)
-    })));
+    if (subtitles.length === 0) return;
+    const res = processSubtitlesCleanup(subtitles, {
+      removeFillers: true,
+      formatDatesAndNumbers: true,
+      dropEmptyCues: true
+    });
+    setSubtitles(res.subtitles);
+    const updated: Episode = { ...episode, subtitles: res.subtitles };
+    saveEpisode(updated);
+    if (onUpdateEpisode) onUpdateEpisode(updated);
+
+    alert(`✨ ליטוש וניקוי מלא הושלם!\n• הוסרו ${res.fillersRemoved} מילות היסוס ("אה", "אממ")\n• הומרו ${res.datesConverted} תאריכים ומספרים לספרות${res.emptyCuesDropped > 0 ? `\n• הוסרו ${res.emptyCuesDropped} כתוביות ריקות` : ''}`);
   };
 
   // Shift all timestamps by +/- delta seconds to fix microphone/video delay
@@ -2479,6 +2539,28 @@ export default function SubtitleStudio({
             >
               <Sparkles className={`w-3.5 h-3.5 text-purple-400 ${isRefining ? 'animate-spin' : ''}`} />
               <span>{isRefining ? 'מדייק כתוביות...' : '🎯 דייק כתוביות (AI)'}</span>
+            </button>
+
+            {/* Remove Filler Sounds ("אה", "אממ") */}
+            <button
+              onClick={handleRemoveFillerWords}
+              disabled={subtitles.length === 0}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 hover:text-white border border-rose-500/40 text-xs font-bold transition-all active:scale-98 disabled:opacity-40 shadow-sm"
+              title="הסר בלחיצה אחת את כל מילות המילוי וההיסוס ('אה', 'אהה', 'אמ', 'אממ') ומחק כתוביות שהפכו לריקות"
+            >
+              <Eraser className="w-3.5 h-3.5 text-rose-400" />
+              <span>🧹 הסר ״אה״ והיסוסים</span>
+            </button>
+
+            {/* Convert Dates and Numbers to Digits */}
+            <button
+              onClick={handleFormatDatesAndNumbers}
+              disabled={subtitles.length === 0}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 hover:text-white border border-amber-500/40 text-xs font-bold transition-all active:scale-98 disabled:opacity-40 shadow-sm"
+              title="המר אוטומטית תאריכים ומספרים שנאמרו במילים לספרות תקניות (למשל: 19 בספטמבר 2026, 24 שעות, 100%)"
+            >
+              <Hash className="w-3.5 h-3.5 text-amber-400" />
+              <span>🔢 תאריכים למספרים</span>
             </button>
 
             {/* AI Keys Settings Modal Trigger */}
@@ -3410,14 +3492,35 @@ export default function SubtitleStudio({
                           <Sliders className="w-3.5 h-3.5 text-purple-400" />
                           <span>חלוקה חכמה מחדש (Pacing & Split):</span>
                         </div>
-                        <button
-                          onClick={handlePolishAllSubtitles}
-                          className="flex items-center gap-1 text-[10px] text-amber-400 hover:text-amber-300 font-semibold"
-                          title="נקה מילות מילוי (אהה, כאילו) ותקן פיסוק בכל הכתוביות"
-                        >
-                          <Sparkles className="w-3 h-3" />
-                          <span>ליטוש ופיסוק להכל</span>
-                        </button>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={handleRemoveFillerWords}
+                            className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-rose-950/40 hover:bg-rose-900/60 border border-rose-500/30 text-[10px] text-rose-300 font-semibold transition-all"
+                            title="הסר את כל מילות המילוי וההיסוס ('אה', 'אהה', 'אמ', 'אממ') ומחק כתוביות שהפכו לריקות"
+                          >
+                            <Eraser className="w-2.5 h-2.5 text-rose-400" />
+                            <span>הסר ״אה״</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleFormatDatesAndNumbers}
+                            className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-amber-950/40 hover:bg-amber-900/60 border border-amber-500/30 text-[10px] text-amber-300 font-semibold transition-all"
+                            title="המר אוטומטית תאריכים ומספרים שנאמרו במילים לספרות תקניות"
+                          >
+                            <Hash className="w-2.5 h-2.5 text-amber-400" />
+                            <span>תאריכים לספרות</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handlePolishAllSubtitles}
+                            className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-purple-950/40 hover:bg-purple-900/60 border border-purple-500/30 text-[10px] text-purple-300 font-semibold transition-all"
+                            title="נקה מילות מילוי, המר תאריכים לספרות ותקן פיסוק בכל הכתוביות"
+                          >
+                            <Sparkles className="w-2.5 h-2.5 text-purple-400" />
+                            <span>ליטוש מלא</span>
+                          </button>
+                        </div>
                       </div>
                       
                       <div className="grid grid-cols-4 gap-1.5">
@@ -5687,24 +5790,50 @@ export default function SubtitleStudio({
                   </div>
                 </div>
 
-                {/* 4. Global AI Polish & Spacing */}
-                <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-2">
+                {/* 4. Global AI Polish, Filler Removal & Number Formatting */}
+                <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-3">
                   <div className="flex items-center gap-2">
                     <div className="p-1.5 rounded-lg bg-amber-600/20 text-amber-400">
                       <Sparkles className="w-4 h-4" />
                     </div>
                     <div>
-                      <div className="text-xs font-bold text-white">ליטוש וניקוי עברית אוטומטי (AI Polish)</div>
-                      <div className="text-[10px] text-slate-400">מסיר מילות מילוי (אהה, כאילו), מתקן רווחים לפני פיסוק ומיישר זרימה</div>
+                      <div className="text-xs font-bold text-white">ליטוש וניקוי מתקדם של כתוביות (Auto Cleanup & Numbers)</div>
+                      <div className="text-[10px] text-slate-400">הסרת מילות היסוס ("אה", "אממ"), המרת תאריכים ומספרים לספרות, ופיסוק מדויק</div>
                     </div>
                   </div>
+
+                  <div className="grid grid-cols-2 gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={handleRemoveFillerWords}
+                      disabled={subtitles.length === 0}
+                      className="flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl bg-rose-950/40 hover:bg-rose-900/50 border border-rose-500/40 text-rose-300 text-xs font-bold transition-all disabled:opacity-40"
+                      title="הסר את כל מילות המילוי וההיסוס ('אה', 'אהה', 'אמ', 'אממ') ומחק כתוביות שהפכו לריקות"
+                    >
+                      <Eraser className="w-3.5 h-3.5 text-rose-400" />
+                      <span>הסר מילות ״אה״ והיסוס</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleFormatDatesAndNumbers}
+                      disabled={subtitles.length === 0}
+                      className="flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl bg-amber-950/40 hover:bg-amber-900/50 border border-amber-500/40 text-amber-300 text-xs font-bold transition-all disabled:opacity-40"
+                      title="המר אוטומטית תאריכים ומספרים שנאמרו במילים לספרות תקניות (למשל: 19 בספטמבר 2026, 24 שעות, 100%)"
+                    >
+                      <Hash className="w-3.5 h-3.5 text-amber-400" />
+                      <span>המר תאריכים לספרות</span>
+                    </button>
+                  </div>
+
                   <button
                     type="button"
                     onClick={handlePolishAllSubtitles}
                     disabled={subtitles.length === 0}
-                    className="w-full py-2 rounded-xl bg-amber-600/20 hover:bg-amber-600/30 border border-amber-500/40 text-amber-300 text-xs font-bold transition-all disabled:opacity-40"
+                    className="w-full py-2.5 rounded-xl bg-gradient-to-r from-amber-600/20 to-purple-600/20 hover:from-amber-600/30 hover:to-purple-600/30 border border-amber-500/40 text-amber-200 text-xs font-bold transition-all disabled:opacity-40 flex items-center justify-center gap-1.5"
                   >
-                    בצע ליטוש ויישור עברית לכל הכתוביות
+                    <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                    <span>בצע ליטוש מלא: הסרת היסוסים + תאריכים לספרות + פיסוק</span>
                   </button>
                 </div>
               </div>

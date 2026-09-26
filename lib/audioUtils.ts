@@ -555,13 +555,326 @@ export function generateSubtitlesFromTopics(
   return splitTextIntoPacedSubtitles(fullText, wordsPerLine, 1, 0, totalDurationSeconds);
 }
 
-// Clean and polish Hebrew subtitle text (preserves 100% of spoken words, fixes spacing and punctuation)
-export function cleanAndPolishHebrewSubtitleText(text: string): string {
-  if (!text) return '';
-  return text
-    .replace(/\s+/g, ' ')
-    .replace(/\s+([,\.!\?:;])/g, '$1')
+// Hebrew secular and calendar months for date normalization
+const HEBREW_MONTHS = [
+  'ינואר', 'פברואר', 'מרץ', 'מרס', 'אפריל', 'מאי', 'יוני', 'יולי', 
+  'אוגוסט', 'ספטמבר', 'אוקטובר', 'נובמבר', 'דצמבר',
+  'תשרי', 'חשוון', 'מרחשוון', 'כסלו', 'טבת', 'שבט', 'אדר א', 'אדר ב', 'אדר', 
+  'ניסן', 'אייר', 'סיוון', 'סיון', 'תמוז', 'אב', 'אלול'
+];
+
+const HEBREW_DAYS_MAP: { words: string[]; num: number }[] = [
+  { words: ['שלושים ואחד', 'שלושים ואחת'], num: 31 },
+  { words: ['שלושים'], num: 30 },
+  { words: ['עשרים ותשעה', 'עשרים ותשע'], num: 29 },
+  { words: ['עשרים ושמונה'], num: 28 },
+  { words: ['עשרים ושבעה', 'עשרים ושבע'], num: 27 },
+  { words: ['עשרים ושישה', 'עשרים ושש'], num: 26 },
+  { words: ['עשרים וחמישה', 'עשרים וחמש'], num: 25 },
+  { words: ['עשרים וארבעה', 'עשרים וארבע'], num: 24 },
+  { words: ['עשרים ושלושה', 'עשרים ושלוש'], num: 23 },
+  { words: ['עשרים ושניים', 'עשרים ושתיים', 'עשרים ושני'], num: 22 },
+  { words: ['עשרים ואחד', 'עשרים ואחת'], num: 21 },
+  { words: ['עשרים'], num: 20 },
+  { words: ['תשעה עשר', 'תשע עשרה'], num: 19 },
+  { words: ['שמונה עשר', 'שמונה עשרה'], num: 18 },
+  { words: ['שבעה עשר', 'שבע עשרה'], num: 17 },
+  { words: ['שישה עשר', 'שש עשרה'], num: 16 },
+  { words: ['חמישה עשר', 'חמש עשרה'], num: 15 },
+  { words: ['ארבעה עשר', 'ארבע עשרה'], num: 14 },
+  { words: ['שלושה עשר', 'שלוש עשרה'], num: 13 },
+  { words: ['שנים עשר', 'שניים עשר', 'שתים עשרה', 'שתיים עשרה'], num: 12 },
+  { words: ['אחד עשר', 'אחת עשרה'], num: 11 },
+  { words: ['עשרה', 'עשר'], num: 10 },
+  { words: ['תשעה', 'תשע'], num: 9 },
+  { words: ['שמונה'], num: 8 },
+  { words: ['שבעה', 'שבע'], num: 7 },
+  { words: ['שישה', 'שש'], num: 6 },
+  { words: ['חמישה', 'חמש'], num: 5 },
+  { words: ['ארבעה', 'ארבע'], num: 4 },
+  { words: ['שלושה', 'שלוש'], num: 3 },
+  { words: ['שניים', 'שני', 'שתיים'], num: 2 },
+  { words: ['ראשון', 'אחד', 'אחת'], num: 1 }
+];
+
+const HEBREW_YEARS_MAP: { words: string[]; year: number }[] = [
+  { words: ['אלפיים שלושים וחמש'], year: 2035 },
+  { words: ['אלפיים שלושים'], year: 2030 },
+  { words: ['אלפיים עשרים ותשע', 'אלפיים ועשרים ותשע'], year: 2029 },
+  { words: ['אלפיים עשרים ושמונה', 'אלפיים ועשרים ושמונה'], year: 2028 },
+  { words: ['אלפיים עשרים ושבע', 'אלפיים ועשרים ושבע'], year: 2027 },
+  { words: ['אלפיים עשרים ושש', 'אלפיים ועשרים ושש'], year: 2026 },
+  { words: ['אלפיים עשרים וחמש', 'אלפיים ועשרים וחמש'], year: 2025 },
+  { words: ['אלפיים עשרים וארבע', 'אלפיים ועשרים וארבע'], year: 2024 },
+  { words: ['אלפיים עשרים ושלוש', 'אלפיים ועשרים ושלוש'], year: 2023 },
+  { words: ['אלפיים עשרים ושתיים', 'אלפיים ועשרים ושתיים'], year: 2022 },
+  { words: ['אלפיים עשרים ואחת', 'אלפיים ועשרים ואחת'], year: 2021 },
+  { words: ['אלפיים עשרים', 'אלפיים ועשרים'], year: 2020 },
+  { words: ['אלפיים ותשע עשרה', 'אלפיים תשע עשרה'], year: 2019 },
+  { words: ['אלפיים ושמונה עשרה', 'אלפיים שמונה עשרה'], year: 2018 },
+  { words: ['אלפיים ושבע עשרה', 'אלפיים שבע עשרה'], year: 2017 },
+  { words: ['אלפיים ושש עשרה', 'אלפיים שש עשרה'], year: 2016 },
+  { words: ['אלפיים וחמש עשרה', 'אלפיים חמש עשרה'], year: 2015 },
+  { words: ['אלפיים וארבע עשרה', 'אלפיים ארבע עשרה'], year: 2014 },
+  { words: ['אלפיים ושלוש עשרה', 'אלפיים שלוש עשרה'], year: 2013 },
+  { words: ['אלפיים ושתים עשרה', 'אלפיים שתים עשרה'], year: 2012 },
+  { words: ['אלפיים ואחת עשרה', 'אלפיים אחת עשרה'], year: 2011 },
+  { words: ['אלפיים ועשר', 'אלפיים עשר'], year: 2010 },
+  { words: ['אלפיים ותשע'], year: 2009 },
+  { words: ['אלפיים ושמונה'], year: 2008 },
+  { words: ['אלפיים ושבע'], year: 2007 },
+  { words: ['אלפיים ושש'], year: 2006 },
+  { words: ['אלפיים וחמש'], year: 2005 },
+  { words: ['אלפיים וארבע'], year: 2004 },
+  { words: ['אלפיים ושלוש'], year: 2003 },
+  { words: ['אלפיים ושתיים'], year: 2002 },
+  { words: ['אלפיים ואחת'], year: 2001 },
+  { words: ['אלפיים'], year: 2000 },
+  { words: ['תשע עשרה שמונים וארבע'], year: 1984 },
+  { words: ['אלף תשע מאות תשעים'], year: 1990 },
+  { words: ['אלף תשע מאות שמונים'], year: 1980 },
+  { words: ['אלף תשע מאות שבעים'], year: 1970 }
+];
+
+const HEBREW_PERCENT_MAP: { words: string[]; val: string }[] = [
+  { words: ['מאה אחוז'], val: '100%' },
+  { words: ['תשעים ותשעה אחוז', 'תשעים ותשע אחוז'], val: '99%' },
+  { words: ['תשעים אחוז'], val: '90%' },
+  { words: ['שמונים וחמישה אחוז', 'שמונים וחמש אחוז'], val: '85%' },
+  { words: ['שמונים אחוז'], val: '80%' },
+  { words: ['שבעים וחמישה אחוז', 'שבעים וחמש אחוז'], val: '75%' },
+  { words: ['שבעים אחוז'], val: '70%' },
+  { words: ['שישים אחוז', 'ששים אחוז'], val: '60%' },
+  { words: ['חמישים אחוז'], val: '50%' },
+  { words: ['ארבעים אחוז'], val: '40%' },
+  { words: ['שלושים אחוז'], val: '30%' },
+  { words: ['עשרים וחמישה אחוז', 'עשרים וחמש אחוז'], val: '25%' },
+  { words: ['עשרים אחוז'], val: '20%' },
+  { words: ['חמישה עשר אחוז', 'חמש עשרה אחוז'], val: '15%' },
+  { words: ['עשרה אחוזים', 'עשרה אחוז', 'עשר אחוז'], val: '10%' },
+  { words: ['חמישה אחוזים', 'חמישה אחוז', 'חמש אחוז'], val: '5%' }
+];
+
+const HEBREW_UNITS_MAP: { words: string[]; val: string }[] = [
+  { words: ['עשרים וארבע שעות', 'עשרים וארבעה שעות'], val: '24 שעות' },
+  { words: ['ארבעים ושמונה שעות'], val: '48 שעות' },
+  { words: ['שבעים ושתיים שעות'], val: '72 שעות' },
+  { words: ['שבעה ימים', 'שבע ימים'], val: '7 ימים' },
+  { words: ['ארבעה עשר יום', 'ארבעה עשר ימים'], val: '14 ימים' },
+  { words: ['שלושים יום', 'שלושים ימים'], val: '30 ימים' },
+  { words: ['עשרה שקלים', 'עשר שקלים'], val: '10 שקלים' },
+  { words: ['עשרים שקלים', 'עשרים שקל'], val: '20 ש״ח' },
+  { words: ['חמישים שקלים', 'חמישים שקל'], val: '50 ש״ח' },
+  { words: ['מאה שקלים', 'מאה שקל'], val: '100 ש״ח' },
+  { words: ['מאתיים שקל', 'מאתיים שקלים'], val: '200 ש״ח' },
+  { words: ['חמש מאות שקל', 'חמש מאות שקלים'], val: '500 ש״ח' },
+  { words: ['אלף שקל', 'אלף שקלים'], val: '1,000 ש״ח' },
+  { words: ['מאה דולר'], val: '100$' },
+  { words: ['אלף דולר'], val: '1,000$' },
+  { words: ['מיליון דולר'], val: '1,000,000$' }
+];
+
+// Remove hesitation and filler sounds in Hebrew and English speech ("אה", "אממ", "uh", "um", etc.)
+export function removeHebrewFillerWords(text: string): { cleaned: string; removedCount: number } {
+  if (!text) return { cleaned: '', removedCount: 0 };
+  let count = 0;
+  
+  // Safe boundaries in Hebrew and English text
+  const fillerRegex = /(?:^|(?<=[\s,;:.!?()"'״׳\-–—]))(?:[ושכ])?(?:אה+|אמ+|אהמ+|המ+|אֶה|עמ+|uh+|um+|er+|ah+|eh+|hmm+)[.…]*(?=[,\s;:.!?()"'״׳\-–—]|$)/gi;
+
+  let cleaned = text.replace(fillerRegex, () => {
+    count++;
+    return '';
+  });
+
+  cleaned = cleaned
+    .replace(/\s{2,}/g, ' ')
+    .replace(/\s+([,\.!\?:;…])/g, '$1')
+    .replace(/^[,;:]\s*/, '')
+    .replace(/([,\.!\?:;…])\s*([,\.!\?:;…])/g, '$1')
     .trim();
+
+  return { cleaned, removedCount: count };
+}
+
+// Convert written-out Hebrew dates, spelled years, percentages and common units to digits
+export function convertHebrewDatesAndWordsToNumbers(text: string): { cleaned: string; convertedCount: number } {
+  if (!text) return { cleaned: '', convertedCount: 0 };
+  let res = text;
+  let count = 0;
+
+  // 1. Full dates: [ב/ל]? [day_words] ב/ל?[month]
+  const dayEntries: { word: string; num: number }[] = [];
+  for (const item of HEBREW_DAYS_MAP) {
+    for (const w of item.words) {
+      dayEntries.push({ word: w, num: item.num });
+    }
+  }
+  dayEntries.sort((a, b) => b.word.length - a.word.length);
+
+  const monthsPattern = HEBREW_MONTHS.join('|');
+
+  for (const d of dayEntries) {
+    const escapedDay = d.word.replace(/\s+/g, '\\s+');
+    const dateRegex = new RegExp(
+      '(?:^|(?<=[\\s,;:.!?()\"\'״׳\\-–—]))(ב|ל)?(' + escapedDay + ')\\s+(ב|ל|בחודש\\s+)?(' + monthsPattern + ')(?=[,\\s;:.!?()\"\'״׳\\-–—]|$)',
+      'gi'
+    );
+    res = res.replace(dateRegex, (match, prefix, dayW, monthPrefix, month) => {
+      count++;
+      const p = prefix ? (prefix === 'ב' ? 'ב-' : prefix === 'ל' ? 'ל-' : prefix) : '';
+      const mp = monthPrefix ? (monthPrefix.startsWith('בחודש') ? ' בחודש ' : 'ב') : 'ב';
+      return (p ? p : '') + d.num + ' ' + mp + month;
+    });
+  }
+
+  // Also normalize already-numeric day followed by "ל[חודש]": e.g. "19 לספטמבר" -> "19 בספטמבר", "ב-19 לספטמבר" -> "ב-19 בספטמבר"
+  const numericDateRegex = new RegExp(
+    '(?:^|(?<=[\\s,;:.!?()\"\'״׳\\-–—]))(ב-|ב|ל-|ל)?(\\d{1,2})\\s+(ל)(' + monthsPattern + ')(?=[,\\s;:.!?()\"\'״׳\\-–—]|$)',
+    'gi'
+  );
+  res = res.replace(numericDateRegex, (match, prefix, dayNum, lPrefix, month) => {
+    count++;
+    const p = prefix ? (prefix.startsWith('ב') ? 'ב-' : 'ל-') : '';
+    return p + dayNum + ' ב' + month;
+  });
+
+  // 2. Year expressions: "שנת אלפיים עשרים ושש" -> "שנת 2026", "בשנת 2024", etc.
+  for (const y of HEBREW_YEARS_MAP) {
+    for (const w of y.words) {
+      const escapedYear = w.replace(/\s+/g, '\\s+');
+      const yearRegex = new RegExp(
+        '(?:^|(?<=[\\s,;:.!?()\"\'״׳\\-–—]))(בשנת|שנת|משנת|עד שנת|ב)?(' + escapedYear + ')(?=[,\\s;:.!?()\"\'״׳\\-–—]|$)',
+        'gi'
+      );
+      res = res.replace(yearRegex, (match, prefix) => {
+        count++;
+        if (prefix === 'ב') return 'ב-' + y.year;
+        if (prefix) return prefix + ' ' + y.year;
+        return String(y.year);
+      });
+    }
+  }
+
+  // 3. Percentages: "מאה אחוז" -> "100%", etc.
+  for (const p of HEBREW_PERCENT_MAP) {
+    for (const w of p.words) {
+      const escaped = w.replace(/\s+/g, '\\s+');
+      const r = new RegExp('(?:^|(?<=[\\s,;:.!?()\"\'״׳\\-–—]))' + escaped + '(?=[,\\s;:.!?()\"\'״׳\\-–—]|$)', 'gi');
+      res = res.replace(r, () => {
+        count++;
+        return p.val;
+      });
+    }
+  }
+
+  // 4. Units & quantities: "עשרים וארבע שעות" -> "24 שעות", etc.
+  for (const u of HEBREW_UNITS_MAP) {
+    for (const w of u.words) {
+      const escaped = w.replace(/\s+/g, '\\s+');
+      const r = new RegExp('(?:^|(?<=[\\s,;:.!?()\"\'״׳\\-–—]))' + escaped + '(?=[,\\s;:.!?()\"\'״׳\\-–—]|$)', 'gi');
+      res = res.replace(r, () => {
+        count++;
+        return u.val;
+      });
+    }
+  }
+
+  return { cleaned: res.replace(/\s{2,}/g, ' ').trim(), convertedCount: count };
+}
+
+// Clean and polish Hebrew subtitle text (removes filler sounds, converts dates and numbers to digits, fixes spacing and punctuation)
+export function cleanAndPolishHebrewSubtitleText(
+  text: string,
+  options?: { removeFillers?: boolean; formatDatesAndNumbers?: boolean }
+): string {
+  if (!text) return '';
+  let result = text;
+
+  const removeFillers = options?.removeFillers ?? true;
+  const formatDatesAndNumbers = options?.formatDatesAndNumbers ?? true;
+
+  if (removeFillers) {
+    result = removeHebrewFillerWords(result).cleaned;
+  }
+
+  if (formatDatesAndNumbers) {
+    result = convertHebrewDatesAndWordsToNumbers(result).cleaned;
+  }
+
+  return result
+    .replace(/\s+/g, ' ')
+    .replace(/\s+([,\.!\?:;…])/g, '$1')
+    .replace(/^[,;:]\s*/, '')
+    .trim();
+}
+
+// Batch cleanup helper for an array of SubtitleItems
+export function processSubtitlesCleanup(
+  subtitles: SubtitleItem[],
+  options?: {
+    removeFillers?: boolean;
+    formatDatesAndNumbers?: boolean;
+    dropEmptyCues?: boolean;
+  }
+): {
+  subtitles: SubtitleItem[];
+  fillersRemoved: number;
+  datesConverted: number;
+  emptyCuesDropped: number;
+} {
+  if (!subtitles || subtitles.length === 0) {
+    return { subtitles: [], fillersRemoved: 0, datesConverted: 0, emptyCuesDropped: 0 };
+  }
+
+  const removeFillers = options?.removeFillers ?? true;
+  const formatDatesAndNumbers = options?.formatDatesAndNumbers ?? true;
+  const dropEmptyCues = options?.dropEmptyCues ?? true;
+
+  let totalFillers = 0;
+  let totalDates = 0;
+  let emptyDropped = 0;
+
+  const cleanedItems: SubtitleItem[] = [];
+
+  for (const item of subtitles) {
+    let text = item.text || '';
+
+    if (removeFillers) {
+      const fRes = removeHebrewFillerWords(text);
+      text = fRes.cleaned;
+      totalFillers += fRes.removedCount;
+    }
+
+    if (formatDatesAndNumbers) {
+      const dRes = convertHebrewDatesAndWordsToNumbers(text);
+      text = dRes.cleaned;
+      totalDates += dRes.convertedCount;
+    }
+
+    text = text
+      .replace(/\s+/g, ' ')
+      .replace(/\s+([,\.!\?:;…])/g, '$1')
+      .replace(/^[,;:]\s*/, '')
+      .trim();
+
+    if (!text && dropEmptyCues) {
+      emptyDropped++;
+      continue;
+    }
+
+    cleanedItems.push({
+      ...item,
+      text
+    });
+  }
+
+  return {
+    subtitles: cleanedItems,
+    fillersRemoved: totalFillers,
+    datesConverted: totalDates,
+    emptyCuesDropped: emptyDropped
+  };
 }
 
 // Build Subtitle Cues Directly from Whisper Acoustic Word-Level Timestamps
@@ -777,6 +1090,7 @@ export function smartRebalanceSubtitles(
   for (const sub of subtitles) {
     const cleaned = cleanAndPolishHebrewSubtitleText(sub.text);
     const words = cleaned.split(' ').filter(w => w.trim().length > 0);
+    if (words.length === 0) continue;
 
     if (words.length <= maxWordsPerCard) {
       newSubtitles.push({
