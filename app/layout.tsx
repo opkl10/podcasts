@@ -53,6 +53,14 @@ export default function RootLayout({
                 <span>פודקאסטים</span>
               </Link>
               <Link
+                href="/video-script"
+                className="flex items-center gap-2 px-3 py-1.5 text-xs sm:text-sm font-bold text-pink-300 hover:text-white hover:bg-pink-900/40 rounded-lg transition-colors border border-pink-500/20"
+                title="מנתח סרטונים ותסריטאי בעברית"
+              >
+                <Sparkles className="w-4 h-4 text-pink-400" />
+                <span>📹 מנתח וידאו לתסריט</span>
+              </Link>
+              <Link
                 href="/?view=gaming"
                 className="flex items-center gap-2 px-3 py-1.5 text-xs sm:text-sm font-bold text-purple-300 hover:text-white hover:bg-purple-900/40 rounded-lg transition-colors"
               >

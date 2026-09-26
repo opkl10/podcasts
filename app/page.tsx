@@ -38,7 +38,8 @@ import {
   AlertCircle,
   CheckCircle2,
   Gamepad2,
-  Key
+  Key,
+  Clapperboard
 } from 'lucide-react';
 import SubtitleAISettingsModal from '@/components/subtitles/SubtitleAISettingsModal';
 import { getAISettings } from '@/lib/apiConfig';
@@ -325,6 +326,15 @@ export default function DashboardPage() {
               >
                 <Subtitles className="w-4 h-4 text-purple-200" />
                 <span>🎬 אולפן כתוביות עצמאי</span>
+              </Link>
+
+              <Link
+                href="/video-script"
+                className="flex items-center justify-center gap-2 px-4 py-3.5 rounded-xl bg-gradient-to-r from-pink-600 via-purple-600 to-indigo-600 hover:from-pink-500 hover:to-indigo-500 text-white font-black text-xs sm:text-sm shadow-xl shadow-purple-600/40 hover:scale-[1.02] active:scale-95 transition-all text-center whitespace-nowrap border border-pink-400/40"
+                title="ניתוח סרטונים באנגלית, תמלול, תרגום והפקת תסריט לסרטון בעברית עם בימוי וטלפרומפטר"
+              >
+                <Clapperboard className="w-4 h-4 text-pink-200" />
+                <span>📹 מנתח וידאו לתסריט</span>
               </Link>
 
               <Link
