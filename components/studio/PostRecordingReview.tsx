@@ -24,7 +24,8 @@ import {
   Palette,
   Activity,
   Gamepad2,
-  ShieldAlert
+  ShieldAlert,
+  Trash2
 } from 'lucide-react';
 import AudioEditorAudiogramStudio from '@/components/audio/AudioEditorAudiogramStudio';
 
@@ -38,6 +39,7 @@ interface PostRecordingReviewProps {
   durationSeconds: number;
   markers: TimestampMarker[];
   onReRecord: () => void;
+  onDeleteRecording?: () => void;
   defaultFormat?: 'mp4' | 'webm' | 'mkv' | 'mov';
 }
 
@@ -51,6 +53,7 @@ export default function PostRecordingReview({
   durationSeconds,
   markers,
   onReRecord,
+  onDeleteRecording,
   defaultFormat = 'mp4'
 }: PostRecordingReviewProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -202,6 +205,18 @@ export default function PostRecordingReview({
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+            {/* Delete Bad Recording & Retake */}
+            {onDeleteRecording && (
+              <button
+                onClick={onDeleteRecording}
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 hover:text-white border border-rose-500/40 text-xs font-bold transition-all shadow-md active:scale-95"
+                title="מחיקת ההקלטה שלא יצאה טוב וחזרה לאולפן להקלטה מחדש"
+              >
+                <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                <span>🗑️ מחק קטע זה (לא יצא טוב)</span>
+              </button>
+            )}
+
             {/* Return to Studio */}
             <button
               onClick={onReRecord}

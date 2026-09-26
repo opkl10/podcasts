@@ -70,6 +70,8 @@ import {
   VolumeX,
   CircleDot,
   Trash2,
+  RotateCcw,
+  ArrowLeft,
   X
 } from 'lucide-react';
 
@@ -1134,6 +1136,11 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
   const [recordedAudioBlob, setRecordedAudioBlob] = useState<Blob | null>(null);
   const [recordedVideoUrl, setRecordedVideoUrl] = useState<string | null>(null);
 
+  // Bad take & discard state
+  const isDiscardingTakeRef = useRef(false);
+  const [showStopModal, setShowStopModal] = useState(false);
+  const [discardToastMsg, setDiscardToastMsg] = useState<string | null>(null);
+
   // Second Screen Studio Clock Broadcaster
   const clockBroadcasterRef = useRef<StudioClockBroadcaster | null>(null);
 
@@ -1467,6 +1474,12 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
           recordingAudioMixerRef.current = null;
         }
 
+        // If discarding this bad take, cleanly exit without saving to database or IndexedDB
+        if (isDiscardingTakeRef.current) {
+          isDiscardingTakeRef.current = false;
+          return;
+        }
+
         const fullVideoBlob = new Blob(recordedChunksRef.current, { type: mimeType });
         const videoUrl = URL.createObjectURL(fullVideoBlob);
 
@@ -1575,17 +1588,132 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
   };
 
   const stopRecording = () => {
-    if (!mediaRecorderRef.current) return;
-    if (confirm('האם לעצור את ההקלטה ולעבור לסקירת הפרק?')) {
-      if (backupIntervalRef.current) {
-        clearInterval(backupIntervalRef.current);
+    if (!mediaRecorderRef.current || !isRecording) return;
+    // Auto-pause recorders while user decides what to do so time doesn't run
+    if (!isPaused) {
+      if (mediaRecorderRef.current.state === 'recording') {
+        try { mediaRecorderRef.current.pause(); } catch (e) {}
       }
-      mediaRecorderRef.current.stop();
-      if (audioRecorderRef.current && audioRecorderRef.current.state !== 'inactive') {
-        audioRecorderRef.current.stop();
+      if (audioRecorderRef.current && audioRecorderRef.current.state === 'recording') {
+        try { audioRecorderRef.current.pause(); } catch (e) {}
       }
-      setIsRecording(false);
+      setIsPaused(true);
+    }
+    setShowStopModal(true);
+  };
+
+  const handleCancelStop = () => {
+    setShowStopModal(false);
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'paused') {
+      try { mediaRecorderRef.current.resume(); } catch (e) {}
+      if (audioRecorderRef.current && audioRecorderRef.current.state === 'paused') {
+        try { audioRecorderRef.current.resume(); } catch (e) {}
+      }
       setIsPaused(false);
+    }
+  };
+
+  const handleConfirmSaveAndReview = () => {
+    setShowStopModal(false);
+    if (backupIntervalRef.current) {
+      clearInterval(backupIntervalRef.current);
+      backupIntervalRef.current = null;
+    }
+    isDiscardingTakeRef.current = false;
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      try { mediaRecorderRef.current.stop(); } catch (e) {}
+    }
+    if (audioRecorderRef.current && audioRecorderRef.current.state !== 'inactive') {
+      try { audioRecorderRef.current.stop(); } catch (e) {}
+    }
+    setIsRecording(false);
+    setIsPaused(false);
+  };
+
+  const handleConfirmDeleteBadTake = async () => {
+    setShowStopModal(false);
+    if (backupIntervalRef.current) {
+      clearInterval(backupIntervalRef.current);
+      backupIntervalRef.current = null;
+    }
+    isDiscardingTakeRef.current = true;
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      try { mediaRecorderRef.current.stop(); } catch (e) {}
+    }
+    if (audioRecorderRef.current && audioRecorderRef.current.state !== 'inactive') {
+      try { audioRecorderRef.current.stop(); } catch (e) {}
+    }
+    setIsRecording(false);
+    setIsPaused(false);
+    setRecordedSeconds(0);
+    recordedSecondsRef.current = 0;
+    setActiveTopicSeconds(0);
+    setMarkers([]);
+    markersRef.current = [];
+    recordedChunksRef.current = [];
+    recordedAudioChunksRef.current = [];
+    try {
+      await deleteMediaBlob(`emergency_rec_${episode.id}`);
+    } catch (e) {}
+    setDiscardToastMsg('🗑️ הקטע שלא יצא טוב נמחק בהצלחה! האולפן מוכן להקלטה חדשה.');
+    setTimeout(() => setDiscardToastMsg(null), 4500);
+  };
+
+  const handlePromptDiscardBadTake = () => {
+    if (!mediaRecorderRef.current || !isRecording) return;
+    if (!isPaused) {
+      if (mediaRecorderRef.current.state === 'recording') {
+        try { mediaRecorderRef.current.pause(); } catch (e) {}
+      }
+      if (audioRecorderRef.current && audioRecorderRef.current.state === 'recording') {
+        try { audioRecorderRef.current.pause(); } catch (e) {}
+      }
+      setIsPaused(true);
+    }
+    if (confirm('האם אתה בטוח שברצונך למחוק את הקטע הנוכחי שלא יצא טוב ולהתחיל מחדש?')) {
+      handleConfirmDeleteBadTake();
+    }
+  };
+
+  const handleDeleteRecordingAndReRecord = async () => {
+    if (!confirm('האם אתה בטוח שברצונך למחוק לצמיתות את ההקלטה הזו ולהתחיל מחדש?')) {
+      return;
+    }
+    try {
+      if (currentEpisode.recording?.videoBlobKey) {
+        await deleteMediaBlob(currentEpisode.recording.videoBlobKey);
+      }
+      if (currentEpisode.recording?.audioBlobKey) {
+        await deleteMediaBlob(currentEpisode.recording.audioBlobKey);
+      }
+      await deleteMediaBlob(`emergency_rec_${episode.id}`);
+
+      const resetEpisode: Episode = {
+        ...currentEpisode,
+        status: 'draft',
+        recording: undefined
+      };
+      saveEpisode(resetEpisode);
+      currentEpisodeRef.current = resetEpisode;
+      setCurrentEpisode(resetEpisode);
+
+      setFinishedRecording(false);
+      setRecordedVideoBlob(null);
+      setRecordedAudioBlob(null);
+      setRecordedVideoUrl(null);
+      setRecordedSeconds(0);
+      recordedSecondsRef.current = 0;
+      setActiveTopicSeconds(0);
+      setMarkers([]);
+      markersRef.current = [];
+      recordedChunksRef.current = [];
+      recordedAudioChunksRef.current = [];
+
+      setDiscardToastMsg('🗑️ ההקלטה נמחקה לחלוטין. האולפן מוכן להקלטה חדשה!');
+      setTimeout(() => setDiscardToastMsg(null), 4500);
+    } catch (err) {
+      console.error('Failed to delete recording:', err);
+      alert('שגיאה במחיקת ההקלטה.');
     }
   };
 
@@ -1674,12 +1802,89 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
           setMarkers([]);
           markersRef.current = [];
         }}
+        onDeleteRecording={handleDeleteRecordingAndReRecord}
       />
     );
   }
 
   return (
     <div ref={studioContainerRef} className="space-y-6 animate-in fade-in duration-300 font-sans">
+      {/* Toast Notification for Discarded / Reset Take */}
+      {discardToastMsg && (
+        <div className="fixed top-6 right-6 z-50 p-4 rounded-2xl bg-slate-900/95 border-2 border-emerald-500/80 text-emerald-300 text-sm font-bold shadow-2xl backdrop-blur-md flex items-center gap-3 animate-in slide-in-from-top-4">
+          <span className="text-xl">✨</span>
+          <span>{discardToastMsg}</span>
+        </div>
+      )}
+
+      {/* Stop Recording Decision Modal */}
+      {showStopModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="w-full max-w-md rounded-3xl bg-[#121620] border-2 border-slate-700/80 shadow-2xl p-6 text-right space-y-5 animate-in zoom-in-95 duration-200">
+            <div className="flex items-center gap-3 text-white">
+              <div className="p-3 rounded-2xl bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                <Square className="w-6 h-6 fill-amber-400" />
+              </div>
+              <div>
+                <h3 className="text-lg font-black">עצירת הקלטה</h3>
+                <p className="text-xs text-slate-400">איך יצא הקטע שהקלטת?</p>
+              </div>
+            </div>
+
+            <div className="p-3.5 rounded-2xl bg-slate-900/70 border border-slate-800 text-xs text-slate-300 space-y-1">
+              <div className="flex justify-between font-mono">
+                <span className="text-slate-400">משך הקטע הנוכחי:</span>
+                <span className="font-bold text-white">{formatTime(recordedSecondsRef.current || recordedSeconds)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">סמנים/הערות:</span>
+                <span className="font-bold text-white">{markersRef.current.length || markers.length}</span>
+              </div>
+            </div>
+
+            <div className="space-y-2.5">
+              {/* Option 1: Save & Review */}
+              <button
+                onClick={handleConfirmSaveAndReview}
+                className="w-full flex items-center justify-between px-4 py-3.5 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm shadow-lg shadow-emerald-950/50 transition-all group"
+              >
+                <div className="flex items-center gap-2.5">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-200" />
+                  <div className="text-right">
+                    <p className="leading-tight">יצא מעולה - שמור ועבור לסקירה</p>
+                    <p className="text-[11px] font-normal text-emerald-200/80">שומר את ההקלטה ומעביר לעריכה והורדה</p>
+                  </div>
+                </div>
+                <ArrowLeft className="w-4 h-4 transition-transform group-hover:-translate-x-1" />
+              </button>
+
+              {/* Option 2: Delete Bad Take */}
+              <button
+                onClick={handleConfirmDeleteBadTake}
+                className="w-full flex items-center justify-between px-4 py-3.5 rounded-2xl bg-rose-600/20 hover:bg-rose-600/30 border border-rose-500/40 text-rose-200 hover:text-white font-bold text-sm transition-all group"
+              >
+                <div className="flex items-center gap-2.5">
+                  <Trash2 className="w-5 h-5 text-rose-400" />
+                  <div className="text-right">
+                    <p className="leading-tight">לא יצא טוב - מחק קטע והקלט מחדש</p>
+                    <p className="text-[11px] font-normal text-rose-300/70">מוחק את הקטע לחלוטין ומאפס את הטיימר</p>
+                  </div>
+                </div>
+                <RotateCcw className="w-4 h-4 text-rose-400 group-hover:-rotate-90 transition-transform duration-300" />
+              </button>
+
+              {/* Option 3: Continue Recording */}
+              <button
+                onClick={handleCancelStop}
+                className="w-full py-2.5 rounded-xl text-xs font-semibold text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 transition-colors"
+              >
+                המשך להקליט (ביטול עצירה)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Permanent Dedicated Remote Guest / Co-Host Audio Player */}
       <audio ref={guestAudioRef} autoPlay playsInline className="hidden" />
 
@@ -1878,12 +2083,23 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
                   {isPaused ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}
                 </button>
 
+                {/* Direct Discard Bad Take Button */}
+                <button
+                  onClick={handlePromptDiscardBadTake}
+                  className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-rose-950/60 hover:bg-rose-900/80 text-rose-300 hover:text-white border border-rose-700/50 text-xs font-bold transition-all shadow-md active:scale-95"
+                  title="מחיקת הקטע הנוכחי שלא יצא טוב והתחלה מחדש"
+                >
+                  <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                  <span>מחק קטע (לא יצא טוב)</span>
+                </button>
+
                 <button
                   onClick={stopRecording}
                   className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs shadow-lg shadow-rose-950/60 active:scale-95 transition-all"
+                  title="עצירת הקלטה ובחירת שמירה או מחיקה"
                 >
                   <Square className="w-4 h-4 fill-white" />
-                  <span>עצור ושמור</span>
+                  <span>עצור</span>
                 </button>
               </>
             )}
