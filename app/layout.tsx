@@ -17,10 +17,10 @@ export default function RootLayout({
     <html lang="he" dir="rtl" className="dark" suppressHydrationWarning>
       <body className="min-h-screen bg-[#0b0d11] text-slate-100 font-sans antialiased selection:bg-indigo-500 selection:text-white flex flex-col" suppressHydrationWarning>
         {/* Top Studio Navbar */}
-        <header className="sticky top-0 z-40 w-full border-b border-slate-800/80 bg-[#0e1117]/90 backdrop-blur-md">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+        <header className="sticky top-0 z-40 w-full border-b border-slate-800/80 bg-[#0e1117]/95 backdrop-blur-md shadow-sm">
+          <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 min-h-[4rem] py-2 md:py-0 flex flex-wrap md:flex-nowrap items-center justify-between gap-2.5 sm:gap-4">
             {/* Logo and Brand */}
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 shrink-0">
               <Link href="/" className="flex items-center gap-2.5 group">
                 <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 via-purple-600 to-pink-500 p-0.5 shadow-lg shadow-indigo-500/20 group-hover:scale-105 transition-transform duration-200">
                   <div className="w-full h-full bg-[#0e1117] rounded-[10px] flex items-center justify-center">
@@ -36,40 +36,47 @@ export default function RootLayout({
                       Studio
                     </span>
                   </div>
-                  <span className="text-[11px] text-slate-400 font-medium">
+                  <span className="hidden sm:inline-block text-[11px] text-slate-400 font-medium">
                     ניהול, מחקר ואולפן הקלטות
                   </span>
                 </div>
               </Link>
             </div>
 
-            {/* Navigation links */}
-            <nav className="flex items-center gap-1 sm:gap-2">
+            {/* Navigation links - Horizontally scrollable on small screens, never clipped */}
+            <nav className="flex items-center gap-1 sm:gap-2 overflow-x-auto scrollbar-none py-1 max-w-full order-3 md:order-2 shrink min-w-0">
               <Link
                 href="/"
-                className="flex items-center gap-2 px-3 py-1.5 text-xs sm:text-sm font-medium text-slate-300 hover:text-white hover:bg-slate-800/60 rounded-lg transition-colors"
+                className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 text-xs sm:text-sm font-medium text-slate-300 hover:text-white hover:bg-slate-800/60 rounded-lg transition-colors whitespace-nowrap shrink-0"
               >
                 <ListMusic className="w-4 h-4 text-indigo-400" />
                 <span>פודקאסטים</span>
               </Link>
               <Link
                 href="/video-script"
-                className="flex items-center gap-2 px-3 py-1.5 text-xs sm:text-sm font-bold text-pink-300 hover:text-white hover:bg-pink-900/40 rounded-lg transition-colors border border-pink-500/20"
+                className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 text-xs sm:text-sm font-bold text-pink-300 hover:text-white hover:bg-pink-900/40 rounded-lg transition-colors border border-pink-500/20 whitespace-nowrap shrink-0"
                 title="מנתח סרטונים ותסריטאי בעברית"
               >
                 <Sparkles className="w-4 h-4 text-pink-400" />
                 <span>📹 מנתח וידאו לתסריט</span>
               </Link>
               <Link
+                href="/subtitles"
+                className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 text-xs sm:text-sm font-bold text-purple-300 hover:text-white hover:bg-purple-900/40 rounded-lg transition-colors border border-purple-500/20 whitespace-nowrap shrink-0"
+                title="אולפן כתוביות"
+              >
+                <span>🎬 כתוביות</span>
+              </Link>
+              <Link
                 href="/?view=gaming"
-                className="flex items-center gap-2 px-3 py-1.5 text-xs sm:text-sm font-bold text-purple-300 hover:text-white hover:bg-purple-900/40 rounded-lg transition-colors"
+                className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 text-xs sm:text-sm font-bold text-purple-300 hover:text-white hover:bg-purple-900/40 rounded-lg transition-colors whitespace-nowrap shrink-0"
               >
                 <Gamepad2 className="w-4 h-4 text-purple-400" />
                 <span>🎮 סרטוני גיימינג</span>
               </Link>
               <Link
                 href="/gaming"
-                className="flex items-center gap-2 px-3 py-1.5 text-xs sm:text-sm font-bold text-white bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 border border-purple-400/30 rounded-lg transition-all shadow-md shadow-purple-900/30"
+                className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 text-xs sm:text-sm font-bold text-white bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 border border-purple-400/30 rounded-lg transition-all shadow-md shadow-purple-900/30 whitespace-nowrap shrink-0"
               >
                 <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
                 <span>אולפן חי</span>
@@ -77,10 +84,10 @@ export default function RootLayout({
             </nav>
 
             {/* Actions */}
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 sm:gap-3 shrink-0 order-2 md:order-3">
               <Link
                 href="/episodes/new"
-                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 rounded-lg shadow-md shadow-indigo-600/20 hover:shadow-indigo-600/30 active:scale-95 transition-all duration-200"
+                className="flex items-center gap-2 px-3 sm:px-4 py-2 text-xs sm:text-sm font-medium text-white bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 rounded-lg shadow-md shadow-indigo-600/20 hover:shadow-indigo-600/30 active:scale-95 transition-all duration-200 whitespace-nowrap"
               >
                 <PlusCircle className="w-4 h-4" />
                 <span>פרק חדש</span>

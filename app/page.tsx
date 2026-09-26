@@ -280,142 +280,156 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-8 animate-in fade-in duration-300">
-      {/* Top Banner */}
-      <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-indigo-950/80 via-[#131722] to-[#0e111a] border border-indigo-900/40 p-8 shadow-2xl">
-        <div className="absolute top-0 left-0 w-96 h-96 bg-indigo-600/10 rounded-full blur-3xl pointer-events-none -translate-x-1/2 -translate-y-1/2"></div>
-        <div className="absolute bottom-0 right-0 w-80 h-80 bg-purple-600/10 rounded-full blur-3xl pointer-events-none translate-x-1/3 translate-y-1/3"></div>
+      {/* Top Hero Banner */}
+      <div className="relative rounded-3xl bg-gradient-to-br from-indigo-950/80 via-[#131722] to-[#0e111a] border border-indigo-900/40 p-5 sm:p-7 lg:p-8 shadow-2xl space-y-6">
+        {/* Isolated glow lights to avoid clipping content */}
+        <div className="absolute inset-0 overflow-hidden rounded-3xl pointer-events-none">
+          <div className="absolute top-0 left-0 w-96 h-96 bg-indigo-600/10 rounded-full blur-3xl -translate-x-1/2 -translate-y-1/2"></div>
+          <div className="absolute bottom-0 right-0 w-80 h-80 bg-purple-600/10 rounded-full blur-3xl translate-x-1/3 translate-y-1/3"></div>
+        </div>
 
-        <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
+        {/* Hidden Input for Instant Audio Import */}
+        <input
+          ref={importAudioFileInputRef}
+          type="file"
+          accept="audio/*,video/*,.mp3,.wav,.m4a,.webm,.ogg,.mp4,.mov,.aac,.flac,.opus,.json,.txt,.md,.csv"
+          multiple
+          onChange={handleImportAudioAsNewEpisode}
+          className="hidden"
+        />
+
+        {/* Top Tier: Title, Brand Context & Primary Action Buttons */}
+        <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-6">
           <div className="max-w-2xl">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/30 text-indigo-300 text-xs font-semibold mb-3">
               <Sparkles className="w-3.5 h-3.5" />
               מערכת אולפן וקטלוג רב-פודקאסטים
             </div>
-            <h1 className="text-3xl sm:text-4xl font-black text-white tracking-tight leading-tight">
+            <h1 className="text-2xl sm:text-3xl md:text-4xl font-black text-white tracking-tight leading-tight">
               {currentPodcast ? currentPodcast.title : 'כל הפודקאסטים והתוכניות'}
             </h1>
-            <p className="mt-3 text-sm text-slate-300 leading-relaxed max-w-xl">
+            <p className="mt-2.5 text-xs sm:text-sm text-slate-300 leading-relaxed max-w-xl">
               {currentPodcast?.description || 'קטלוג וניהול תוכניות פודקאסט מרובות, הכנת ראשי פרקים ושאלות, הקלטת וידאו HD עם iPhone ושעון הקלטה חי.'}
             </p>
           </div>
 
-          <div className="flex flex-wrap sm:flex-col gap-3 shrink-0">
-            {/* Hidden Input for Instant Audio Import */}
-            <input
-              ref={importAudioFileInputRef}
-              type="file"
-              accept="audio/*,video/*,.mp3,.wav,.m4a,.webm,.ogg,.mp4,.mov,.aac,.flac,.opus,.json,.txt,.md,.csv"
-              multiple
-              onChange={handleImportAudioAsNewEpisode}
-              className="hidden"
-            />
+          {/* Primary Quick Launchers */}
+          <div className="flex flex-wrap items-center gap-3">
+            <Link
+              href="/episodes/new"
+              className="flex items-center justify-center gap-2 px-5 py-3.5 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold text-sm shadow-xl shadow-indigo-600/30 hover:scale-[1.02] active:scale-95 transition-all text-center whitespace-nowrap"
+            >
+              <PlusCircle className="w-5 h-5" />
+              <span>יצירת פרק חדש</span>
+            </Link>
 
-            <div className="flex flex-wrap items-center gap-2">
-              <Link
-                href="/episodes/new"
-                className="flex-1 flex items-center justify-center gap-2 px-5 py-3.5 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold text-sm shadow-xl shadow-indigo-600/30 hover:scale-[1.02] active:scale-95 transition-all text-center whitespace-nowrap"
-              >
-                <PlusCircle className="w-5 h-5" />
-                <span>יצירת פרק חדש</span>
-              </Link>
+            <button
+              onClick={() => importAudioFileInputRef.current?.click()}
+              className="flex items-center justify-center gap-2 px-4 py-3.5 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 hover:text-white border border-emerald-500/40 font-bold text-xs sm:text-sm shadow-lg transition-all active:scale-95 whitespace-nowrap"
+              title="העלאת קובצי שמע ווידאו מוקלטים (MP3/WAV/M4A/MP4) ליצירת פרקים באופן מיידי"
+            >
+              <Upload className="w-4 h-4 text-emerald-400" />
+              <span>העלאת הקלטות</span>
+            </button>
+          </div>
+        </div>
 
-              <Link
-                href="/subtitles"
-                className="flex items-center justify-center gap-2 px-4 py-3.5 rounded-xl bg-gradient-to-r from-purple-700 via-indigo-700 to-blue-700 hover:from-purple-600 hover:to-indigo-600 text-white font-black text-xs sm:text-sm shadow-xl shadow-purple-700/40 hover:scale-[1.02] active:scale-95 transition-all text-center whitespace-nowrap border border-purple-400/30"
-                title="אולפן כתוביות עצמאי: בחירה מרובה, לוגו מותג קבוע, גופנים אישיים, מיקום חופשי וכמות מילים בשורה"
-              >
-                <Subtitles className="w-4 h-4 text-purple-200" />
-                <span>🎬 אולפן כתוביות עצמאי</span>
-              </Link>
+        {/* Bottom Tier: Studio Suites & Management Toolbar */}
+        <div className="relative z-10 pt-4 border-t border-slate-800/80 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
+          {/* Dedicated Studio Suites */}
+          <div className="flex items-center gap-2 overflow-x-auto scrollbar-none pb-1 md:pb-0">
+            <span className="text-[11px] font-bold text-slate-400 shrink-0 ml-1 hidden sm:inline">
+              אולפנים:
+            </span>
 
-              <Link
-                href="/video-script"
-                className="flex items-center justify-center gap-2 px-4 py-3.5 rounded-xl bg-gradient-to-r from-pink-600 via-purple-600 to-indigo-600 hover:from-pink-500 hover:to-indigo-500 text-white font-black text-xs sm:text-sm shadow-xl shadow-purple-600/40 hover:scale-[1.02] active:scale-95 transition-all text-center whitespace-nowrap border border-pink-400/40"
-                title="ניתוח סרטונים באנגלית, תמלול, תרגום והפקת תסריט לסרטון בעברית עם בימוי וטלפרומפטר"
-              >
-                <Clapperboard className="w-4 h-4 text-pink-200" />
-                <span>📹 מנתח וידאו לתסריט</span>
-              </Link>
+            <Link
+              href="/video-script"
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-pink-500/10 hover:bg-pink-500/20 text-pink-200 border border-pink-500/30 font-bold text-xs shadow-md hover:scale-[1.02] active:scale-95 transition-all whitespace-nowrap shrink-0"
+              title="ניתוח סרטונים באנגלית, תמלול, תרגום והפקת תסריט לסרטון בעברית עם בימוי וטלפרומפטר"
+            >
+              <Clapperboard className="w-3.5 h-3.5 text-pink-300" />
+              <span>📹 מנתח וידאו לתסריט</span>
+            </Link>
 
-              <Link
-                href="/gaming"
-                className="flex items-center justify-center gap-2 px-4 py-3.5 rounded-xl bg-gradient-to-r from-purple-600 via-fuchsia-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-black text-xs sm:text-sm shadow-xl shadow-purple-600/40 hover:scale-[1.02] active:scale-95 transition-all text-center whitespace-nowrap border border-purple-400/30"
-                title="כניסה ישירה לאולפן גיימינג ויוצרים ב-60FPS"
-              >
-                <Gamepad2 className="w-4 h-4 text-purple-200" />
-                <span>🎮 אולפן גיימינג</span>
-              </Link>
+            <Link
+              href="/subtitles"
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-purple-500/10 hover:bg-purple-500/20 text-purple-200 border border-purple-500/30 font-bold text-xs shadow-md hover:scale-[1.02] active:scale-95 transition-all whitespace-nowrap shrink-0"
+              title="אולפן כתוביות עצמאי: בחירה מרובה, לוגו מותג קבוע, גופנים אישיים, מיקום חופשי וכמות מילים בשורה"
+            >
+              <Subtitles className="w-3.5 h-3.5 text-purple-300" />
+              <span>🎬 אולפן כתוביות</span>
+            </Link>
 
-              <button
-                onClick={() => importAudioFileInputRef.current?.click()}
-                className="flex items-center justify-center gap-1.5 px-4 py-3.5 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 hover:text-white border border-emerald-500/40 font-bold text-xs shadow-lg transition-all active:scale-95 whitespace-nowrap"
-                title="העלאת קובצי שמע ווידאו מוקלטים (MP3/WAV/M4A/MP4) ליצירת פרקים באופן מיידי"
-              >
-                <Upload className="w-4 h-4 text-emerald-400" />
-                <span>העלאת הקלטות</span>
-              </button>
+            <Link
+              href="/gaming"
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-fuchsia-500/10 hover:bg-fuchsia-500/20 text-fuchsia-200 border border-fuchsia-500/30 font-bold text-xs shadow-md hover:scale-[1.02] active:scale-95 transition-all whitespace-nowrap shrink-0"
+              title="כניסה ישירה לאולפן גיימינג ויוצרים ב-60FPS"
+            >
+              <Gamepad2 className="w-3.5 h-3.5 text-fuchsia-300" />
+              <span>🎮 אולפן גיימינג</span>
+            </Link>
+          </div>
 
-              <button
-                type="button"
-                onClick={() => setIsAIModalOpen(true)}
-                className={`flex items-center justify-center gap-1.5 px-4 py-3.5 rounded-xl border font-bold text-xs shadow-lg transition-all active:scale-95 whitespace-nowrap ${
-                  hasAIKey
-                    ? 'bg-emerald-950/40 hover:bg-emerald-900/40 text-emerald-300 border-emerald-500/40'
-                    : 'bg-slate-900/90 hover:bg-slate-800 text-slate-200 hover:text-white border-slate-700/80'
-                }`}
-                title="הגדרות מפתחות AI (Google Gemini & OpenAI)"
-              >
-                <Key className="w-4 h-4 text-amber-400" />
-                <span>{hasAIKey ? 'Gemini מחובר' : 'מפתחות AI'}</span>
-                <span className={`w-2 h-2 rounded-full ${hasAIKey ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]' : 'bg-slate-500'}`} />
-              </button>
+          {/* Quick Tools & Settings Bar */}
+          <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto scrollbar-none pb-1 md:pb-0">
+            <button
+              type="button"
+              onClick={() => setIsAIModalOpen(true)}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border font-bold text-xs shadow-md transition-all active:scale-95 whitespace-nowrap shrink-0 ${
+                hasAIKey
+                  ? 'bg-emerald-950/40 hover:bg-emerald-900/40 text-emerald-300 border-emerald-500/40'
+                  : 'bg-slate-900/90 hover:bg-slate-800 text-slate-200 hover:text-white border-slate-700/80'
+              }`}
+              title="הגדרות מפתחות AI (Google Gemini & OpenAI)"
+            >
+              <Key className="w-3.5 h-3.5 text-amber-400" />
+              <span>{hasAIKey ? 'Gemini מחובר' : 'מפתחות AI'}</span>
+              <span className={`w-1.5 h-1.5 rounded-full ${hasAIKey ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]' : 'bg-slate-500'}`} />
+            </button>
 
-              <button
-                onClick={() => setIsImportEpisodesModalOpen(true)}
-                className="flex items-center justify-center gap-1.5 px-4 py-3.5 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 hover:text-white border border-indigo-500/40 font-bold text-xs shadow-lg transition-all active:scale-95 whitespace-nowrap"
-                title="ייבוא פרקים מקובץ JSON, מסמך טקסט או רשימת נושאים"
-              >
-                <FileJson className="w-4 h-4 text-indigo-400" />
-                <span>ייבוא פרקים מקובץ</span>
-              </button>
-            </div>
+            <button
+              onClick={() => setIsImportEpisodesModalOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-900/80 hover:bg-slate-800 text-indigo-300 hover:text-white border border-slate-700/80 font-bold text-xs transition-all active:scale-95 whitespace-nowrap shrink-0"
+              title="ייבוא פרקים מקובץ JSON, מסמך טקסט או רשימת נושאים"
+            >
+              <FileJson className="w-3.5 h-3.5 text-indigo-400" />
+              <span>ייבוא פרקים</span>
+            </button>
 
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setIsPodcastModalOpen(true)}
-                className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl bg-slate-800/90 hover:bg-slate-700/90 text-slate-200 hover:text-white border border-slate-700/60 font-semibold text-xs transition-all"
-              >
-                <Settings2 className="w-3.5 h-3.5 text-indigo-400" />
-                <span>תוכניות ({podcasts.length})</span>
-              </button>
+            <button
+              onClick={() => setIsPodcastModalOpen(true)}
+              className="flex items-center gap-1.5 px-2.5 sm:px-3 py-2 rounded-xl bg-slate-900/80 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-700/80 font-semibold text-xs transition-all whitespace-nowrap shrink-0"
+            >
+              <Settings2 className="w-3.5 h-3.5 text-indigo-400" />
+              <span>תוכניות ({podcasts.length})</span>
+            </button>
 
-              <button
-                onClick={() => setIsCloudModalOpen(true)}
-                className="flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl bg-orange-500/10 hover:bg-orange-500/20 text-orange-300 border border-orange-500/30 font-semibold text-xs transition-all"
-                title="חיבור BunnyCDN ו-uPress"
-              >
-                <span className="text-sm">🐰</span>
-                <span>Bunny & ענן</span>
-              </button>
+            <button
+              onClick={() => setIsCloudModalOpen(true)}
+              className="flex items-center gap-1.5 px-2.5 sm:px-3 py-2 rounded-xl bg-orange-500/10 hover:bg-orange-500/20 text-orange-300 border border-orange-500/30 font-semibold text-xs transition-all whitespace-nowrap shrink-0"
+              title="חיבור BunnyCDN ו-uPress"
+            >
+              <span className="text-xs">🐰</span>
+              <span>Bunny</span>
+            </button>
 
-              <button
-                onClick={() => setIsDbModalOpen(true)}
-                className="flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-semibold text-xs transition-all"
-                title="ניהול וגיבוי מסד הנתונים"
-              >
-                <Database className="w-3.5 h-3.5 text-emerald-400" />
-                <span>מסד נתונים</span>
-              </button>
-            </div>
+            <button
+              onClick={() => setIsDbModalOpen(true)}
+              className="flex items-center gap-1.5 px-2.5 sm:px-3 py-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-semibold text-xs transition-all whitespace-nowrap shrink-0"
+              title="ניהול וגיבוי מסד הנתונים"
+            >
+              <Database className="w-3.5 h-3.5 text-emerald-400" />
+              <span>גיבוי DB</span>
+            </button>
           </div>
         </div>
       </div>
 
       {/* Main View Switcher */}
-      <div className="flex items-center p-1.5 bg-[#121620] rounded-2xl border border-slate-800 shadow-lg gap-2 flex-wrap sm:flex-nowrap">
+      <div className="flex items-center p-1.5 bg-[#121620] rounded-2xl border border-slate-800 shadow-lg gap-2 overflow-x-auto scrollbar-none">
         <button
           onClick={() => setMainView('episodes')}
-          className={`flex-1 py-3 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 ${
+          className={`flex-1 min-w-[200px] py-3 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 whitespace-nowrap ${
             mainView === 'episodes'
               ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-lg shadow-indigo-600/30'
               : 'text-slate-400 hover:text-white'
@@ -428,7 +442,7 @@ export default function DashboardPage() {
         {/* Dedicated YouTube Gaming Tab */}
         <button
           onClick={() => setMainView('gaming')}
-          className={`flex-1 py-3 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 ${
+          className={`flex-1 min-w-[200px] py-3 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 whitespace-nowrap ${
             mainView === 'gaming'
               ? 'bg-gradient-to-r from-purple-600 via-fuchsia-600 to-indigo-600 text-white shadow-lg shadow-purple-900/50 border border-purple-400/40'
               : 'text-purple-300 hover:text-white bg-purple-950/20 hover:bg-purple-900/40 border border-purple-500/20'
@@ -443,7 +457,7 @@ export default function DashboardPage() {
 
         <button
           onClick={() => setMainView('vault')}
-          className={`flex-1 py-3 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 ${
+          className={`flex-1 min-w-[200px] py-3 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 whitespace-nowrap ${
             mainView === 'vault'
               ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg shadow-emerald-600/30'
               : 'text-slate-400 hover:text-white'
