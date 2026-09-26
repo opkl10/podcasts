@@ -259,6 +259,9 @@ export interface MovieFactCard {
   directorOrActor?: string;
   verified?: boolean;
   directiveMatch?: string;
+  seriesOrder?: number;
+  seriesGroup?: string;
+  relatedCount?: number;
 }
 
 // Live Broadcast Graphic Overlays with Position & Scale Controls

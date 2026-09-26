@@ -1086,3 +1086,152 @@ export async function fetchMovieFactCards(movieQuery: string, apiKey?: string, f
   return [...targetedFocusFacts, ...fallbackFacts];
 }
 
+// Merge related facts together, eliminate fragmented duplicates, and sequence them chronologically 1-by-1
+export function mergeAndSequenceFactsLocally(facts: MovieFactCard[], movieTitle?: string): MovieFactCard[] {
+  if (!facts || facts.length === 0) return [];
+  const cleanTitle = movieTitle || facts[0]?.movieTitle || '';
+
+  type Phase = 'vision' | 'plot' | 'cast' | 'production' | 'soundtrack' | 'behind' | 'reviews';
+
+  const determinePhase = (f: MovieFactCard): Phase => {
+    const text = (f.fact + ' ' + (f.tags?.join(' ') || '')).toLowerCase();
+    if (text.includes('פסקול') || text.includes('מוזיקה') || text.includes('soundtrack') || text.includes('מלחין') || text.includes('זימר') || text.includes('הנס זימר')) {
+      return 'soundtrack';
+    }
+    if (f.category === 'director_vision' || text.includes('חזון') || text.includes('רעיון') || text.includes('תסריט מקורי') || text.includes('כתב את התסריט') || text.includes('השראה')) {
+      return 'vision';
+    }
+    if (f.category === 'plot' || text.includes('עלילה') || text.includes('נרטיב') || text.includes('סצנת הפתיחה') || text.includes('קונפליקט') || text.includes('סיום')) {
+      return 'plot';
+    }
+    if (f.category === 'cast' || f.category === 'cast_secret' || text.includes('שחקן') || text.includes('ליהוק') || text.includes('תפקיד') || text.includes('אודישן')) {
+      return 'cast';
+    }
+    if (f.category === 'production_crew' || text.includes('צילום') || text.includes('סטודיו') || text.includes('הפקה') || text.includes('אפקטים') || text.includes('לוקיישן')) {
+      return 'production';
+    }
+    if (f.category === 'reviews' || f.category === 'box_office' || f.category === 'critical_reception' || text.includes('קופות') || text.includes('ביקורת') || text.includes('ציון') || text.includes('אוסקר')) {
+      return 'reviews';
+    }
+    return 'behind';
+  };
+
+  const phaseMeta: Record<Phase, { groupName: string; defaultCat: FactCategory }> = {
+    vision: { groupName: 'שלב 1: חזון היוצרים, הרעיון והתסריט', defaultCat: 'director_vision' },
+    plot: { groupName: 'שלב 2: מהלך העלילה והתמות ברצף כרונולוגי', defaultCat: 'plot' },
+    cast: { groupName: 'שלב 3: ליהוק השחקנים, אודישנים ודמויות', defaultCat: 'cast' },
+    production: { groupName: 'שלב 4: שלבי ההפקה, צילומים ואפקטים מעשיים', defaultCat: 'production_crew' },
+    soundtrack: { groupName: 'שלב 5: פסקול, מוזיקה מקורית ועיצוב קולי', defaultCat: 'production_crew' },
+    behind: { groupName: 'שלב 6: סיפורי מאחורי הקלעים ואנקדוטות מהסט', defaultCat: 'behind_the_scenes' },
+    reviews: { groupName: 'שלב 7: קבלת הסרט, ביקורות, קופות ומורשת', defaultCat: 'reviews' }
+  };
+
+  const grouped: Record<Phase, MovieFactCard[]> = {
+    vision: [],
+    plot: [],
+    cast: [],
+    production: [],
+    soundtrack: [],
+    behind: [],
+    reviews: []
+  };
+
+  for (const f of facts) {
+    const ph = determinePhase(f);
+    grouped[ph].push(f);
+  }
+
+  const sequencedCards: MovieFactCard[] = [];
+  let currentOrder = 1;
+  const phasesInOrder: Phase[] = ['vision', 'plot', 'cast', 'production', 'soundtrack', 'behind', 'reviews'];
+
+  for (const phase of phasesInOrder) {
+    const phaseFacts = grouped[phase];
+    if (phaseFacts.length === 0) continue;
+
+    // Cluster related facts inside the phase so we merge related items together into unified cards
+    const clusters: MovieFactCard[][] = [];
+    if (phaseFacts.length <= 3) {
+      clusters.push(phaseFacts);
+    } else {
+      for (let i = 0; i < phaseFacts.length; i += 2) {
+        clusters.push(phaseFacts.slice(i, i + 2));
+      }
+    }
+
+    for (const cluster of clusters) {
+      const allSentences: string[] = [];
+      const seenSentences = new Set<string>();
+
+      for (const item of cluster) {
+        const sentences = extractCompleteSentences(item.fact, 4);
+        for (const s of sentences) {
+          const norm = s.trim().toLowerCase();
+          if (!seenSentences.has(norm) && s.length > 15) {
+            seenSentences.add(norm);
+            allSentences.push(s);
+          }
+        }
+      }
+
+      const combinedFactText = allSentences.length > 0 
+        ? allSentences.join(' ') 
+        : cluster.map(c => c.fact).join(' ');
+
+      const primaryItem = cluster.find(c => c.sourceUrl) || cluster[0];
+      const mergedTags = Array.from(new Set(cluster.flatMap(c => c.tags || []))).slice(0, 5);
+
+      sequencedCards.push({
+        id: `fact_seq_${Date.now()}_${currentOrder}`,
+        movieTitle: cleanTitle,
+        category: primaryItem.category || phaseMeta[phase].defaultCat,
+        fact: combinedFactText,
+        source: primaryItem.source || 'Wikipedia',
+        sourceUrl: primaryItem.sourceUrl,
+        ratingScore: cluster.find(c => c.ratingScore)?.ratingScore,
+        year: cluster.find(c => c.year)?.year,
+        tags: mergedTags,
+        isPinnedToHUD: currentOrder <= 3,
+        seriesOrder: currentOrder,
+        seriesGroup: phaseMeta[phase].groupName,
+        relatedCount: cluster.length
+      });
+
+      currentOrder++;
+    }
+  }
+
+  return sequencedCards;
+}
+
+// Client helper for merging related facts and sequencing them into an ordered series
+export async function mergeAndSequenceMovieFacts(facts: MovieFactCard[], movieTitle: string, apiKey?: string): Promise<MovieFactCard[]> {
+  if (!facts || facts.length === 0) return [];
+  const keyToUse = apiKey || getStoredGeminiApiKey();
+
+  try {
+    const res = await fetch('/api/ai/research', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        mode: 'merge_and_sequence_facts',
+        movieFacts: facts,
+        episodeTitle: movieTitle,
+        apiKey: keyToUse
+      })
+    });
+
+    if (res.ok) {
+      const json = await res.json();
+      if (json.data?.facts && Array.isArray(json.data.facts) && json.data.facts.length > 0) {
+        return json.data.facts;
+      }
+    }
+  } catch (err) {
+    console.warn('API fact sequencing failed, running local sequencer:', err);
+  }
+
+  return mergeAndSequenceFactsLocally(facts, movieTitle);
+}
+
+

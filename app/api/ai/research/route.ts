@@ -4,7 +4,8 @@ import {
   extractCompleteSentences, 
   parseUserDirectives,
   WebSourceItem,
-  DirectiveResearchResult 
+  DirectiveResearchResult,
+  mergeAndSequenceFactsLocally 
 } from '@/lib/webResearch';
 
 export async function POST(req: NextRequest) {
@@ -24,15 +25,134 @@ export async function POST(req: NextRequest) {
       category = 'movie_tv',
       specificFocus,
       focusNotes,
-      userNotes
+      userNotes,
+      movieFacts
     } = body;
 
     const querySubject = (singleTopicTitle || topic || episodeTitle || '').trim();
     const effectiveFocus = (specificFocus || focusNotes || userNotes || '').trim();
     const effectiveKey = (apiKey || process.env.GEMINI_API_KEY || '').trim();
 
-    if (!querySubject) {
+    if (!querySubject && mode !== 'merge_and_sequence_facts') {
       return NextResponse.json({ error: 'נושא המחקר חסר' }, { status: 400 });
+    }
+
+    // 0. Merge & Sequence Facts into Chronological Series
+    if (mode === 'merge_and_sequence_facts') {
+      const incomingFacts: any[] = movieFacts || body.facts || [];
+      if (!incomingFacts || incomingFacts.length === 0) {
+        return NextResponse.json({ error: 'אין כרטיסיות עובדות לאיחוד' }, { status: 400 });
+      }
+
+      if (effectiveKey && effectiveKey.length >= 10) {
+        const models = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'];
+        const mergePrompt = `
+אתה עורך תוכן קולנועי ותסריטאי מומחה.
+לפניך ${incomingFacts.length} כרטיסיות עובדות שנאספו על היצירה/הסרט "${querySubject}".
+חלק מהעובדות קשורות זו לזו, מקוטעות, חופפות או מפוזרות ללא סדר כרונולוגי.
+
+רשימת העובדות הקיימות:
+${incomingFacts.map((f, i) => `${i + 1}. [${f.category || 'כללי'}] ${f.fact}`).join('\n')}
+
+משימתך העליונה:
+1. לחבר ולאחד עובדות קשורות ביחד - כך שלא יהיו פרטים קשורים בנפרד (למזג עובדות על אותו נושא, שחקן, סצנה, פסקול או שלב הפקה לכדי כרטיסיות שלמות, עשירות, רציפות ומדויקות).
+2. למחוק כפילויות, משפטים מיותרים וקטעי מידע חופפים או מקוטעים.
+3. והכי חשוב: לסדר את כל הכרטיסיות המאוחדות כסדרה אחת אחרי השנייה ברצף הגיוני וכרונולוגי מושלם ("אחד אחרי השני"):
+   - שלב 1: חזון היוצרים, הרעיון המקורי והכתיבה
+   - שלב 2: מהלך העלילה והתמות ברצף כרונולוגי (פתיחה, נקודות מפנה וקונפליקט מרכזי)
+   - שלב 3: ליהוק השחקנים, האודישנים והכנות לתפקידים
+   - שלב 4: שלבי ההפקה, הצילומים בלוקיישנים והאתגרים על הסט
+   - שלב 5: פסקול, מוזיקה, עיצוב סאונד ואפקטים
+   - שלב 6: ביקורות, קופות, ציונים ומורשת
+4. החזר בין 6 ל-12 כרטיסיות מאוחדות ועשירות בלבד.
+5. לכל כרטיסייה חובה לציין:
+   - "seriesOrder": מספר סידורי ברצף מ-1 ומעלה (1, 2, 3...)
+   - "seriesGroup": כותרת השלב בסדרה (למשל: "שלב 1 בסדרה: חזון היוצרים", "שלב 2 בסדרה: מהלך העלילה", וכו')
+   - "relatedCount": כמה עובדות קשורות אוחדו לכאן (מספר שלם)
+   - "fact": הניסוח המאוחד המלא, השלם והעשיר (ללא קיטועים)
+   - "category": plot / cast / production_crew / reviews / behind_the_scenes / director_vision
+   - "source": מקור אמין
+   - "tags": מערך תגיות
+
+החזר JSON תקין בלבד במבנה הבא:
+{
+  "movieTitle": "${querySubject}",
+  "facts": [
+    {
+      "seriesOrder": 1,
+      "seriesGroup": "שלב 1 בסדרה: חזון היוצרים והרעיון",
+      "relatedCount": 2,
+      "category": "director_vision",
+      "fact": "ניסוח מלא ומאוחד...",
+      "source": "Wikipedia",
+      "tags": ["חזון", "בימוי"]
+    }
+  ]
+}
+`;
+
+        for (const model of models) {
+          try {
+            const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${effectiveKey}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                contents: [{ parts: [{ text: mergePrompt }] }],
+                generationConfig: {
+                  responseMimeType: 'application/json',
+                  temperature: 0.4
+                }
+              })
+            });
+
+            if (res.ok) {
+              const data = await res.json();
+              const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+              if (text) {
+                const parsed = JSON.parse(text.replace(/```json/g, '').replace(/```/g, '').trim());
+                if (parsed.facts && parsed.facts.length > 0) {
+                  const finalFacts = parsed.facts.map((f: any, idx: number) => {
+                    const matchOld = incomingFacts.find((old: any) => old.sourceUrl && (f.fact.includes(old.fact?.slice(0, 15) || '') || f.category === old.category));
+                    return {
+                      id: `fact_seq_ai_${Date.now()}_${idx + 1}`,
+                      movieTitle: querySubject,
+                      category: f.category || 'behind_the_scenes',
+                      fact: f.fact,
+                      source: f.source || matchOld?.source || 'Wikipedia',
+                      sourceUrl: f.sourceUrl || matchOld?.sourceUrl || undefined,
+                      seriesOrder: f.seriesOrder || (idx + 1),
+                      seriesGroup: f.seriesGroup || `שלב ${idx + 1} בסדרה`,
+                      relatedCount: f.relatedCount || 2,
+                      tags: f.tags || ['סדרה עוקבת', querySubject],
+                      isPinnedToHUD: idx < 3
+                    };
+                  });
+
+                  return NextResponse.json({
+                    success: true,
+                    source: `Gemini AI Sequencer (${model})`,
+                    data: {
+                      movieTitle: querySubject,
+                      facts: finalFacts
+                    }
+                  });
+                }
+              }
+            }
+          } catch (e) {}
+        }
+      }
+
+      // Deterministic Local Merge & Sequence
+      const localSequenced = mergeAndSequenceFactsLocally(incomingFacts, querySubject);
+      return NextResponse.json({
+        success: true,
+        source: 'Built-in Chronological Sequencer',
+        data: {
+          movieTitle: querySubject,
+          facts: localSequenced
+        }
+      });
     }
 
     // Parse user notes into individual, binding research directives
