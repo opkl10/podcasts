@@ -1,5 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { smartRebalanceSubtitles, buildSubtitlesFromWhisperWords, splitTextIntoPacedSubtitles, cleanAndPolishHebrewSubtitleText } from '@/lib/audioUtils';
+import { 
+  smartRebalanceSubtitles, 
+  buildSubtitlesFromWhisperWords, 
+  splitTextIntoPacedSubtitles, 
+  cleanAndPolishHebrewSubtitleText,
+  buildSubtitlesFromTimedWords,
+  TimedWord
+} from '@/lib/audioUtils';
 
 // Free Google Translate fallback (fast, zero API key required)
 async function freeTranslateText(text: string, sourceLang: string, targetLang: string): Promise<string> {
@@ -37,6 +44,7 @@ export async function POST(req: NextRequest) {
       duration = 60,
       apiKey, 
       openaiApiKey,
+      elevenLabsApiKey,
       provider = 'auto',
       spokenLanguage = 'auto',
       translateToHebrew = false,
@@ -51,6 +59,10 @@ export async function POST(req: NextRequest) {
       ? openaiApiKey.trim()
       : process.env.OPENAI_API_KEY;
 
+    const elevenKey = (elevenLabsApiKey && elevenLabsApiKey.trim())
+      ? elevenLabsApiKey.trim()
+      : process.env.ELEVENLABS_API_KEY;
+
     if (!audioBase64) {
       return NextResponse.json(
         { error: 'לא התקבל קובץ אודיו לתמלול' },
@@ -58,10 +70,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    if (!geminiKey && !openaiKey) {
+    if (!geminiKey && !openaiKey && !elevenKey) {
       return NextResponse.json(
         { 
-          error: 'נא להזין מפתח API של Google Gemini או OpenAI Whisper בהגדרות ה-AI, או להשתמש בתמלול הישיר בדפדפן (ללא מפתח / חינם).' 
+          error: 'נא להזין מפתח API של ElevenLabs, Google Gemini או OpenAI Whisper בהגדרות ה-AI, או להשתמש בתמלול הישיר בדפדפן (ללא מפתח / חינם).' 
         },
         { status: 401 }
       );
@@ -72,7 +84,109 @@ export async function POST(req: NextRequest) {
 
     let lastErrorDetails = '';
 
-    // 1. If OpenAI Whisper is requested or available
+    // 1. If ElevenLabs Scribe is requested or is the only available provider
+    if ((provider === 'elevenlabs' || (!geminiKey && !openaiKey && elevenKey)) && elevenKey) {
+      try {
+        const audioBuffer = Buffer.from(cleanBase64, 'base64');
+        const fileExt = sanitizedMime.includes('mp4') ? 'mp4' 
+          : sanitizedMime.includes('webm') ? 'webm' 
+          : sanitizedMime.includes('mpeg') || sanitizedMime.includes('mp3') ? 'mp3' 
+          : 'wav';
+        const fileBlob = new Blob([audioBuffer], { type: sanitizedMime });
+
+        const scribeFormData = new FormData();
+        scribeFormData.append('file', fileBlob, `recording.${fileExt}`);
+        scribeFormData.append('model_id', 'scribe_v1');
+        scribeFormData.append('timestamps_granularity', 'word');
+        scribeFormData.append('diarize', 'true');
+        scribeFormData.append('tag_audio_events', 'true');
+
+        if (spokenLanguage && spokenLanguage !== 'auto') {
+          const langCode = spokenLanguage === 'he' ? 'heb' : spokenLanguage === 'en' ? 'eng' : spokenLanguage;
+          scribeFormData.append('language_code', langCode);
+        }
+
+        const scribeRes = await fetch('https://api.elevenlabs.io/v1/speech-to-text', {
+          method: 'POST',
+          headers: {
+            'xi-api-key': elevenKey
+          },
+          body: scribeFormData
+        });
+
+        if (scribeRes.ok) {
+          const scribeData = await scribeRes.json();
+          const rawWords = scribeData.words || [];
+          const timedWords: TimedWord[] = rawWords
+            .filter((w: any) => w.type !== 'audio_event' && w.text && String(w.text).trim().length > 0)
+            .map((w: any) => {
+              let speakerLabel: string | undefined = undefined;
+              if (w.speaker_id) {
+                const match = String(w.speaker_id).match(/\d+/);
+                const speakerNum = match ? parseInt(match[0], 10) + 1 : 1;
+                speakerLabel = `דובר ${speakerNum}`;
+              }
+              return {
+                word: String(w.text).trim(),
+                start: Number(w.start),
+                end: Number(w.end),
+                speaker: speakerLabel
+              };
+            });
+
+          let formattedSubtitles: any[] = [];
+          if (timedWords.length > 0) {
+            formattedSubtitles = buildSubtitlesFromTimedWords(timedWords, wordsPerLine);
+          } else if (scribeData.text) {
+            formattedSubtitles = splitTextIntoPacedSubtitles(
+              scribeData.text,
+              wordsPerLine,
+              1,
+              0,
+              Math.max(10, duration || 60)
+            );
+          }
+
+          if (formattedSubtitles.length > 0) {
+            if (translateToHebrew) {
+              for (let k = 0; k < formattedSubtitles.length; k++) {
+                if (/[a-zA-Z]/.test(formattedSubtitles[k].text)) {
+                  formattedSubtitles[k].text = await freeTranslateText(formattedSubtitles[k].text, spokenLanguage || 'auto', 'he');
+                }
+              }
+            }
+
+            return NextResponse.json({
+              success: true,
+              subtitles: formattedSubtitles,
+              source: translateToHebrew 
+                ? 'ElevenLabs Scribe v1 + תרגום לעברית' 
+                : 'ElevenLabs Scribe v1 (דיוק אקוסטי מילה במילה + זיהוי דוברים)'
+            });
+          }
+        } else {
+          const errJson = await scribeRes.json().catch(() => ({}));
+          const errMsg = errJson.detail?.message || errJson.error?.message || errJson.message || `ElevenLabs Error ${scribeRes.status}`;
+          lastErrorDetails = errMsg;
+          console.warn('ElevenLabs Scribe error:', lastErrorDetails);
+          if (provider === 'elevenlabs') {
+            const isQuota = errMsg.toLowerCase().includes('quota') || errMsg.toLowerCase().includes('credit') || errMsg.toLowerCase().includes('tier');
+            const customMsg = isQuota
+              ? 'נגמרה יתרת הקרדיטים בחשבון ה-ElevenLabs שלכם. נא לבדוק את החשבון ב-ElevenLabs או להשתמש ב-Google Gemini בחינם!'
+              : `שגיאת ElevenLabs Scribe: ${errMsg}`;
+            return NextResponse.json({ error: customMsg }, { status: 400 });
+          }
+        }
+      } catch (scribeErr: any) {
+        lastErrorDetails = scribeErr.message;
+        console.warn('ElevenLabs Scribe processing error:', scribeErr);
+        if (provider === 'elevenlabs') {
+          return NextResponse.json({ error: scribeErr.message }, { status: 500 });
+        }
+      }
+    }
+
+    // 2. If OpenAI Whisper is requested or available
     if ((provider === 'openai' || (!geminiKey && openaiKey)) && openaiKey) {
       try {
         const audioBuffer = Buffer.from(cleanBase64, 'base64');

@@ -3,7 +3,7 @@
 export interface AISettingsConfig {
   geminiApiKey: string;
   openaiApiKey: string;
-  transcriptionProvider: 'openai' | 'gemini' | 'browser';
+  transcriptionProvider: 'openai' | 'gemini' | 'elevenlabs' | 'browser';
   openaiModel: string; // 'whisper-1' | 'gpt-4o' | 'gpt-4o-mini'
   elevenLabsApiKey: string;
   elevenLabsVoiceId: string;

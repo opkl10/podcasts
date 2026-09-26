@@ -99,7 +99,7 @@ import {
   User,
   Users
 } from 'lucide-react';
-import { getAISettings, AISettingsConfig } from '@/lib/apiConfig';
+import { getAISettings, AISettingsConfig, POPULAR_ELEVENLABS_VOICES } from '@/lib/apiConfig';
 import SubtitleAISettingsModal from './SubtitleAISettingsModal';
 
 interface SubtitleStudioProps {
@@ -521,6 +521,70 @@ export default function SubtitleStudio({
   const [customSpeakerInput, setCustomSpeakerInput] = useState<string>('');
   const [isDiarizingSubtitles, setIsDiarizingSubtitles] = useState<boolean>(false);
 
+  // ElevenLabs Subtitle & Voiceover Creation State
+  const [isElevenLabsModalOpen, setIsElevenLabsModalOpen] = useState(false);
+  const [elevenLabsMode, setElevenLabsMode] = useState<'script' | 'scribe'>('script');
+  const [elevenLabsScriptText, setElevenLabsScriptText] = useState('');
+  const [elevenLabsVoice, setElevenLabsVoice] = useState('21m00Tcm4TlvDq8ikWAM');
+  const [elevenLabsWordsPerLine, setElevenLabsWordsPerLine] = useState(4);
+  const [elevenLabsSpeakerName, setElevenLabsSpeakerName] = useState('קריין AI');
+  const [isGeneratingElevenLabs, setIsGeneratingElevenLabs] = useState(false);
+
+  const handleGenerateSubtitlesWithElevenLabs = async () => {
+    const currentSettings = getAISettings();
+    if (!currentSettings.elevenLabsApiKey?.trim()) {
+      setIsAIModalOpen(true);
+      return;
+    }
+    if (!elevenLabsScriptText.trim()) {
+      alert('נא להזין טקסט ליצירת כתוביות וקריינות.');
+      return;
+    }
+
+    setIsGeneratingElevenLabs(true);
+    try {
+      const res = await fetch('/api/elevenlabs/generate-subtitles', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: elevenLabsScriptText.trim(),
+          apiKey: currentSettings.elevenLabsApiKey,
+          voiceId: elevenLabsVoice,
+          modelId: currentSettings.elevenLabsModel || 'eleven_multilingual_v2',
+          wordsPerLine: elevenLabsWordsPerLine,
+          speakerName: elevenLabsSpeakerName
+        })
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success && data.subtitles) {
+        setSubtitles(data.subtitles);
+        const updated = { ...episode, subtitles: data.subtitles };
+        if (!updated.id.startsWith('standalone_')) {
+          saveEpisode(updated);
+        }
+        if (onUpdateEpisode) onUpdateEpisode(updated);
+
+        if (data.audioUrl) {
+          setVideoUrl(data.audioUrl);
+          if (videoRef.current) {
+            videoRef.current.src = data.audioUrl;
+            videoRef.current.load();
+          }
+        }
+
+        setIsElevenLabsModalOpen(false);
+        alert(`✨ נוצרו בהצלחה ${data.subtitles.length} כתוביות מסונכרנות עם קריינות ElevenLabs (${data.duration} שנ׳)!`);
+      } else {
+        alert(data.error || 'שגיאה ביצירת כתוביות עם ElevenLabs. בדקו את המפתח והיתרה בחשבון.');
+      }
+    } catch (err: any) {
+      alert('שגיאת תקשורת: ' + err.message);
+    } finally {
+      setIsGeneratingElevenLabs(false);
+    }
+  };
+
   useEffect(() => {
     if (isOpen) {
       setAISettings(getAISettings());
@@ -684,12 +748,16 @@ export default function SubtitleStudio({
   const handleTranscribeRecordedAudio = async (options?: {
     spokenLanguage?: string;
     translateToHebrew?: boolean;
+    providerOverride?: 'openai' | 'gemini' | 'elevenlabs' | 'browser';
   }) => {
     const isTranslatingToHebrew = options?.translateToHebrew ?? false;
     const spokenLang = options?.spokenLanguage || 'auto';
+    const providerOverride = options?.providerOverride;
 
     const currentSettings = getAISettings();
-    if (!currentSettings.geminiApiKey?.trim() && !currentSettings.openaiApiKey?.trim()) {
+    const effectiveProvider = providerOverride || currentSettings.transcriptionProvider || 'openai';
+
+    if (!currentSettings.geminiApiKey?.trim() && !currentSettings.openaiApiKey?.trim() && !currentSettings.elevenLabsApiKey?.trim()) {
       setIsAIModalOpen(true);
       return;
     }
@@ -742,7 +810,8 @@ export default function SubtitleStudio({
               duration: clipDuration,
               apiKey: currentSettings.geminiApiKey,
               openaiApiKey: currentSettings.openaiApiKey,
-              provider: currentSettings.transcriptionProvider,
+              elevenLabsApiKey: currentSettings.elevenLabsApiKey,
+              provider: effectiveProvider,
               spokenLanguage: spokenLang,
               translateToHebrew: isTranslatingToHebrew,
               highEffortMode
@@ -913,7 +982,8 @@ export default function SubtitleStudio({
               duration: chunk.durationSec,
               apiKey: currentSettings.geminiApiKey,
               openaiApiKey: currentSettings.openaiApiKey,
-              provider: currentSettings.transcriptionProvider,
+              elevenLabsApiKey: currentSettings.elevenLabsApiKey,
+              provider: effectiveProvider,
               spokenLanguage: spokenLang,
               translateToHebrew: isTranslatingToHebrew,
               highEffortMode
@@ -2246,6 +2316,26 @@ export default function SubtitleStudio({
             >
               <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
               <span>צור מנושאי הפרק</span>
+            </button>
+
+            {/* ElevenLabs Subtitle & Voiceover Creation Button */}
+            <button
+              onClick={() => {
+                if (!elevenLabsScriptText && (episode.description || episode.topics?.length)) {
+                  const prefill = [
+                    episode.title ? `${episode.title}:` : '',
+                    episode.description || '',
+                    ...(episode.topics?.map(t => typeof t === 'string' ? t : t.title) || [])
+                  ].filter(Boolean).join('\n');
+                  setElevenLabsScriptText(prefill);
+                }
+                setIsElevenLabsModalOpen(true);
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 hover:text-white border border-purple-500/40 text-xs font-bold transition-all active:scale-98 shadow-sm"
+              title="יצירת כתוביות וקריינות מסונכרנת עם ElevenLabs"
+            >
+              <Volume2 className="w-3.5 h-3.5 text-purple-400" />
+              <span>יצירה עם ElevenLabs</span>
             </button>
 
             {/* Import SRT / VTT Button */}
@@ -3791,6 +3881,39 @@ export default function SubtitleStudio({
                           </div>
                           <p className="text-[10px] text-slate-400">הכתבה למיקרופון ללא צורך במפתח</p>
                         </button>
+
+                        {/* 5. ElevenLabs Subtitles & Voiceover Generator */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (!elevenLabsScriptText && (episode.description || episode.topics?.length)) {
+                              const prefill = [
+                                episode.title ? `${episode.title}:` : '',
+                                episode.description || '',
+                                ...(episode.topics?.map(t => typeof t === 'string' ? t : t.title) || [])
+                              ].filter(Boolean).join('\n');
+                              setElevenLabsScriptText(prefill);
+                            }
+                            setIsElevenLabsModalOpen(true);
+                          }}
+                          className="col-span-1 sm:col-span-2 p-3.5 rounded-2xl bg-gradient-to-r from-purple-950/40 via-purple-900/20 to-pink-950/30 hover:from-purple-950/60 hover:to-pink-950/50 border border-purple-500/40 text-purple-200 transition-all text-right group shadow-lg flex items-center justify-between"
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className="w-9 h-9 rounded-xl bg-purple-600/30 border border-purple-400/40 flex items-center justify-center text-purple-300 group-hover:scale-110 transition-transform">
+                              <Volume2 className="w-5 h-5 text-purple-300" />
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span className="font-bold text-xs text-white">✨ יצירת כתוביות וקריינות עם ElevenLabs</span>
+                                <span className="px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 text-[9px] font-black border border-purple-500/30">חדש</span>
+                              </div>
+                              <p className="text-[10px] text-slate-300 mt-0.5">סנכרון תזמונים מדויק מתסריט או תמלול אקוסטי ברמת Scribe v1</p>
+                            </div>
+                          </div>
+                          <div className="px-2.5 py-1 rounded-lg bg-purple-600/30 text-purple-200 text-[10px] font-bold">
+                            פתח כלי ←
+                          </div>
+                        </button>
                       </div>
 
                       {/* Manual Add Cue */}
@@ -5267,6 +5390,205 @@ export default function SubtitleStudio({
                 </div>
               </>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* ElevenLabs Subtitles Creation & Scribe Modal */}
+      {isElevenLabsModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-black/85 backdrop-blur-md animate-in fade-in font-sans">
+          <div className="w-full max-w-2xl max-h-[92vh] rounded-3xl bg-[#121620] border border-purple-500/40 p-6 sm:p-8 shadow-2xl flex flex-col overflow-y-auto relative text-right" dir="rtl">
+            {/* Header */}
+            <div className="flex items-center justify-between pb-4 border-b border-slate-800 shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-2xl bg-gradient-to-tr from-purple-600 via-pink-600 to-indigo-600 text-white shadow-lg shadow-purple-600/30">
+                  <Volume2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white flex items-center gap-2">
+                    <span>יצירת כתוביות וקריינות עם ElevenLabs</span>
+                    <span className="px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 text-[10px] font-bold border border-purple-500/30">Scribe & TTS</span>
+                  </h3>
+                  <p className="text-xs text-slate-400">תמלול Scribe v1 מדויק מילה במילה או יצירת כתוביות וקריינות מתסריט</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsElevenLabsModalOpen(false)}
+                className="p-2 text-slate-400 hover:text-white rounded-xl hover:bg-slate-800 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Mode Tabs */}
+            <div className="flex items-center gap-2 my-4 p-1.5 rounded-2xl bg-slate-900 border border-slate-800">
+              <button
+                type="button"
+                onClick={() => setElevenLabsMode('script')}
+                className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 ${
+                  elevenLabsMode === 'script'
+                    ? 'bg-purple-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>יצירת כתוביות וקריינות מתסריט (TTS With-Timestamps)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setElevenLabsMode('scribe')}
+                className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 ${
+                  elevenLabsMode === 'scribe'
+                    ? 'bg-purple-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <Wand2 className="w-3.5 h-3.5" />
+                <span>תמלול אודיו עם ElevenLabs Scribe v1</span>
+              </button>
+            </div>
+
+            {/* Mode Body */}
+            {elevenLabsMode === 'script' ? (
+              <div className="space-y-4 py-1">
+                {/* Script input */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between text-xs">
+                    <label className="font-bold text-slate-300">טקסט / תסריט ליצירת כתוביות ודיבוב קולי:</label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const prefill = [
+                          episode.title ? `${episode.title}:` : '',
+                          episode.description || '',
+                          ...(episode.topics?.map(t => typeof t === 'string' ? t : t.title) || [])
+                        ].filter(Boolean).join('\n');
+                        setElevenLabsScriptText(prefill);
+                      }}
+                      className="text-purple-400 hover:underline text-[11px] font-semibold"
+                    >
+                      העתק מנושאי הפרק
+                    </button>
+                  </div>
+                  <textarea
+                    rows={6}
+                    value={elevenLabsScriptText}
+                    onChange={(e) => setElevenLabsScriptText(e.target.value)}
+                    placeholder="הדבק כאן את הטקסט או התסריט שתרצה שהקריין יקריא ויווצרו עבורו כתוביות מסונכרנות מדויקות..."
+                    className="w-full p-3 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-purple-500 leading-relaxed font-sans"
+                    dir="auto"
+                  />
+                  <p className="text-[10px] text-slate-400">
+                    ElevenLabs יפיק קריינות פוטו-ריאליסטית ויחזיר חותמות זמן מדויקות לכל מילה להצגת כתוביות מושלמת.
+                  </p>
+                </div>
+
+                {/* Voice Selection */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-300">קול קריין (Voice):</label>
+                    <select
+                      value={elevenLabsVoice}
+                      onChange={(e) => setElevenLabsVoice(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-xs text-white focus:outline-none focus:border-purple-500"
+                    >
+                      {POPULAR_ELEVENLABS_VOICES.map(voice => (
+                        <option key={voice.id} value={voice.id}>{voice.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-300">שם דובר בכתובית:</label>
+                    <input
+                      type="text"
+                      value={elevenLabsSpeakerName}
+                      onChange={(e) => setElevenLabsSpeakerName(e.target.value)}
+                      placeholder="קריין AI"
+                      className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-xs text-white focus:outline-none focus:border-purple-500"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-300 flex items-center justify-between">
+                    <span>מילים בכל שורת כתובית: {elevenLabsWordsPerLine}</span>
+                  </label>
+                  <input
+                    type="range"
+                    min={2}
+                    max={8}
+                    value={elevenLabsWordsPerLine}
+                    onChange={(e) => setElevenLabsWordsPerLine(parseInt(e.target.value))}
+                    className="w-full accent-purple-500"
+                  />
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-4 py-2">
+                <div className="p-4 rounded-2xl bg-gradient-to-br from-purple-950/40 via-indigo-950/30 to-slate-900 border border-purple-500/30 space-y-2">
+                  <div className="flex items-center gap-2 text-purple-300 font-bold text-xs">
+                    <Wand2 className="w-4 h-4 text-purple-400" />
+                    <span>תמלול אקוסטי מתקדם עם מודל Scribe v1 של ElevenLabs:</span>
+                  </div>
+                  <ul className="text-xs text-slate-300 space-y-1.5 list-disc list-inside pr-1 leading-relaxed">
+                    <li>מודל זיהוי הדיבור החדשני והמדויק בעולם עם תמיכה מלאה ופנומנלית בעברית.</li>
+                    <li>הבדלה אוטומטית בין דוברים שונים (Speaker Diarization מלא).</li>
+                    <li>דיוק חותמות זמן ברמת המילה הבודדת לסנכרון מושלם.</li>
+                    <li>תמיכה בסרטונים ובהקלטות אודיו מהאולפן או קבצים שהועלו.</li>
+                  </ul>
+                </div>
+
+                <p className="text-xs text-slate-400">
+                  התמלול יתבצע על קובץ האודיו או הווידאו הטעון באולפן (או על הקטע הנבחר אם בחרתם קטע).
+                </p>
+              </div>
+            )}
+
+            {/* Modal Actions */}
+            <div className="flex items-center justify-between gap-3 pt-5 border-t border-slate-800 mt-4 shrink-0">
+              <button
+                type="button"
+                onClick={() => setIsElevenLabsModalOpen(false)}
+                className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition-all"
+              >
+                ביטול
+              </button>
+
+              {elevenLabsMode === 'script' ? (
+                <button
+                  type="button"
+                  onClick={handleGenerateSubtitlesWithElevenLabs}
+                  disabled={isGeneratingElevenLabs || !elevenLabsScriptText.trim()}
+                  className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 via-pink-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-bold shadow-lg shadow-purple-600/30 transition-all flex items-center gap-2 active:scale-98 disabled:opacity-50"
+                >
+                  {isGeneratingElevenLabs ? (
+                    <>
+                      <RotateCw className="w-4 h-4 animate-spin" />
+                      <span>יוצר כתוביות וקריינות...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-4 h-4" />
+                      <span>צור כתוביות וקריינות עכשיו</span>
+                    </>
+                  )}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsElevenLabsModalOpen(false);
+                    handleTranscribeRecordedAudio({ providerOverride: 'elevenlabs' });
+                  }}
+                  disabled={isTranscribing}
+                  className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-bold shadow-lg shadow-purple-600/30 transition-all flex items-center gap-2 active:scale-98 disabled:opacity-50"
+                >
+                  <Wand2 className="w-4 h-4" />
+                  <span>הפעל תמלול Scribe על ההקלטה</span>
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}

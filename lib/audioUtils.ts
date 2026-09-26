@@ -512,6 +512,117 @@ export function buildSubtitlesFromWhisperWords(
   return subtitles;
 }
 
+export interface TimedWord {
+  word: string;
+  start: number;
+  end: number;
+  speaker?: string;
+}
+
+// Convert any timed word array (Whisper / ElevenLabs) into paced SubtitleItem[] with diarization support
+export function buildSubtitlesFromTimedWords(
+  words: TimedWord[],
+  wordsPerLine: number = 4
+): SubtitleItem[] {
+  if (!words || words.length === 0) return [];
+
+  const validWords = words.filter(w => w.word && w.word.trim().length > 0);
+  if (validWords.length === 0) return [];
+
+  const subtitles: SubtitleItem[] = [];
+  let currentGroup: TimedWord[] = [];
+
+  for (let i = 0; i < validWords.length; i++) {
+    const w = validWords[i];
+    const prevW = currentGroup[currentGroup.length - 1];
+
+    const hasLongPause = prevW ? (w.start - prevW.end) > 0.65 : false;
+    const prevEndsWithPunctuation = prevW ? /[.!?]$/.test(prevW.word.trim()) : false;
+    const speakerChanged = prevW && w.speaker && prevW.speaker && w.speaker !== prevW.speaker;
+
+    if (currentGroup.length >= wordsPerLine || hasLongPause || prevEndsWithPunctuation || speakerChanged) {
+      if (currentGroup.length > 0) {
+        subtitles.push({
+          id: `sub_el_${Date.now()}_${subtitles.length}_${Math.random().toString(36).substring(2, 5)}`,
+          startTime: Number(currentGroup[0].start.toFixed(2)),
+          endTime: Number(currentGroup[currentGroup.length - 1].end.toFixed(2)),
+          text: currentGroup.map(item => item.word.trim()).join(' '),
+          speaker: currentGroup[0].speaker
+        });
+        currentGroup = [];
+      }
+    }
+
+    currentGroup.push(w);
+  }
+
+  if (currentGroup.length > 0) {
+    subtitles.push({
+      id: `sub_el_${Date.now()}_${subtitles.length}_${Math.random().toString(36).substring(2, 5)}`,
+      startTime: Number(currentGroup[0].start.toFixed(2)),
+      endTime: Number(currentGroup[currentGroup.length - 1].end.toFixed(2)),
+      text: currentGroup.map(item => item.word.trim()).join(' '),
+      speaker: currentGroup[0].speaker
+    });
+  }
+
+  return subtitles;
+}
+
+// Convert ElevenLabs character-level alignment from /with-timestamps to TimedWord[]
+export function parseElevenLabsAlignmentToTimedWords(
+  alignment: {
+    characters: string[];
+    character_start_times_seconds: number[];
+    character_end_times_seconds: number[];
+  },
+  speakerName?: string
+): TimedWord[] {
+  if (!alignment || !alignment.characters || alignment.characters.length === 0) return [];
+  const { characters, character_start_times_seconds, character_end_times_seconds } = alignment;
+  const timedWords: TimedWord[] = [];
+
+  let currentWord = '';
+  let wordStart = -1;
+  let wordEnd = 0;
+
+  for (let i = 0; i < characters.length; i++) {
+    const char = characters[i];
+    const start = character_start_times_seconds[i] ?? 0;
+    const end = character_end_times_seconds[i] ?? (start + 0.1);
+
+    if (char === ' ' || char === '\n' || char === '\t') {
+      if (currentWord.trim().length > 0) {
+        timedWords.push({
+          word: currentWord.trim(),
+          start: Number(wordStart.toFixed(2)),
+          end: Number(wordEnd.toFixed(2)),
+          speaker: speakerName
+        });
+        currentWord = '';
+        wordStart = -1;
+      }
+    } else {
+      if (wordStart === -1) {
+        wordStart = start;
+      }
+      currentWord += char;
+      wordEnd = end;
+    }
+  }
+
+  if (currentWord.trim().length > 0) {
+    timedWords.push({
+      word: currentWord.trim(),
+      start: Number(wordStart.toFixed(2)),
+      end: Number(wordEnd.toFixed(2)),
+      speaker: speakerName
+    });
+  }
+
+  return timedWords;
+}
+
 // Smart Subtitle Pacing Splitter: Splits raw text into timed chunks
 export function splitTextIntoPacedSubtitles(
   rawText: string,

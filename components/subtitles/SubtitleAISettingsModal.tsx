@@ -118,9 +118,9 @@ export default function SubtitleAISettingsModal({
             </div>
             <div>
               <h3 className="text-base font-bold text-white flex items-center gap-2">
-                <span>הגדרות מפתחות AI (Gemini & OpenAI)</span>
+                <span>הגדרות מפתחות AI (Gemini, OpenAI & ElevenLabs)</span>
               </h3>
-              <p className="text-xs text-slate-400">תמלול אודיו, חלוקת מילים, ותרגום כתוביות חכם</p>
+              <p className="text-xs text-slate-400">תמלול אודיו (Scribe / Gemini / Whisper), חלוקת מילים, קריינות ותרגום חכם</p>
             </div>
           </div>
 
@@ -317,7 +317,7 @@ export default function SubtitleAISettingsModal({
               <Sliders className="w-3.5 h-3.5 text-indigo-400" />
               <span>ספק תמלול ראשי מועדף:</span>
             </label>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               <button
                 type="button"
                 onClick={() => setSettings(prev => ({ ...prev, transcriptionProvider: 'gemini' }))}
@@ -329,7 +329,7 @@ export default function SubtitleAISettingsModal({
               >
                 <div className="flex items-center gap-2 font-bold text-xs">
                   <Bot className="w-3.5 h-3.5 text-indigo-400" />
-                  <span>Google Gemini (חינם ומהיר)</span>
+                  <span>Google Gemini (חינם)</span>
                 </div>
                 <p className="text-[10px] text-slate-400 mt-0.5">זיהוי דיבור חכם ומדויק, ללא צורך בתשלום</p>
               </button>
@@ -345,9 +345,25 @@ export default function SubtitleAISettingsModal({
               >
                 <div className="flex items-center gap-2 font-bold text-xs">
                   <Zap className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>OpenAI Whisper (מילה במילה)</span>
+                  <span>OpenAI Whisper</span>
                 </div>
-                <p className="text-[10px] text-slate-400 mt-0.5">דיוק מקסימלי עם חותמות זמן לכל מילה</p>
+                <p className="text-[10px] text-slate-400 mt-0.5">דיוק אקוסטי מקסימלי מילה במילה</p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setSettings(prev => ({ ...prev, transcriptionProvider: 'elevenlabs' }))}
+                className={`p-2.5 rounded-xl border text-right transition-all ${
+                  settings.transcriptionProvider === 'elevenlabs'
+                    ? 'bg-purple-600/20 border-purple-500 text-white shadow-md'
+                    : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <div className="flex items-center gap-2 font-bold text-xs">
+                  <Volume2 className="w-3.5 h-3.5 text-purple-400" />
+                  <span>ElevenLabs Scribe v1</span>
+                </div>
+                <p className="text-[10px] text-slate-400 mt-0.5">תמלול פרימיום + זיהוי דוברים מלא</p>
               </button>
             </div>
           </div>
@@ -360,8 +376,8 @@ export default function SubtitleAISettingsModal({
                   <Volume2 className="w-4 h-4" />
                 </div>
                 <div>
-                  <h4 className="text-xs font-bold text-white">ElevenLabs API Key (קריינות ודיבוב קולי)</h4>
-                  <p className="text-[11px] text-slate-400">הקראת כתוביות בקול אנושי בעברית ובאנגלית</p>
+                  <h4 className="text-xs font-bold text-white">ElevenLabs API Key (תמלול Scribe, כתוביות וקריינות)</h4>
+                  <p className="text-[11px] text-slate-400">תמלול אודיו פרימיום עם Scribe v1, הקראת דיבוב וסנכרון כתוביות</p>
                 </div>
               </div>
 
