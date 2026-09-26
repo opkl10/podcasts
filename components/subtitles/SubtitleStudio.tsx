@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Episode, SubtitleItem, SubtitleStyle, HighlightClip } from '@/lib/types';
+import { Episode, SubtitleItem, SubtitleStyle, HighlightClip, SubtitleEntranceAnimation, SubtitleExitAnimation } from '@/lib/types';
 import { 
   saveEpisode, 
   getMediaBlob, 
@@ -177,7 +177,10 @@ const DEFAULT_STYLE: SubtitleStyle = {
   positionX: 50,
   isBold: true,
   letterSpacing: 0.5,
-  animation: 'karaoke-pop',
+  animation: 'pop',
+  entranceAnimation: 'pop',
+  exitAnimation: 'fade',
+  animationDuration: 0.25,
   maxWordsPerLine: 4,
   // Logo
   logoEnabled: false,
@@ -192,7 +195,7 @@ const SUBTITLE_THEMES = [
   {
     id: 'tiktok_pop',
     name: '📱 טיקטוק ורילס',
-    desc: 'הדגשת מילה מדוברת בצהוב ניאון עם קו מתאר מודגש',
+    desc: 'הדגשת מילה מדוברת בצהוב ניאון עם קו מתאר וקפיצת פופ',
     style: {
       fontFamily: 'Rubik, sans-serif',
       fontSize: 32,
@@ -207,6 +210,9 @@ const SUBTITLE_THEMES = [
       shadowEnabled: true,
       textShadow: 'hard-outline' as const,
       activeWordAnimation: 'color-pop' as const,
+      entranceAnimation: 'pop' as const,
+      exitAnimation: 'shrink' as const,
+      animationDuration: 0.22,
       positionY: 78,
       textAlign: 'center' as const
     }
@@ -214,7 +220,7 @@ const SUBTITLE_THEMES = [
   {
     id: 'netflix_cinema',
     name: '🎬 נטפליקס קולנועי',
-    desc: 'טקסט לבן אלגנטי עם גלולת רקע כהה וצל רך',
+    desc: 'טקסט לבן אלגנטי עם גלולת רקע כהה ועמעום רך',
     style: {
       fontFamily: 'Assistant, sans-serif',
       fontSize: 26,
@@ -231,6 +237,9 @@ const SUBTITLE_THEMES = [
       shadowEnabled: true,
       textShadow: 'soft' as const,
       activeWordAnimation: 'none' as const,
+      entranceAnimation: 'fade' as const,
+      exitAnimation: 'fade' as const,
+      animationDuration: 0.28,
       positionY: 84,
       textAlign: 'center' as const
     }
@@ -331,6 +340,64 @@ const SUBTITLE_THEMES = [
     }
   }
 ];
+
+export const ENTRANCE_ANIMATION_OPTIONS: { id: SubtitleEntranceAnimation; label: string; emoji: string; desc: string }[] = [
+  { id: 'pop', label: 'קפיצה (Pop)', emoji: '💥', desc: 'מושלם לטיקטוק, רילס ושורטס - כניסה קופצנית ואנרגטית' },
+  { id: 'bounce', label: 'באונס (Bounce)', emoji: '🏀', desc: 'כניסה עם ניתור אלסטי עשיר ומלא חיים' },
+  { id: 'fade', label: 'עמעום (Fade In)', emoji: '🌫️', desc: 'הופעה נקייה, קולנועית ואלגנטית מ-0 ל-100%' },
+  { id: 'slide-up', label: 'החלקה מלמטה', emoji: '⬆️', desc: 'עולה מלמטה עם שקיפות רכה' },
+  { id: 'slide-down', label: 'החלקה מלמעלה', emoji: '⬇️', desc: 'יורד מלמעלה בטבעיות' },
+  { id: 'zoom-in', label: 'הגדלה (Zoom In)', emoji: '🔍', desc: 'צומח ממרכז המסך בהדרגה' },
+  { id: 'flip', label: 'היפוך תלת-ממדי', emoji: '🔄', desc: 'סיבוב תלת-ממדי על ציר ה-X' },
+  { id: 'rubber-band', label: 'גומי אלסטי', emoji: '🪢', desc: 'מתיחה והתכווצות קופצנית בסגנון גומי' },
+  { id: 'glitch', label: 'גליץ\' סייבר', emoji: '⚡', desc: 'הבזק צבעוני דיגיטלי בסגנון סייבר' },
+  { id: 'none', label: 'מיידי (ללא אפקט)', emoji: '⏹️', desc: 'הופעה חדה ללא שום מעבר' }
+];
+
+export const EXIT_ANIMATION_OPTIONS: { id: SubtitleExitAnimation; label: string; emoji: string; desc: string }[] = [
+  { id: 'fade', label: 'עמעום (Fade Out)', emoji: '🌫️', desc: 'התפוגגות חלקה ועדינה בסיום' },
+  { id: 'shrink', label: 'התכווצות (Shrink)', emoji: '🎯', desc: 'התכנסות מהירה לנקודה - תואם פופ כניסה' },
+  { id: 'slide-down', label: 'החלקה למטה', emoji: '⬇️', desc: 'גולש ונעלם כלפי מטה' },
+  { id: 'slide-up', label: 'החלקה למעלה', emoji: '⬆️', desc: 'ממשיך מעלה ומתפוגג' },
+  { id: 'zoom-out', label: 'התרחקות (Zoom Out)', emoji: '🔎', desc: 'מתרחק וגדל אל מחוץ למסך' },
+  { id: 'blur', label: 'טשטוש (Motion Blur)', emoji: '💨', desc: 'טשטוש תנועה קולנועי עדין עד היעלמות' },
+  { id: 'drop-out', label: 'נפילה חופשית', emoji: '🍂', desc: 'צניחה כלפי מטה עם סיבוב קל' },
+  { id: 'none', label: 'מיידי (ללא אפקט)', emoji: '⏹️', desc: 'היעלמות חדה ללא שום מעבר' }
+];
+
+export function getSubtitleAnimationClass(st: SubtitleStyle, isExiting: boolean): string {
+  if (isExiting) {
+    const exit = st.exitAnimation || 'none';
+    switch (exit) {
+      case 'fade': return 'sub-anim-exit-fade';
+      case 'shrink': return 'sub-anim-exit-shrink';
+      case 'slide-down': return 'sub-anim-exit-slide-down';
+      case 'slide-up': return 'sub-anim-exit-slide-up';
+      case 'zoom-out': return 'sub-anim-exit-zoom-out';
+      case 'blur': return 'sub-anim-exit-blur';
+      case 'drop-out': return 'sub-anim-exit-drop-out';
+      case 'none':
+      default: return 'sub-anim-exit-none';
+    }
+  }
+
+  // Entrance
+  const enter = st.entranceAnimation || (st.animation as any) || 'pop';
+  switch (enter) {
+    case 'pop': return 'sub-anim-enter-pop';
+    case 'bounce': return 'sub-anim-enter-bounce';
+    case 'fade': return 'sub-anim-enter-fade';
+    case 'slide-up': return 'sub-anim-enter-slide-up';
+    case 'slide-down': return 'sub-anim-enter-slide-down';
+    case 'zoom-in': return 'sub-anim-enter-zoom-in';
+    case 'flip': return 'sub-anim-enter-flip';
+    case 'rubber-band': return 'sub-anim-enter-rubber-band';
+    case 'glitch': return 'sub-anim-enter-glitch';
+    case 'none': return 'sub-anim-enter-none';
+    case 'karaoke-pop': return 'sub-anim-enter-pop';
+    default: return 'sub-anim-enter-pop';
+  }
+}
 
 const BUILT_IN_FONTS = [
   { name: 'Rubik (עבה וקולנועי - מומלץ)', value: 'Rubik, sans-serif' },
@@ -529,6 +596,29 @@ export default function SubtitleStudio({
   const [elevenLabsWordsPerLine, setElevenLabsWordsPerLine] = useState(4);
   const [elevenLabsSpeakerName, setElevenLabsSpeakerName] = useState('קריין AI');
   const [isGeneratingElevenLabs, setIsGeneratingElevenLabs] = useState(false);
+
+  // Preview Animation State for Entrance / Exit Testing
+  const [previewAnimationState, setPreviewAnimationState] = useState<'enter' | 'exit' | null>(null);
+
+  const triggerPreviewEntrance = () => {
+    setPreviewAnimationState('enter');
+    setTimeout(() => setPreviewAnimationState(null), 1000);
+  };
+
+  const triggerPreviewExit = () => {
+    setPreviewAnimationState('exit');
+    setTimeout(() => setPreviewAnimationState(null), 1000);
+  };
+
+  const triggerPreviewSequence = () => {
+    setPreviewAnimationState('enter');
+    setTimeout(() => {
+      setPreviewAnimationState('exit');
+      setTimeout(() => {
+        setPreviewAnimationState(null);
+      }, 700);
+    }, 850);
+  };
 
   const handleGenerateSubtitlesWithElevenLabs = async () => {
     const currentSettings = getAISettings();
@@ -2654,8 +2744,21 @@ export default function SubtitleStudio({
               )}
 
               {/* Dynamic Draggable Styled Subtitle Overlay on Top of Video */}
-              {activeSubtitle && (() => {
-                const st = activeSubtitle.customStyle || globalStyle;
+              {(() => {
+                const subtitleToRender = activeSubtitle || (
+                  sidebarTab === 'style' && subtitles.length > 0
+                    ? (selectedIds.length > 0 ? subtitles.find(s => selectedIds.includes(s.id)) || subtitles[0] : subtitles[0])
+                    : (sidebarTab === 'style' ? {
+                        id: 'preview_demo',
+                        startTime: 0,
+                        endTime: 5,
+                        text: 'כתוביות מקצועיות בעיצוב אישי'
+                      } as SubtitleItem : null)
+                );
+
+                if (!subtitleToRender) return null;
+
+                const st = subtitleToRender.customStyle || globalStyle;
                 const posX = typeof st.positionX === 'number' ? st.positionX : 50;
                 const posY = typeof st.positionY === 'number'
                   ? st.positionY
@@ -2712,12 +2815,15 @@ export default function SubtitleStudio({
                   return 'shadow-xl';
                 };
 
-                const words = activeSubtitle.text.trim().split(/\s+/).filter(Boolean);
-                const subStartTime = (isStandaloneMedia && activeClip && activeSubtitle.startTime >= activeClip.startTime)
-                  ? (activeSubtitle.startTime - activeClip.startTime)
-                  : activeSubtitle.startTime;
-                const elapsed = Math.max(0, currentTime - subStartTime);
-                const duration = Math.max(0.1, activeSubtitle.endTime - activeSubtitle.startTime);
+                const words = subtitleToRender.text.trim().split(/\s+/).filter(Boolean);
+                const subStartTime = (isStandaloneMedia && activeClip && subtitleToRender.startTime >= activeClip.startTime)
+                  ? (subtitleToRender.startTime - activeClip.startTime)
+                  : subtitleToRender.startTime;
+                const subEndTime = (isStandaloneMedia && activeClip && subtitleToRender.endTime >= activeClip.startTime)
+                  ? (subtitleToRender.endTime - activeClip.startTime)
+                  : subtitleToRender.endTime;
+                const duration = Math.max(0.1, subEndTime - subStartTime);
+                const elapsed = activeSubtitle ? Math.max(0, currentTime - subStartTime) : (duration * 0.5);
                 const activeWordIndex = Math.min(words.length - 1, Math.floor((elapsed / duration) * words.length));
 
                 // Words per line grouping
@@ -2730,6 +2836,20 @@ export default function SubtitleStudio({
                 } else {
                   wordLines.push(words);
                 }
+
+                // Subtitle Animation calculations (Entrance vs Exit)
+                const animDuration = Math.min(st.animationDuration || 0.25, Math.max(0.12, duration * 0.25));
+                const remainingTime = subEndTime - currentTime;
+                const hasExitEffect = !!st.exitAnimation && st.exitAnimation !== 'none';
+                const isExiting = previewAnimationState === 'exit' || (
+                  previewAnimationState !== 'enter' &&
+                  hasExitEffect &&
+                  activeSubtitle !== undefined &&
+                  isPlaying &&
+                  remainingTime <= animDuration &&
+                  remainingTime >= 0
+                );
+                const animationClass = getSubtitleAnimationClass(st, isExiting);
 
                 return (
                   <div
@@ -2780,8 +2900,8 @@ export default function SubtitleStudio({
                     </div>
 
                     {/* Speaker Diarization Floating Badge */}
-                    {activeSubtitle.speaker?.trim() && st.showSpeakerBadge !== false && (() => {
-                      const spkName = activeSubtitle.speaker!.trim();
+                    {subtitleToRender.speaker?.trim() && st.showSpeakerBadge !== false && (() => {
+                      const spkName = subtitleToRender.speaker!.trim();
                       const spkColor = getSpeakerColor(spkName, st.speakerColors);
                       return (
                         <div className="mb-1.5 flex items-center justify-center pointer-events-none">
@@ -2801,6 +2921,7 @@ export default function SubtitleStudio({
                     })()}
 
                     <div
+                      key={`sub_box_${subtitleToRender.id}_${isExiting ? 'exit' : 'enter'}_${previewAnimationState || ''}`}
                       style={{
                         display: 'inline-block',
                         fontFamily: st.fontFamily || 'Rubik, sans-serif',
@@ -2810,16 +2931,17 @@ export default function SubtitleStudio({
                         backgroundColor: effectiveBgColor,
                         padding: `${padY}px ${padX}px`,
                         borderRadius: borderRadius,
-                        border: (st.colorCodeSubtitleBySpeaker && activeSubtitle.speaker?.trim()) 
-                          ? `2px solid ${getSpeakerColor(activeSubtitle.speaker.trim(), st.speakerColors)}`
+                        border: (st.colorCodeSubtitleBySpeaker && subtitleToRender.speaker?.trim()) 
+                          ? `2px solid ${getSpeakerColor(subtitleToRender.speaker.trim(), st.speakerColors)}`
                           : '1px solid transparent',
                         WebkitTextStroke: strokeCss,
                         textShadow: getShadow(),
                         lineHeight: st.lineHeight || 1.3,
                         letterSpacing: `${st.letterSpacing || 0}px`,
-                        direction: 'rtl'
+                        direction: 'rtl',
+                        ['--sub-anim-duration' as any]: `${animDuration}s`
                       }}
-                      className={`${getBoxClasses()} animate-in zoom-in-95 duration-100 transition-all group-hover/drag:border-purple-400/40`}
+                      className={`${getBoxClasses()} ${animationClass} transition-all group-hover/drag:border-purple-400/40`}
                     >
                       {wordLines.map((lineWords, lineIdx) => (
                         <div key={lineIdx} className="leading-snug">
@@ -4800,6 +4922,202 @@ export default function SubtitleStudio({
                           className="w-full h-8 rounded-lg bg-transparent cursor-pointer border border-slate-700"
                         />
                       </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 9. אפקטי הופעה והיעלמות (כניסה ויציאה) בסגנון CapCut / TikTok */}
+                <div className="p-4 rounded-2xl bg-slate-950 border border-purple-900/40 space-y-4 shadow-lg shadow-purple-950/20">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="w-7 h-7 rounded-lg bg-gradient-to-tr from-purple-600 to-pink-500 flex items-center justify-center text-white shadow">
+                        <Sparkles className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-bold text-white flex items-center gap-1.5">
+                          <span>אפקטי הופעה והיעלמות</span>
+                          <span className="text-[10px] font-mono font-bold bg-pink-500/20 text-pink-300 px-1.5 py-0.2 rounded-full border border-pink-500/30">
+                            CapCut Style
+                          </span>
+                        </h4>
+                        <p className="text-[10px] text-slate-400">אנימציות כניסה חיות ויציאה חלקה לכל כתובית</p>
+                      </div>
+                    </div>
+
+                    {/* Quick Preview Test Buttons */}
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={triggerPreviewSequence}
+                        title="בדוק רצף מלא: כניסה ולאחריה יציאה"
+                        className="px-2.5 py-1 rounded-lg bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white text-[11px] font-bold shadow-md transition-all flex items-center gap-1 active:scale-95"
+                      >
+                        <Play className="w-3 h-3 fill-current" />
+                        <span>בדוק רצף</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Animation Duration / Speed Slider */}
+                  <div className="space-y-1.5 p-3 rounded-xl bg-slate-900/90 border border-slate-800">
+                    <div className="flex items-center justify-between text-xs">
+                      <div className="flex items-center gap-1.5 text-slate-300 font-semibold text-[11px]">
+                        <Clock className="w-3.5 h-3.5 text-purple-400" />
+                        <span>מהירות האנימציה (משך מעבר):</span>
+                      </div>
+                      <span className="font-mono font-bold text-pink-400 bg-pink-950/60 px-2 py-0.5 rounded-md border border-pink-800/40 text-[11px]">
+                        {Math.round((globalStyle.animationDuration ?? 0.25) * 1000)}ms
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min={0.10}
+                      max={0.50}
+                      step={0.02}
+                      value={globalStyle.animationDuration ?? 0.25}
+                      onChange={(e) => {
+                        const val = parseFloat(e.target.value);
+                        applyStyleUpdate({ animationDuration: val });
+                      }}
+                      className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-pink-500"
+                    />
+                    <div className="flex items-center justify-between text-[10px] text-slate-500 pt-0.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          applyStyleUpdate({ animationDuration: 0.15 });
+                          triggerPreviewSequence();
+                        }}
+                        className="hover:text-purple-300 transition-colors"
+                      >
+                        ⚡ מהיר (150ms)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          applyStyleUpdate({ animationDuration: 0.25 });
+                          triggerPreviewSequence();
+                        }}
+                        className="hover:text-purple-300 transition-colors font-bold text-slate-400"
+                      >
+                        🎯 ברירת מחדל (250ms)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          applyStyleUpdate({ animationDuration: 0.40 });
+                          triggerPreviewSequence();
+                        }}
+                        className="hover:text-purple-300 transition-colors"
+                      >
+                        🎬 קולנועי איטי (400ms)
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Entrance Animation Picker */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <label className="text-[11px] font-bold text-slate-200 flex items-center gap-1.5">
+                        <span>🎬 אפקט כניסה והופעה (Entrance)</span>
+                        <span className="text-[10px] font-normal text-slate-400">
+                          ({ENTRANCE_ANIMATION_OPTIONS.find(o => o.id === (globalStyle.entranceAnimation || 'pop'))?.label})
+                        </span>
+                      </label>
+                      <button
+                        type="button"
+                        onClick={triggerPreviewEntrance}
+                        className="text-[10px] text-purple-400 hover:text-purple-300 font-semibold flex items-center gap-1 bg-purple-950/40 hover:bg-purple-950/70 border border-purple-800/40 px-2 py-0.5 rounded-md transition-all"
+                      >
+                        <Eye className="w-2.5 h-2.5" />
+                        <span>בדוק כניסה בלבד</span>
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      {ENTRANCE_ANIMATION_OPTIONS.map((opt) => {
+                        const isSelected = (globalStyle.entranceAnimation || 'pop') === opt.id;
+                        return (
+                          <button
+                            key={opt.id}
+                            type="button"
+                            onClick={() => {
+                              applyStyleUpdate({ entranceAnimation: opt.id, animation: opt.id as any });
+                              triggerPreviewEntrance();
+                            }}
+                            title={opt.desc}
+                            className={`p-2 rounded-xl text-right transition-all flex items-center justify-between border ${
+                              isSelected
+                                ? 'bg-gradient-to-r from-purple-600/30 to-pink-600/20 border-purple-400 text-white shadow-sm'
+                                : 'bg-slate-900/80 hover:bg-slate-900 border-slate-800 text-slate-300 hover:border-slate-700'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className="text-base select-none">{opt.emoji}</span>
+                              <div className="truncate text-right">
+                                <div className={`text-xs font-bold truncate ${isSelected ? 'text-white' : 'text-slate-200'}`}>
+                                  {opt.label}
+                                </div>
+                              </div>
+                            </div>
+                            {isSelected && (
+                              <Check className="w-3.5 h-3.5 text-purple-400 flex-shrink-0 mr-1" />
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Exit Animation Picker */}
+                  <div className="space-y-2 pt-2 border-t border-slate-800/80">
+                    <div className="flex items-center justify-between">
+                      <label className="text-[11px] font-bold text-slate-200 flex items-center gap-1.5">
+                        <span>👋 אפקט יציאה והיעלמות (Exit)</span>
+                        <span className="text-[10px] font-normal text-slate-400">
+                          ({EXIT_ANIMATION_OPTIONS.find(o => o.id === (globalStyle.exitAnimation || 'fade'))?.label})
+                        </span>
+                      </label>
+                      <button
+                        type="button"
+                        onClick={triggerPreviewExit}
+                        className="text-[10px] text-pink-400 hover:text-pink-300 font-semibold flex items-center gap-1 bg-pink-950/40 hover:bg-pink-950/70 border border-pink-800/40 px-2 py-0.5 rounded-md transition-all"
+                      >
+                        <Eye className="w-2.5 h-2.5" />
+                        <span>בדוק יציאה בלבד</span>
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      {EXIT_ANIMATION_OPTIONS.map((opt) => {
+                        const isSelected = (globalStyle.exitAnimation || 'fade') === opt.id;
+                        return (
+                          <button
+                            key={opt.id}
+                            type="button"
+                            onClick={() => {
+                              applyStyleUpdate({ exitAnimation: opt.id });
+                              triggerPreviewExit();
+                            }}
+                            title={opt.desc}
+                            className={`p-2 rounded-xl text-right transition-all flex items-center justify-between border ${
+                              isSelected
+                                ? 'bg-gradient-to-r from-pink-600/30 to-purple-600/20 border-pink-400 text-white shadow-sm'
+                                : 'bg-slate-900/80 hover:bg-slate-900 border-slate-800 text-slate-300 hover:border-slate-700'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className="text-base select-none">{opt.emoji}</span>
+                              <div className="truncate text-right">
+                                <div className={`text-xs font-bold truncate ${isSelected ? 'text-white' : 'text-slate-200'}`}>
+                                  {opt.label}
+                                </div>
+                              </div>
+                            </div>
+                            {isSelected && (
+                              <Check className="w-3.5 h-3.5 text-pink-400 flex-shrink-0 mr-1" />
+                            )}
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
                 </div>

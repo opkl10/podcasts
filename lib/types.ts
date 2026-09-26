@@ -77,6 +77,28 @@ export interface RecordingMetadata {
   topicsCovered: string[]; // topic IDs
 }
 
+export type SubtitleEntranceAnimation = 
+  | 'none' 
+  | 'fade' 
+  | 'pop' 
+  | 'bounce' 
+  | 'slide-up' 
+  | 'slide-down' 
+  | 'zoom-in' 
+  | 'flip' 
+  | 'rubber-band' 
+  | 'glitch';
+
+export type SubtitleExitAnimation = 
+  | 'none' 
+  | 'fade' 
+  | 'shrink' 
+  | 'slide-down' 
+  | 'slide-up' 
+  | 'zoom-out' 
+  | 'blur' 
+  | 'drop-out';
+
 export interface SubtitleStyle {
   fontFamily?: string;
   fontSize?: number; // in px (14 - 56)
@@ -106,7 +128,10 @@ export interface SubtitleStyle {
   isUppercase?: boolean;
   letterSpacing?: number;
   lineHeight?: number;
-  animation?: 'none' | 'karaoke-pop' | 'fade' | 'bounce' | 'slide-up' | 'zoom-in';
+  animation?: SubtitleEntranceAnimation | 'karaoke-pop' | string; // אפקט הופעה (כניסה)
+  entranceAnimation?: SubtitleEntranceAnimation; // אפקט הופעה
+  exitAnimation?: SubtitleExitAnimation;         // אפקט היעלמות (יציאה)
+  animationDuration?: number;                    // משך זמן האפקט בשניות (0.15 - 0.6)
   themePreset?: string;
   maxWordsPerLine?: number; // כמות מילים מקסימלית בשורה
   // Brand Logo Overlay
