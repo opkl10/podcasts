@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Episode, SubtitleItem, MovieFactCard, ElementTransform, CustomOverlayStyle, AudiogramStudioConfig, AudiogramStudioTemplate, HighlightClip, MovableImageOverlay } from '@/lib/types';
 import { getMediaBlob, saveMediaBlob, formatTime, getPermanentLogo, savePermanentLogo, saveEpisode, findMediaBlobForEpisode, healEpisodeRecording, reassignEpisodeRecording, getEpisodes } from '@/lib/storage';
-import { trimAudioBlob } from '@/lib/audioUtils';
+import { trimAudioBlob, detectFillerIntervalsFromSubtitles, removeIntervalsFromAudioBlob } from '@/lib/audioUtils';
 import { 
   Play, 
   Pause, 
@@ -2756,6 +2756,71 @@ export default function AudioEditorAudiogramStudio({
     }
   };
 
+  // Cut all filler sounds ("אה", "אממ", "אהה") from the audio track in the audio editor
+  const handleCutFillersInAudioEditor = async () => {
+    if (!audioBlob) {
+      alert('לא נמצא קובץ שמע לעריכה.');
+      return;
+    }
+
+    const subs = episode.subtitles || [];
+    if (subs.length === 0) {
+      alert('אין כתוביות לזיהוי קטעי היסוס בפרק זה. יש לתמלל תחילה באולפן הכתוביות.');
+      return;
+    }
+
+    const intervals = detectFillerIntervalsFromSubtitles(subs);
+    if (intervals.length === 0) {
+      alert('לא נמצאו קטעי ׳אה׳ או היסוסים מובהקים בכתוביות הפרק.');
+      return;
+    }
+
+    const totalCutSec = intervals.reduce((acc, c) => acc + (c.end - c.start), 0);
+    const confirmed = confirm(
+      `נמצאו ${intervals.length} קטעי היסוס ו-׳אה׳ (סה״כ ${totalCutSec.toFixed(1)} שניות).\n\nהאם לחתוך אותם ישירות מקובץ הסאונד?`
+    );
+    if (!confirmed) return;
+
+    setIsTrimming(true);
+    try {
+      const res = await removeIntervalsFromAudioBlob(audioBlob, intervals, {
+        subtitles: subs,
+        crossfadeMs: 15
+      });
+
+      const newUrl = URL.createObjectURL(res.cleanedBlob);
+      setAudioBlob(res.cleanedBlob);
+      setAudioUrl(newUrl);
+
+      const newKey = `rec_clean_${Date.now()}`;
+      await saveMediaBlob(newKey, res.cleanedBlob);
+
+      const oldDur = duration || (episode.recording?.duration || 60);
+      const newDur = Math.max(1, Math.round(oldDur - res.totalDurationCutSeconds));
+      setDuration(newDur);
+      setTrimEnd(newDur);
+
+      const updatedEpisode: Episode = {
+        ...episode,
+        subtitles: res.updatedSubtitles,
+        recording: episode.recording ? {
+          ...episode.recording,
+          audioBlobKey: newKey,
+          duration: newDur
+        } : undefined
+      };
+
+      saveEpisode(updatedEpisode);
+      if (onUpdateEpisode) onUpdateEpisode(updatedEpisode);
+
+      alert(`🎉 נחתכו בהצלחה ${res.totalCuts} מילות היסוס מהסאונד! נחסכו ${res.totalDurationCutSeconds} שניות.`);
+    } catch (err: any) {
+      alert('שגיאה בחיתוך הסאונד: ' + (err?.message || err));
+    } finally {
+      setIsTrimming(false);
+    }
+  };
+
   // Save trimmed clip as independent asset and open directly in Subtitle Studio
   const handleSaveClipAndGoToSubtitles = async () => {
     if (!audioBlob && !audioUrl) {
@@ -3002,9 +3067,9 @@ export default function AudioEditorAudiogramStudio({
     <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-lg flex items-center justify-center p-3 sm:p-6 font-sans select-none animate-in fade-in">
       <div className="w-full max-w-6xl rounded-3xl bg-[#0f121a] border border-slate-800 shadow-2xl overflow-hidden flex flex-col max-h-[95vh]">
         {/* Top Header */}
-        <div className="p-4 sm:p-5 border-b border-slate-800 flex items-center justify-between bg-slate-950/80">
+        <div className="p-4 sm:p-5 border-b border-slate-800 flex flex-wrap md:flex-nowrap items-center justify-between gap-3 bg-slate-950/80 shrink-0">
           <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-2xl bg-gradient-to-tr from-cyan-600 via-indigo-600 to-purple-600 text-white shadow-lg shadow-indigo-600/30">
+            <div className="p-2.5 rounded-2xl bg-gradient-to-tr from-cyan-600 via-indigo-600 to-purple-600 text-white shadow-lg shadow-indigo-600/30 shrink-0">
               <Activity className="w-5 h-5" />
             </div>
             <div>
@@ -3048,7 +3113,7 @@ export default function AudioEditorAudiogramStudio({
                       setReassignTargetId(other?.id || '');
                       setIsReassignModalOpen(true);
                     }}
-                    className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-300 hover:text-white text-xs font-semibold transition-all shadow-sm"
+                    className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-300 hover:text-white text-xs font-semibold transition-all shadow-sm shrink-0"
                     title="אם ההקלטה הועלתה או שויכה לפרק הלא נכון, לחץ כאן להעביר אותה מיידית לפרק הרצוי"
                   >
                     <RotateCcw className="w-3 h-3 text-amber-400" />
@@ -3062,7 +3127,7 @@ export default function AudioEditorAudiogramStudio({
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
             {/* Hidden Audio File Input */}
             <input
               ref={audioUploadInputRef}
@@ -3075,7 +3140,7 @@ export default function AudioEditorAudiogramStudio({
             {/* Upload Audio File Button */}
             <button
               onClick={() => audioUploadInputRef.current?.click()}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 hover:text-white border border-emerald-500/40 text-xs font-bold transition-all shadow-md active:scale-95"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 hover:text-white border border-emerald-500/40 text-xs font-bold transition-all shadow-md active:scale-95 shrink-0"
               title="העלאת קובץ שמע ישירות מהמחשב לעריכה וייצוא"
             >
               <Upload className="w-3.5 h-3.5 text-emerald-400" />
@@ -3085,7 +3150,7 @@ export default function AudioEditorAudiogramStudio({
             {/* Free Drag Mode Toggle */}
             <button
               onClick={() => setIsEditMode(!isEditMode)}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 border ${
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 border shrink-0 ${
                 isEditMode
                   ? 'bg-amber-500/20 border-amber-500/40 text-amber-300 shadow-md shadow-amber-950/40'
                   : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
@@ -3099,7 +3164,7 @@ export default function AudioEditorAudiogramStudio({
             {/* Save Studio Settings to Episode */}
             <button
               onClick={handleSaveStudioConfig}
-              className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all shadow-md active:scale-95 border ${
+              className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all shadow-md active:scale-95 border shrink-0 ${
                 isSaveSuccess
                   ? 'bg-emerald-600 border-emerald-400 text-white shadow-emerald-900/40 animate-in zoom-in-95'
                   : 'bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 hover:text-white border-indigo-500/40'
@@ -3112,7 +3177,7 @@ export default function AudioEditorAudiogramStudio({
 
             <button
               onClick={onClose}
-              className="p-2 text-slate-400 hover:text-white rounded-xl hover:bg-slate-800 transition-colors"
+              className="p-2 text-slate-400 hover:text-white rounded-xl hover:bg-slate-800 transition-colors shrink-0"
             >
               <X className="w-5 h-5" />
             </button>
@@ -3966,64 +4031,64 @@ export default function AudioEditorAudiogramStudio({
           {/* RIGHT: Studio Customization Tools (5 Cols) */}
           <div className="lg:col-span-5 space-y-4 flex flex-col justify-between">
             {/* Customization Tabs (6 Tabs) */}
-            <div className="grid grid-cols-6 gap-1 p-1 bg-slate-950 rounded-2xl border border-slate-800 text-xs">
+            <div className="flex items-center gap-1 overflow-x-auto scrollbar-none p-1 bg-slate-950 rounded-2xl border border-slate-800 text-xs shrink-0">
               <button
                 onClick={() => setActiveTab('styler')}
-                className={`py-2 px-1 rounded-xl font-bold transition-all flex items-center justify-center gap-1 ${
+                className={`flex-1 min-w-[65px] py-2 px-1.5 rounded-xl font-bold transition-all flex items-center justify-center gap-1 whitespace-nowrap ${
                   activeTab === 'styler' ? 'bg-gradient-to-r from-cyan-600 to-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
                 }`}
               >
-                <Sparkles className="w-3.5 h-3.5" />
+                <Sparkles className="w-3.5 h-3.5 shrink-0" />
                 <span>מעצב</span>
               </button>
 
               <button
                 onClick={() => setActiveTab('background')}
-                className={`py-2 px-1 rounded-xl font-bold transition-all flex items-center justify-center gap-1 ${
+                className={`flex-1 min-w-[65px] py-2 px-1.5 rounded-xl font-bold transition-all flex items-center justify-center gap-1 whitespace-nowrap ${
                   activeTab === 'background' ? 'bg-pink-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
                 }`}
               >
-                <Palette className="w-3.5 h-3.5" />
+                <Palette className="w-3.5 h-3.5 shrink-0" />
                 <span>רקע</span>
               </button>
 
               <button
                 onClick={() => setActiveTab('waveform')}
-                className={`py-2 px-1 rounded-xl font-bold transition-all flex items-center justify-center gap-1 ${
+                className={`flex-1 min-w-[65px] py-2 px-1.5 rounded-xl font-bold transition-all flex items-center justify-center gap-1 whitespace-nowrap ${
                   activeTab === 'waveform' ? 'bg-cyan-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
                 }`}
               >
-                <Activity className="w-3.5 h-3.5" />
+                <Activity className="w-3.5 h-3.5 shrink-0" />
                 <span>גלי קול</span>
               </button>
 
               <button
                 onClick={() => setActiveTab('overlays')}
-                className={`py-2 px-1 rounded-xl font-bold transition-all flex items-center justify-center gap-1 ${
+                className={`flex-1 min-w-[65px] py-2 px-1.5 rounded-xl font-bold transition-all flex items-center justify-center gap-1 whitespace-nowrap ${
                   activeTab === 'overlays' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
                 }`}
               >
-                <Layers className="w-3.5 h-3.5" />
+                <Layers className="w-3.5 h-3.5 shrink-0" />
                 <span>שכבות</span>
               </button>
 
               <button
                 onClick={() => setActiveTab('trimmer')}
-                className={`py-2 px-1 rounded-xl font-bold transition-all flex items-center justify-center gap-1 ${
+                className={`flex-1 min-w-[65px] py-2 px-1.5 rounded-xl font-bold transition-all flex items-center justify-center gap-1 whitespace-nowrap ${
                   activeTab === 'trimmer' ? 'bg-amber-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
                 }`}
               >
-                <Scissors className="w-3.5 h-3.5" />
+                <Scissors className="w-3.5 h-3.5 shrink-0" />
                 <span>חיתוך</span>
               </button>
 
               <button
                 onClick={() => setActiveTab('export')}
-                className={`py-2 px-1 rounded-xl font-bold transition-all flex items-center justify-center gap-1 ${
+                className={`flex-1 min-w-[65px] py-2 px-1.5 rounded-xl font-bold transition-all flex items-center justify-center gap-1 whitespace-nowrap ${
                   activeTab === 'export' ? 'bg-purple-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
                 }`}
               >
-                <Download className="w-3.5 h-3.5" />
+                <Download className="w-3.5 h-3.5 shrink-0" />
                 <span>ייצוא</span>
               </button>
             </div>
@@ -6663,208 +6728,29 @@ export default function AudioEditorAudiogramStudio({
                       {isTrimming ? 'חותך שמע...' : '✂️ חתוך ושמור מקטע זה'}
                     </button>
                   </div>
-                </div>
-              )}
 
-              {/* 4. EXPORT AUDIOGRAM VIDEO TAB */}
-              {activeTab === 'export' && (
-                <div className="space-y-4">
-                  <div className="p-4 rounded-2xl bg-gradient-to-r from-purple-950/60 to-indigo-950/60 border border-purple-500/40 space-y-3">
-                    <h4 className="text-sm font-black text-white flex items-center gap-2">
-                      <Film className="w-4 h-4 text-purple-400" />
-                      <span>ייצוא וידאו אודיוגרמה (Video Podcast Export)</span>
-                    </h4>
-                    <p className="text-xs text-slate-300 leading-relaxed">
-                      יוצר קובץ וידאו באיכות גבוהה עם גלי הקול המונפשים, הרקע, הלוגו, הכתוביות והחלוניות להעלאה ליוטיוב, ספוטיפיי וידאו, אינסטגרם רילס וטיקטוק!
-                    </p>
-
-                    {/* Resolution Selector: FHD 1080p vs HD 720p vs 4K */}
-                    <div className="space-y-1.5 pt-1">
-                      <label className="text-[11px] font-bold text-slate-300 block">איכות ורזולוציית הווידאו:</label>
-                      <div className="grid grid-cols-3 gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setExportResolution('1080p')}
-                          className={`p-2 rounded-xl border text-xs font-bold flex flex-col items-center justify-center gap-0.5 transition-all ${
-                            exportResolution === '1080p'
-                              ? 'bg-gradient-to-r from-purple-600 to-indigo-600 border-purple-400 text-white shadow-lg shadow-purple-600/30'
-                              : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
-                          }`}
-                        >
-                          <span className="font-bold">FHD 1080p</span>
-                          <span className="text-[9px] opacity-75">(מומלץ לסושיאל)</span>
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => setExportResolution('720p')}
-                          className={`p-2 rounded-xl border text-xs font-bold flex flex-col items-center justify-center gap-0.5 transition-all ${
-                            exportResolution === '720p'
-                              ? 'bg-gradient-to-r from-purple-600 to-indigo-600 border-purple-400 text-white shadow-lg shadow-purple-600/30'
-                              : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
-                          }`}
-                        >
-                          <span className="font-bold">HD 720p</span>
-                          <span className="text-[9px] opacity-75">(קובץ קל ומהיר)</span>
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => setExportResolution('4k')}
-                          className={`p-2 rounded-xl border text-xs font-bold flex flex-col items-center justify-center gap-0.5 transition-all ${
-                            exportResolution === '4k'
-                              ? 'bg-gradient-to-r from-purple-600 to-indigo-600 border-purple-400 text-white shadow-lg shadow-purple-600/30'
-                              : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
-                          }`}
-                        >
-                          <span className="font-bold">4K UHD</span>
-                          <span className="text-[9px] opacity-75">(איכות מקסימלית)</span>
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Format Selector: MP4 vs WEBM */}
-                    <div className="space-y-1.5 pt-1">
-                      <label className="text-[11px] font-bold text-slate-300 block">פורמט קובץ הווידאו:</label>
-                      <div className="grid grid-cols-2 gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setExportFormat('mp4')}
-                          className={`p-2 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
-                            exportFormat === 'mp4'
-                              ? 'bg-purple-600 border-purple-400 text-white shadow-lg shadow-purple-600/30'
-                              : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
-                          }`}
-                        >
-                          <span>🎬 MP4 (H.264 / AAC)</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setExportFormat('webm')}
-                          className={`p-2 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
-                            exportFormat === 'webm'
-                              ? 'bg-purple-600 border-purple-400 text-white shadow-lg shadow-purple-600/30'
-                              : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
-                          }`}
-                        >
-                          <span>🌐 WebM (VP9 / Opus)</span>
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Export Action Button */}
-                    <button
-                      onClick={handleExportAudiogramVideo}
-                      disabled={isExportingVideo || duration === 0}
-                      className="w-full py-3 rounded-2xl bg-gradient-to-r from-purple-600 via-pink-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-black text-sm shadow-xl shadow-purple-600/30 transition-all active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2 mt-2"
-                    >
-                      {isExportingVideo ? (
-                        <>
-                          <Activity className="w-4 h-4 animate-spin text-white" />
-                          <span>מייצא וידאו... ({exportProgress}%)</span>
-                        </>
-                      ) : (
-                        <>
-                          <Download className="w-4 h-4" />
-                          <span>ייצא וידאו {exportFormat.toUpperCase()} עכשיו</span>
-                        </>
-                      )}
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* 3. AUDIO TRIMMER & CUTTING TAB */}
-              {activeTab === 'trimmer' && (
-                <div className="space-y-4">
-                  <div className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 space-y-3">
+                  {/* Clean Hesitations and "Um/Ah" directly from Audio */}
+                  <div className="p-3.5 rounded-2xl bg-rose-950/20 border border-rose-500/30 space-y-2.5">
                     <div className="flex items-center justify-between">
-                      <h4 className="text-xs font-bold text-amber-400 flex items-center gap-1.5">
-                        <Scissors className="w-4 h-4" />
-                        <span>חיתוך מקטע מהיר (Reels / Shorts):</span>
-                      </h4>
-                      <span className="text-[10px] font-mono text-slate-400">
-                        סה״כ: {formatTime(duration, true)}
+                      <span className="text-xs font-bold text-rose-300 flex items-center gap-1.5">
+                        <Scissors className="w-3.5 h-3.5 text-rose-400" />
+                        <span>מחיקת ״אה״ והיסוסים מקובץ הסאונד:</span>
+                      </span>
+                      <span className="text-[10px] text-rose-400/80 font-mono">
+                        Micro-Crossfade 15ms
                       </span>
                     </div>
-
-                    {/* Quick Clip Presets */}
-                    <div className="grid grid-cols-3 gap-1.5">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setTrimStart(0);
-                          setTrimEnd(Math.min(30, duration));
-                        }}
-                        className="py-1.5 px-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-[10px] font-bold text-amber-300 border border-slate-700 text-center transition-colors"
-                      >
-                        ⚡ 30 שנ׳ (טיקטוק)
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setTrimStart(0);
-                          setTrimEnd(Math.min(60, duration));
-                        }}
-                        className="py-1.5 px-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-[10px] font-bold text-amber-300 border border-slate-700 text-center transition-colors"
-                      >
-                        🎬 60 שנ׳ (Reels)
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setTrimStart(0);
-                          setTrimEnd(Math.min(90, duration));
-                        }}
-                        className="py-1.5 px-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-[10px] font-bold text-amber-300 border border-slate-700 text-center transition-colors"
-                      >
-                        🌟 90 שנ׳ (Shorts)
-                      </button>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-3 pt-1">
-                      <div className="space-y-1">
-                        <label className="text-[10px] text-slate-400 block">נקודת התחלה (In-Point):</label>
-                        <input
-                          type="number"
-                          min="0"
-                          max={duration}
-                          step="0.5"
-                          value={trimStart}
-                          onChange={(e) => setTrimStart(parseFloat(e.target.value) || 0)}
-                          className="w-full p-2 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono text-white"
-                        />
-                        <span className="text-[10px] text-slate-500 font-mono">{formatTime(trimStart, true)}</span>
-                      </div>
-
-                      <div className="space-y-1">
-                        <label className="text-[10px] text-slate-400 block">נקודת סיום (Out-Point):</label>
-                        <input
-                          type="number"
-                          min="0"
-                          max={duration}
-                          step="0.5"
-                          value={trimEnd}
-                          onChange={(e) => setTrimEnd(parseFloat(e.target.value) || duration)}
-                          className="w-full p-2 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono text-white"
-                        />
-                        <span className="text-[10px] text-slate-500 font-mono">{formatTime(trimEnd, true)}</span>
-                      </div>
-                    </div>
-
-                    <div className="p-2 rounded-xl bg-slate-950/80 border border-slate-800 flex items-center justify-between text-xs">
-                      <span className="text-slate-400">אורך המקטע הנבחר:</span>
-                      <span className="font-mono font-bold text-amber-400">
-                        {formatTime(Math.max(0, trimEnd - trimStart), true)}
-                      </span>
-                    </div>
-
+                    <p className="text-[11px] text-slate-300 leading-relaxed">
+                      סורק את כל קטעי ההיסוס (״אה״, ״אממ״, ״אהה״) שנמצאו בתמלול הפרק וחותך אותם ישירות מערוץ השמע עם הצלבה חלקה למניעת רעשי קפיצה (Pops/Clicks), ומעדכן מיידית את תזמוני הכתוביות.
+                    </p>
                     <button
-                      onClick={handlePerformTrim}
-                      disabled={isTrimming}
-                      className="w-full py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-slate-950 font-black text-xs shadow-lg transition-all active:scale-95 disabled:opacity-50"
+                      type="button"
+                      onClick={handleCutFillersInAudioEditor}
+                      disabled={isTrimming || !audioBlob}
+                      className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-rose-600 to-pink-600 hover:from-rose-500 hover:to-pink-500 text-white font-bold text-xs shadow-md transition-all active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2"
                     >
-                      {isTrimming ? 'חותך שמע...' : '✂️ חתוך ושמור מקטע זה'}
+                      <Scissors className="w-3.5 h-3.5" />
+                      <span>✂️ מחק את כל ה-״אה״ מהסאונד</span>
                     </button>
                   </div>
                 </div>

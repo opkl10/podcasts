@@ -44,7 +44,10 @@ import {
   trimAudioBlob,
   extractAndEnhanceAudioSnippet,
   getSpeakerColor,
-  DEFAULT_SPEAKER_COLORS
+  DEFAULT_SPEAKER_COLORS,
+  detectFillerIntervalsFromSubtitles,
+  removeIntervalsFromAudioBlob,
+  AudioCutInterval
 } from '@/lib/audioUtils';
 import { 
   Subtitles, 
@@ -81,6 +84,7 @@ import {
   Hash,
   GitMerge,
   RotateCw,
+  RotateCcw,
   FileText,
   Pin,
   FastForward,
@@ -608,6 +612,16 @@ export default function SubtitleStudio({
   const [elevenLabsWordsPerLine, setElevenLabsWordsPerLine] = useState(4);
   const [elevenLabsSpeakerName, setElevenLabsSpeakerName] = useState('קריין AI');
   const [isGeneratingElevenLabs, setIsGeneratingElevenLabs] = useState(false);
+ 
+  // Audio Filler Cut State ("מחיקת ׳אה׳ מהסאונד")
+  const [isCuttingAudioFillers, setIsCuttingAudioFillers] = useState<boolean>(false);
+  const [audioCutUndoState, setAudioCutUndoState] = useState<{
+    originalBlob: Blob;
+    originalSubtitles: SubtitleItem[];
+    originalDuration: number;
+    cutsCount: number;
+    secondsSaved: number;
+  } | null>(null);
 
   // Preview Animation State for Entrance / Exit Testing
   const [previewAnimationState, setPreviewAnimationState] = useState<'enter' | 'exit' | null>(null);
@@ -2204,6 +2218,126 @@ export default function SubtitleStudio({
     alert(`✨ ליטוש וניקוי מלא הושלם!\n• הוסרו ${res.fillersRemoved} מילות היסוס ("אה", "אממ")\n• הומרו ${res.datesConverted} תאריכים ומספרים לספרות${res.emptyCuesDropped > 0 ? `\n• הוסרו ${res.emptyCuesDropped} כתוביות ריקות` : ''}`);
   };
 
+  // Cut all filler sounds ("אה", "אממ", "אהה", "uh", "um", etc.) directly from the recorded audio track with micro-crossfade and resynchronize all subtitles
+  const handleCutFillersFromAudio = async () => {
+    if (subtitles.length === 0) {
+      alert('אין כתוביות לזיהוי קטעי היסוס. יש לתמלל את ההקלטה קודם.');
+      return;
+    }
+
+    let targetBlob = await resolveMediaBlob();
+    if (!targetBlob) {
+      alert('לא נמצא קובץ שמע לעריכה עבור פרק זה. נא לטעון קובץ שמע או להקליט פרק תחילה.');
+      return;
+    }
+
+    const intervals = detectFillerIntervalsFromSubtitles(subtitles);
+    if (intervals.length === 0) {
+      alert('לא נמצאו קטעי ׳אה׳ או היסוסים מובהקים בכתוביות לחיתוך מהסאונד.');
+      return;
+    }
+
+    const totalCutSec = intervals.reduce((acc, c) => acc + (c.end - c.start), 0);
+    const confirmed = confirm(
+      `נמצאו ${intervals.length} קטעי היסוס ו-׳אה׳ (סה״כ ${totalCutSec.toFixed(1)} שניות).\n\nהאם לחתוך אותם ישירות מפס הקול (השמע) ולסנכרן את כל הכתוביות מחדש?`
+    );
+    if (!confirmed) return;
+
+    try {
+      setIsCuttingAudioFillers(true);
+
+      // Save backup for Undo
+      setAudioCutUndoState({
+        originalBlob: targetBlob,
+        originalSubtitles: [...subtitles],
+        originalDuration: episode.recording?.duration || 0,
+        cutsCount: intervals.length,
+        secondsSaved: Number(totalCutSec.toFixed(1))
+      });
+
+      const res = await removeIntervalsFromAudioBlob(targetBlob, intervals, {
+        subtitles,
+        crossfadeMs: 15
+      });
+
+      // Update local state
+      setCurrentMediaBlob(res.cleanedBlob);
+      setSubtitles(res.updatedSubtitles);
+
+      // Refresh audio player URL
+      const newMediaUrl = URL.createObjectURL(res.cleanedBlob);
+      setVideoUrl(newMediaUrl);
+      if (videoRef.current) {
+        videoRef.current.src = newMediaUrl;
+        videoRef.current.load();
+      }
+
+      // Persist to storage
+      const blobKey = episode.recording?.audioBlobKey || `rec_${episode.id}_cut_${Date.now()}`;
+      await saveMediaBlob(blobKey, res.cleanedBlob);
+
+      const oldDur = episode.recording?.duration || (episode.targetDurationMinutes * 60) || 60;
+      const newDur = Math.max(1, Math.round(oldDur - res.totalDurationCutSeconds));
+
+      const updated: Episode = {
+        ...episode,
+        subtitles: res.updatedSubtitles,
+        recording: episode.recording ? {
+          ...episode.recording,
+          audioBlobKey: blobKey,
+          duration: newDur
+        } : undefined
+      };
+
+      saveEpisode(updated);
+      if (onUpdateEpisode) onUpdateEpisode(updated);
+
+      alert(`🎉 החיתוך מהסאונד הושלם בהצלחה!\n• נחתכו ${res.totalCuts} מילות היסוס ו-׳אה׳ ישירות מקובץ השמע\n• נחסכו ${res.totalDurationCutSeconds} שניות של גמגום והיסוסים\n• כל הכתוביות סונכרנו מחדש בדיוק מושלם!\n\n(ניתן לשחזר את השמע המקורי בכל רגע באמצעות כפתור ׳בטל חיתוך סאונד׳)`);
+    } catch (err: any) {
+      alert('שגיאה בחיתוך הסאונד: ' + (err?.message || err));
+    } finally {
+      setIsCuttingAudioFillers(false);
+    }
+  };
+
+  const handleUndoAudioCut = async () => {
+    if (!audioCutUndoState) return;
+    const ok = confirm('האם לשחזר את קובץ השמע המקורי ואת זמני הכתוביות המקוריים?');
+    if (!ok) return;
+
+    try {
+      setCurrentMediaBlob(audioCutUndoState.originalBlob);
+      setSubtitles(audioCutUndoState.originalSubtitles);
+
+      const newMediaUrl = URL.createObjectURL(audioCutUndoState.originalBlob);
+      setVideoUrl(newMediaUrl);
+      if (videoRef.current) {
+        videoRef.current.src = newMediaUrl;
+        videoRef.current.load();
+      }
+
+      const blobKey = episode.recording?.audioBlobKey || `rec_${episode.id}_restored_${Date.now()}`;
+      await saveMediaBlob(blobKey, audioCutUndoState.originalBlob);
+
+      const updated: Episode = {
+        ...episode,
+        subtitles: audioCutUndoState.originalSubtitles,
+        recording: episode.recording ? {
+          ...episode.recording,
+          audioBlobKey: blobKey,
+          duration: audioCutUndoState.originalDuration
+        } : undefined
+      };
+
+      saveEpisode(updated);
+      if (onUpdateEpisode) onUpdateEpisode(updated);
+      setAudioCutUndoState(null);
+      alert('קובץ השמע המקורי והכתוביות שוחזרו בהצלחה!');
+    } catch (err: any) {
+      alert('שגיאה בשחזור: ' + (err?.message || err));
+    }
+  };
+
   // Shift all timestamps by +/- delta seconds to fix microphone/video delay
   const handleShiftAll = (delta: number) => {
     if (subtitles.length === 0) return;
@@ -2377,8 +2511,8 @@ export default function SubtitleStudio({
             </div>
           </div>
 
-          {/* Action Toolbar */}
-          <div className="flex items-center gap-2">
+          {/* Action Toolbar - Fully responsive with horizontal scroll and clean grouping */}
+          <div className="flex flex-wrap items-center justify-end gap-1.5 sm:gap-2 max-w-full overflow-x-auto scrollbar-none py-1">
             {/* Hidden SRT / VTT File Input */}
             <input
               ref={srtFileInputRef}
@@ -2400,7 +2534,7 @@ export default function SubtitleStudio({
             {/* Direct Audio Upload Button */}
             <button
               onClick={() => audioFileInputRef.current?.click()}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 hover:text-white border border-emerald-500/40 text-xs font-bold transition-all active:scale-98"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 hover:text-white border border-emerald-500/40 text-xs font-bold transition-all active:scale-98 shrink-0"
               title="העלאת קובץ הקלטה (MP3/WAV) מהמחשב לתמלול מיידי"
             >
               <Upload className="w-3.5 h-3.5 text-emerald-400" />
@@ -2408,7 +2542,7 @@ export default function SubtitleStudio({
             </button>
 
             {/* Scope Selector: Full Episode OR Cut Clips */}
-            <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-700/80 rounded-xl px-2.5 py-1.5 text-xs shadow-inner">
+            <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-700/80 rounded-xl px-2.5 py-1.5 text-xs shadow-inner shrink-0">
               <span className="text-slate-400 font-bold shrink-0 text-[11px] flex items-center gap-1">
                 <Scissors className="w-3 h-3 text-amber-400" />
                 <span>מקור תמלול:</span>
@@ -2448,7 +2582,7 @@ export default function SubtitleStudio({
             <button
               onClick={() => handleTranscribeRecordedAudio()}
               disabled={isTranscribing}
-              className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold text-white shadow-lg transition-all active:scale-98 disabled:opacity-50 ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-white shadow-lg transition-all active:scale-98 disabled:opacity-50 shrink-0 ${
                 activeClip 
                   ? 'bg-gradient-to-r from-amber-500 to-rose-600 hover:from-amber-400 hover:to-rose-500 shadow-amber-600/40 ring-1 ring-amber-400/50' 
                   : 'bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 shadow-amber-600/30'
@@ -2468,11 +2602,11 @@ export default function SubtitleStudio({
             {/* Auto Generate from Topics Button */}
             <button
               onClick={handleGenerateFromTopics}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 hover:text-white border border-indigo-500/40 text-xs font-bold transition-all active:scale-98"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 hover:text-white border border-indigo-500/40 text-xs font-bold transition-all active:scale-98 shrink-0"
               title="צור כתוביות מיידית מנושאי השיחה והתסריט של הפרק"
             >
               <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
-              <span>צור מנושאי הפרק</span>
+              <span>צור מנושאים</span>
             </button>
 
             {/* ElevenLabs Subtitle & Voiceover Creation Button */}
@@ -2488,27 +2622,27 @@ export default function SubtitleStudio({
                 }
                 setIsElevenLabsModalOpen(true);
               }}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 hover:text-white border border-purple-500/40 text-xs font-bold transition-all active:scale-98 shadow-sm"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 hover:text-white border border-purple-500/40 text-xs font-bold transition-all active:scale-98 shadow-sm shrink-0"
               title="יצירת כתוביות וקריינות מסונכרנת עם ElevenLabs"
             >
               <Volume2 className="w-3.5 h-3.5 text-purple-400" />
-              <span>יצירה עם ElevenLabs</span>
+              <span>ElevenLabs</span>
             </button>
 
             {/* Import SRT / VTT Button */}
             <button
               onClick={() => srtFileInputRef.current?.click()}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white border border-slate-700 text-xs font-semibold transition-all"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white border border-slate-700 text-xs font-semibold transition-all shrink-0"
               title="ייבא קובץ כתוביות SRT או WebVTT"
             >
               <Upload className="w-3.5 h-3.5 text-emerald-400" />
-              <span>ייבוא SRT/VTT</span>
+              <span>ייבוא SRT</span>
             </button>
 
             {/* Live Microphone Dictation */}
             <button
               onClick={toggleLiveDictation}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all border ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all border shrink-0 ${
                 isDictating 
                   ? 'bg-red-600 text-white border-red-500 animate-pulse' 
                   : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
@@ -2523,40 +2657,63 @@ export default function SubtitleStudio({
             <button
               onClick={() => setIsTranslateModalOpen(true)}
               disabled={isTranslating}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 hover:text-white border border-blue-500/40 text-xs font-bold transition-all active:scale-98 disabled:opacity-40 shadow-sm"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 hover:text-white border border-blue-500/40 text-xs font-bold transition-all active:scale-98 disabled:opacity-40 shadow-sm shrink-0"
               title={subtitles.length > 0 ? "תרגם את הכתוביות לשפה אחרת (עברית, אנגלית וכו') באמצעות AI" : "תמלול ותרגום סרטון חיצוני לעברית באמצעות AI"}
             >
               <Globe className={`w-3.5 h-3.5 text-blue-400 ${isTranslating ? 'animate-spin' : ''}`} />
-              <span>{isTranslating ? 'מתרגם...' : 'תרגם כתוביות (AI)'}</span>
+              <span>תרגם</span>
             </button>
 
             {/* AI Precision & Subtitle Refinement Button */}
             <button
               onClick={handleRefineSubtitles}
               disabled={isRefining || subtitles.length === 0}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 hover:text-white border border-purple-500/40 text-xs font-bold transition-all active:scale-98 disabled:opacity-40 shadow-sm"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 hover:text-white border border-purple-500/40 text-xs font-bold transition-all active:scale-98 disabled:opacity-40 shadow-sm shrink-0"
               title="דייק ותקן שגיאות שמיעה, מילים עמומות וזרימת משפטים בעזרת AI"
             >
               <Sparkles className={`w-3.5 h-3.5 text-purple-400 ${isRefining ? 'animate-spin' : ''}`} />
-              <span>{isRefining ? 'מדייק כתוביות...' : '🎯 דייק כתוביות (AI)'}</span>
+              <span>🎯 דייק כתוביות</span>
             </button>
 
-            {/* Remove Filler Sounds ("אה", "אממ") */}
+            {/* Remove Filler Sounds from Subtitles ("אה", "אממ") */}
             <button
               onClick={handleRemoveFillerWords}
               disabled={subtitles.length === 0}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 hover:text-white border border-rose-500/40 text-xs font-bold transition-all active:scale-98 disabled:opacity-40 shadow-sm"
-              title="הסר בלחיצה אחת את כל מילות המילוי וההיסוס ('אה', 'אהה', 'אמ', 'אממ') ומחק כתוביות שהפכו לריקות"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 hover:text-white border border-rose-500/40 text-xs font-bold transition-all active:scale-98 disabled:opacity-40 shadow-sm shrink-0"
+              title="הסר בלחיצה אחת את כל מילות המילוי וההיסוס ('אה', 'אהה', 'אמ', 'אממ') מטקסט הכתוביות"
             >
               <Eraser className="w-3.5 h-3.5 text-rose-400" />
-              <span>🧹 הסר ״אה״ והיסוסים</span>
+              <span>🧹 הסר ״אה״ בכתוביות</span>
             </button>
+
+            {/* Cut Filler Sounds directly from Audio track ("מחק ׳אה׳ מהסאונד") */}
+            <button
+              onClick={handleCutFillersFromAudio}
+              disabled={isCuttingAudioFillers || subtitles.length === 0}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-rose-600 via-pink-600 to-rose-700 hover:from-rose-500 hover:to-pink-500 text-white border border-rose-400/50 text-xs font-black shadow-lg shadow-rose-950/60 transition-all active:scale-95 disabled:opacity-40 shrink-0 ring-1 ring-rose-400/40"
+              title="חתוך ומחק בלחיצה אחת את כל מילות ה-׳אה׳ וההיסוסים ישירות מקובץ השמע, עם מיקרו-קרוספייד למניעת קליקים וסנכרון מלא של הכתוביות"
+            >
+              <Scissors className={`w-3.5 h-3.5 ${isCuttingAudioFillers ? 'animate-spin' : ''}`} />
+              <span>{isCuttingAudioFillers ? 'חותך מהסאונד...' : '✂️ מחק ״אה״ מהסאונד'}</span>
+            </button>
+
+            {/* Audio Cut Undo Button */}
+            {audioCutUndoState && (
+              <button
+                onClick={handleUndoAudioCut}
+                className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-xs font-bold transition-all shrink-0 animate-in fade-in"
+                title="שחזר את קובץ השמע המקורי ואת זמני הכתוביות המקוריים"
+              >
+                <RotateCcw className="w-3.5 h-3.5 text-amber-400" />
+                <span>בטל חיתוך סאונד ({audioCutUndoState.cutsCount})</span>
+              </button>
+            )}
 
             {/* Convert Dates and Numbers to Digits */}
             <button
               onClick={handleFormatDatesAndNumbers}
               disabled={subtitles.length === 0}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 hover:text-white border border-amber-500/40 text-xs font-bold transition-all active:scale-98 disabled:opacity-40 shadow-sm"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 hover:text-white border border-amber-500/40 text-xs font-bold transition-all active:scale-98 disabled:opacity-40 shadow-sm shrink-0"
               title="המר אוטומטית תאריכים ומספרים שנאמרו במילים לספרות תקניות (למשל: 19 בספטמבר 2026, 24 שעות, 100%)"
             >
               <Hash className="w-3.5 h-3.5 text-amber-400" />
@@ -2567,7 +2724,7 @@ export default function SubtitleStudio({
             <button
               type="button"
               onClick={() => setIsAIModalOpen(true)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all border ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all border shrink-0 ${
                 aiSettings.geminiApiKey || aiSettings.openaiApiKey
                   ? 'bg-emerald-950/40 hover:bg-emerald-900/40 text-emerald-300 border-emerald-500/40 shadow-sm'
                   : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
@@ -2575,7 +2732,7 @@ export default function SubtitleStudio({
               title="הגדרות מפתחות AI (Gemini, OpenAI, ElevenLabs)"
             >
               <Key className="w-3.5 h-3.5 text-amber-400" />
-              <span>{aiSettings.geminiApiKey ? 'Gemini מחובר' : 'הגדר מפתח AI'}</span>
+              <span>{aiSettings.geminiApiKey ? 'Gemini מחובר' : 'מפתח AI'}</span>
               <span className={`w-2 h-2 rounded-full ${
                 aiSettings.geminiApiKey || aiSettings.openaiApiKey
                   ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]'
@@ -2587,7 +2744,7 @@ export default function SubtitleStudio({
             <button
               onClick={handleExportSRT}
               disabled={subtitles.length === 0}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-xs font-semibold text-slate-200 border border-slate-700 transition-colors"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-xs font-semibold text-slate-200 border border-slate-700 transition-colors shrink-0"
             >
               <Download className="w-3.5 h-3.5 text-purple-400" />
               <span>ייצוא SRT</span>
@@ -2597,7 +2754,7 @@ export default function SubtitleStudio({
             {activeClip && (
               <a
                 href={`/episodes/${episode.id}?openStudio=true&clipId=${activeClip.id}`}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 text-white text-xs font-bold shadow-lg shadow-pink-600/30 transition-all active:scale-98"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 text-white text-xs font-bold shadow-lg shadow-pink-600/30 transition-all active:scale-98 shrink-0"
                 title="עבור לסטודיו הווידאו לייצוא סרטון קצר מלא עם כתוביות מוטמעות ומעוצבות"
               >
                 <Film className="w-3.5 h-3.5" />
@@ -2608,7 +2765,7 @@ export default function SubtitleStudio({
             {/* Save Button */}
             <button
               onClick={handleSaveSubtitles}
-              className="flex items-center gap-1.5 px-4 py-1.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-xs font-bold text-white shadow-lg shadow-purple-600/30 transition-all active:scale-98"
+              className="flex items-center gap-1.5 px-4 py-1.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-xs font-bold text-white shadow-lg shadow-purple-600/30 transition-all active:scale-98 shrink-0"
             >
               <Check className="w-3.5 h-3.5" />
               <span>שמור הכל</span>
@@ -2616,7 +2773,7 @@ export default function SubtitleStudio({
 
             <button
               onClick={onClose}
-              className="p-2 text-slate-400 hover:text-white rounded-xl hover:bg-slate-800 transition-colors"
+              className="p-2 text-slate-400 hover:text-white rounded-xl hover:bg-slate-800 transition-colors shrink-0"
             >
               <X className="w-5 h-5" />
             </button>
@@ -3486,17 +3643,17 @@ export default function SubtitleStudio({
                 {/* Smart Rebalance & Pacing Control Bar */}
                 {subtitles.length > 0 && (
                   <div className="space-y-1.5 shrink-0 my-2">
-                    <div className="p-2.5 rounded-2xl bg-slate-950/90 border border-slate-800 space-y-1.5">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-1.5 text-xs text-purple-300 font-bold">
+                    <div className="p-2.5 rounded-2xl bg-slate-950/90 border border-slate-800 space-y-2">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
+                        <div className="flex items-center gap-1.5 text-xs text-purple-300 font-bold shrink-0">
                           <Sliders className="w-3.5 h-3.5 text-purple-400" />
-                          <span>חלוקה חכמה מחדש (Pacing & Split):</span>
+                          <span>חלוקה חכמה וליטוש:</span>
                         </div>
-                        <div className="flex items-center gap-1.5">
+                        <div className="flex flex-wrap items-center gap-1.5">
                           <button
                             type="button"
                             onClick={handleRemoveFillerWords}
-                            className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-rose-950/40 hover:bg-rose-900/60 border border-rose-500/30 text-[10px] text-rose-300 font-semibold transition-all"
+                            className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-rose-950/40 hover:bg-rose-900/60 border border-rose-500/30 text-[10px] text-rose-300 font-semibold transition-all shrink-0"
                             title="הסר את כל מילות המילוי וההיסוס ('אה', 'אהה', 'אמ', 'אממ') ומחק כתוביות שהפכו לריקות"
                           >
                             <Eraser className="w-2.5 h-2.5 text-rose-400" />
@@ -3504,8 +3661,18 @@ export default function SubtitleStudio({
                           </button>
                           <button
                             type="button"
+                            onClick={handleCutFillersFromAudio}
+                            disabled={isCuttingAudioFillers}
+                            className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-gradient-to-r from-rose-700 to-pink-700 hover:from-rose-600 hover:to-pink-600 text-white border border-rose-400/40 text-[10px] font-bold shadow-sm transition-all shrink-0"
+                            title="חתוך ומחק את כל קטעי ה-׳אה׳ וההיסוס ישירות מפס הקול של ההקלטה"
+                          >
+                            <Scissors className="w-2.5 h-2.5 text-rose-200" />
+                            <span>✂️ מחק בסאונד</span>
+                          </button>
+                          <button
+                            type="button"
                             onClick={handleFormatDatesAndNumbers}
-                            className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-amber-950/40 hover:bg-amber-900/60 border border-amber-500/30 text-[10px] text-amber-300 font-semibold transition-all"
+                            className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-amber-950/40 hover:bg-amber-900/60 border border-amber-500/30 text-[10px] text-amber-300 font-semibold transition-all shrink-0"
                             title="המר אוטומטית תאריכים ומספרים שנאמרו במילים לספרות תקניות"
                           >
                             <Hash className="w-2.5 h-2.5 text-amber-400" />
@@ -3514,7 +3681,7 @@ export default function SubtitleStudio({
                           <button
                             type="button"
                             onClick={handlePolishAllSubtitles}
-                            className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-purple-950/40 hover:bg-purple-900/60 border border-purple-500/30 text-[10px] text-purple-300 font-semibold transition-all"
+                            className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-purple-950/40 hover:bg-purple-900/60 border border-purple-500/30 text-[10px] text-purple-300 font-semibold transition-all shrink-0"
                             title="נקה מילות מילוי, המר תאריכים לספרות ותקן פיסוק בכל הכתוביות"
                           >
                             <Sparkles className="w-2.5 h-2.5 text-purple-400" />

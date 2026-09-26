@@ -1936,7 +1936,7 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
         </div>
 
         {/* Master Recording Timer & Status */}
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3 max-w-full">
           {/* Co-Host Button */}
           {currentEpisode.coHost ? (
             <button
@@ -1944,7 +1944,7 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
                 setGuestModalRole('cohost');
                 setIsGuestModalOpen(true);
               }}
-              className={`flex items-center gap-1.5 px-3 py-2 rounded-2xl text-xs font-bold border transition-all shadow-md active:scale-95 ${
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-2xl text-xs font-bold border transition-all shadow-md active:scale-95 shrink-0 ${
                 guestConnectionStatus === 'connected' && isPeerCoHost
                   ? 'bg-emerald-950/60 border-emerald-500/60 text-emerald-300 shadow-lg shadow-emerald-950/40'
                   : 'bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 hover:text-white border-emerald-500/40'
@@ -1960,7 +1960,7 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
                 setGuestModalRole('cohost');
                 setIsGuestModalOpen(true);
               }}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-2xl text-xs font-bold border transition-all shadow-md active:scale-95 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 hover:text-white border-emerald-500/40"
+              className="flex items-center gap-1.5 px-3 py-2 rounded-2xl text-xs font-bold border transition-all shadow-md active:scale-95 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 hover:text-white border-emerald-500/40 shrink-0"
               title="הוסף והזמן מנחה שותף/ה (Co-Host)"
             >
               <Users className="w-4 h-4 text-emerald-400" />
@@ -1974,7 +1974,7 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
               setGuestModalRole('guest');
               setIsGuestModalOpen(true);
             }}
-            className={`flex items-center gap-1.5 px-3 py-2 rounded-2xl text-xs font-bold border transition-all shadow-md active:scale-95 ${
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-2xl text-xs font-bold border transition-all shadow-md active:scale-95 shrink-0 ${
               guestConnectionStatus === 'connected' && !isPeerCoHost
                 ? 'bg-indigo-950/60 border-indigo-500/60 text-indigo-300 shadow-lg shadow-indigo-950/40'
                 : 'bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 hover:text-white border-indigo-500/40'
@@ -1988,7 +1988,7 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
           {/* Hardware Sound & Video Diagnostics Button */}
           <button
             onClick={() => setIsDiagnosticsOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-2xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/40 text-amber-300 hover:text-white text-xs font-bold transition-all shadow-md active:scale-95"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-2xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/40 text-amber-300 hover:text-white text-xs font-bold transition-all shadow-md active:scale-95 shrink-0"
             title="בדיקת סאונד ווידאו (Pre-Flight Check)"
           >
             <Activity className="w-4 h-4 text-amber-400" />
@@ -1998,7 +1998,7 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
           {/* Dedicated Studio Audio & Sound Settings Button */}
           <button
             onClick={() => setIsAudioSettingsOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-2xl bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/40 text-cyan-300 hover:text-white text-xs font-bold transition-all shadow-md active:scale-95"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-2xl bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/40 text-cyan-300 hover:text-white text-xs font-bold transition-all shadow-md active:scale-95 shrink-0"
             title="הגדרות סאונד, אוזניות, רמקולים ומיקרופונים"
           >
             <Volume2 className="w-4 h-4 text-cyan-400" />
@@ -2008,7 +2008,7 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
           {/* Second Screen Indicator / Launcher */}
           <button
             onClick={launchSecondScreenClockManually}
-            className={`flex items-center gap-1.5 px-3 py-2 rounded-2xl text-xs font-bold border transition-all ${
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-2xl text-xs font-bold border transition-all shrink-0 ${
               secondScreenAutoLaunched
                 ? 'bg-emerald-950/60 border-emerald-500/50 text-emerald-300 shadow-lg shadow-emerald-950/40'
                 : 'bg-slate-900 hover:bg-slate-800 text-slate-300 border-slate-700'
@@ -2022,14 +2022,14 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
           {/* Giant Clock Mode Button */}
           <button
             onClick={() => setIsGiantClockOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-2xl bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/30 text-indigo-300 hover:text-white text-xs font-bold transition-all"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-2xl bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/30 text-indigo-300 hover:text-white text-xs font-bold transition-all shrink-0"
             title="מעבר לשעון אולפן ענק במסך מלא"
           >
             <Clock className="w-4 h-4 text-indigo-400" />
             <span className="hidden sm:inline">שעון במסך מלא</span>
           </button>
 
-          <div className="flex items-center gap-3 px-4 py-2 rounded-2xl bg-black/70 border border-slate-800">
+          <div className="flex items-center gap-3 px-4 py-2 rounded-2xl bg-black/70 border border-slate-800 shrink-0">
             <div className="flex items-center gap-2">
               <span className={`w-3.5 h-3.5 rounded-full ${isRecording ? (isPaused ? 'bg-amber-400' : 'bg-red-500 animate-rec') : 'bg-slate-600'}`} />
               <span className="text-xs font-black uppercase tracking-wider text-white">
@@ -2043,7 +2043,7 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
           </div>
 
           {/* Master Record / Pause / Stop Buttons */}
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             {!isRecording ? (
               <div className="flex items-center gap-1.5">
                 {/* Pre-record Countdown Selector */}

@@ -1376,3 +1376,327 @@ export function getSpeakerColor(speakerName?: string, customMap?: Record<string,
   const index = Math.abs(hash) % DEFAULT_SPEAKER_COLORS.length;
   return DEFAULT_SPEAKER_COLORS[index];
 }
+
+// ========================================================
+// Audio Splice & Filler Sound Removal Engine ("אה", "אממ")
+// ========================================================
+
+export interface AudioCutInterval {
+  start: number;
+  end: number;
+  label?: string;
+  subtitleId?: string;
+}
+
+export interface RemoveFillerAudioResult {
+  cleanedBlob: Blob;
+  totalCuts: number;
+  totalDurationCutSeconds: number;
+  updatedSubtitles: SubtitleItem[];
+  intervalsCut: AudioCutInterval[];
+}
+
+/**
+ * Detect all time intervals in subtitles where filler sounds ("אה", "אממ", "אהה", "הממ", "uh", "um", etc.) occur.
+ */
+export function detectFillerIntervalsFromSubtitles(
+  subtitles: SubtitleItem[],
+  minCutDurationSec: number = 0.25,
+  maxCutDurationSec: number = 3.5
+): AudioCutInterval[] {
+  if (!subtitles || subtitles.length === 0) return [];
+
+  const intervals: AudioCutInterval[] = [];
+
+  for (const sub of subtitles) {
+    const rawText = (sub.text || '').trim();
+    if (!rawText) continue;
+
+    // Check if the entire cue is a filler sound
+    const cleaned = removeHebrewFillerWords(rawText).cleaned;
+    const dur = sub.endTime - sub.startTime;
+
+    const isPureFiller = cleaned.length === 0;
+    const startsWithFiller = /^(?:אה+|אמ+|אהמ+|המ+|אֶה|uh+|um+|er+|ah+)[.…]*\s+/i.test(rawText);
+    const endsWithFiller = /\s+(?:אה+|אמ+|אהמ+|המ+|אֶה|uh+|um+|er+|ah+)[.…]*$/i.test(rawText);
+
+    if (isPureFiller) {
+      if (dur >= minCutDurationSec && dur <= maxCutDurationSec) {
+        intervals.push({
+          start: Math.max(0, sub.startTime),
+          end: sub.endTime,
+          label: rawText,
+          subtitleId: sub.id
+        });
+      }
+    } else if (startsWithFiller && dur > 1.0) {
+      // Estimate first ~0.4s is the filler
+      intervals.push({
+        start: Math.max(0, sub.startTime),
+        end: Math.min(sub.endTime, sub.startTime + 0.45),
+        label: 'היסוס בתחילת משפט',
+        subtitleId: sub.id
+      });
+    } else if (endsWithFiller && dur > 1.0) {
+      // Estimate last ~0.4s is the filler
+      intervals.push({
+        start: Math.max(sub.startTime, sub.endTime - 0.45),
+        end: sub.endTime,
+        label: 'היסוס בסוף משפט',
+        subtitleId: sub.id
+      });
+    }
+  }
+
+  // Merge overlapping or adjacent intervals (< 0.1s gap)
+  if (intervals.length === 0) return [];
+  intervals.sort((a, b) => a.start - b.start);
+
+  const merged: AudioCutInterval[] = [intervals[0]];
+  for (let i = 1; i < intervals.length; i++) {
+    const prev = merged[merged.length - 1];
+    const curr = intervals[i];
+    if (curr.start <= prev.end + 0.08) {
+      prev.end = Math.max(prev.end, curr.end);
+      prev.label = `${prev.label}, ${curr.label}`;
+    } else {
+      merged.push(curr);
+    }
+  }
+
+  return merged;
+}
+
+/**
+ * Remove audio intervals (like "אה", hesitations, silence) from an Audio/Video Blob.
+ * Uses Web Audio API with a smooth micro-crossfade (15ms) across cut points
+ * to eliminate pops/clicks, and automatically recalculates all subtitle timestamps!
+ */
+export async function removeIntervalsFromAudioBlob(
+  blob: Blob,
+  rawIntervals: AudioCutInterval[],
+  options?: {
+    subtitles?: SubtitleItem[];
+    crossfadeMs?: number;
+    outputFormat?: 'wav' | 'mp3';
+  }
+): Promise<RemoveFillerAudioResult> {
+  const crossfadeMs = options?.crossfadeMs ?? 15;
+  const subtitles = options?.subtitles ? [...options.subtitles] : [];
+
+  if (!rawIntervals || rawIntervals.length === 0) {
+    return {
+      cleanedBlob: blob,
+      totalCuts: 0,
+      totalDurationCutSeconds: 0,
+      updatedSubtitles: subtitles,
+      intervalsCut: []
+    };
+  }
+
+  // 1. Decode original Audio Data
+  const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+  const audioContext = new AudioCtx();
+  let audioBuffer: AudioBuffer;
+
+  try {
+    const arrayBuffer = await blob.arrayBuffer();
+    audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+  } finally {
+    try {
+      await audioContext.close();
+    } catch {}
+  }
+
+  const sampleRate = audioBuffer.sampleRate;
+  const numChannels = audioBuffer.numberOfChannels;
+  const totalDuration = audioBuffer.duration;
+  const crossfadeFrames = Math.max(16, Math.floor((crossfadeMs / 1000) * sampleRate));
+
+  // 2. Normalize and sanitize intervals
+  const sorted = [...rawIntervals]
+    .map(inv => ({
+      start: Math.max(0, Math.min(totalDuration, inv.start)),
+      end: Math.max(0, Math.min(totalDuration, inv.end)),
+      label: inv.label,
+      subtitleId: inv.subtitleId
+    }))
+    .filter(inv => inv.end - inv.start >= 0.05)
+    .sort((a, b) => a.start - b.start);
+
+  if (sorted.length === 0) {
+    return {
+      cleanedBlob: blob,
+      totalCuts: 0,
+      totalDurationCutSeconds: 0,
+      updatedSubtitles: subtitles,
+      intervalsCut: []
+    };
+  }
+
+  // Merge overlapping
+  const cleanIntervals: AudioCutInterval[] = [sorted[0]];
+  for (let i = 1; i < sorted.length; i++) {
+    const prev = cleanIntervals[cleanIntervals.length - 1];
+    const curr = sorted[i];
+    if (curr.start <= prev.end + 0.05) {
+      prev.end = Math.max(prev.end, curr.end);
+      prev.label = `${prev.label} + ${curr.label}`;
+    } else {
+      cleanIntervals.push(curr);
+    }
+  }
+
+  // 3. Compute Retained Audio Segments (Keep ranges)
+  interface AudioSegment {
+    startFrame: number;
+    endFrame: number;
+  }
+
+  const retainedSegments: AudioSegment[] = [];
+  let currentFrame = 0;
+
+  for (const cut of cleanIntervals) {
+    const cutStartFrame = Math.floor(cut.start * sampleRate);
+    const cutEndFrame = Math.ceil(cut.end * sampleRate);
+
+    if (cutStartFrame > currentFrame) {
+      retainedSegments.push({
+        startFrame: currentFrame,
+        endFrame: cutStartFrame
+      });
+    }
+    currentFrame = Math.max(currentFrame, cutEndFrame);
+  }
+
+  const totalFrames = audioBuffer.length;
+  if (currentFrame < totalFrames) {
+    retainedSegments.push({
+      startFrame: currentFrame,
+      endFrame: totalFrames
+    });
+  }
+
+  // Calculate new audio length (accounting for crossfade overlaps if applicable)
+  let totalNewFrames = 0;
+  for (const seg of retainedSegments) {
+    totalNewFrames += Math.max(0, seg.endFrame - seg.startFrame);
+  }
+
+  if (totalNewFrames <= 0) {
+    throw new Error('החיתוך מוחק את כל קובץ השמע');
+  }
+
+  // 4. Create new AudioBuffer and copy samples with micro-crossfade at joints
+  const offlineCtx = new OfflineAudioContext(numChannels, totalNewFrames, sampleRate);
+  const newBuffer = offlineCtx.createBuffer(numChannels, totalNewFrames, sampleRate);
+
+  for (let ch = 0; ch < numChannels; ch++) {
+    const sourceData = audioBuffer.getChannelData(ch);
+    const targetData = newBuffer.getChannelData(ch);
+
+    let writeOffset = 0;
+
+    for (let segIdx = 0; segIdx < retainedSegments.length; segIdx++) {
+      const seg = retainedSegments[segIdx];
+      const segLen = seg.endFrame - seg.startFrame;
+      if (segLen <= 0) continue;
+
+      const segData = sourceData.subarray(seg.startFrame, seg.endFrame);
+      targetData.set(segData, writeOffset);
+
+      // Apply micro-fadeout to end of previous and micro-fadein to start of next segment to prevent audio pops
+      if (segIdx > 0 && writeOffset > 0) {
+        const fadeLen = Math.min(crossfadeFrames, Math.floor(segLen / 2));
+        for (let f = 0; f < fadeLen; f++) {
+          const ratio = f / fadeLen;
+          const pos = writeOffset + f;
+          if (pos < targetData.length) {
+            targetData[pos] *= ratio; // Linear fade in
+          }
+        }
+      }
+
+      if (segIdx < retainedSegments.length - 1) {
+        const fadeLen = Math.min(crossfadeFrames, Math.floor(segLen / 2));
+        for (let f = 0; f < fadeLen; f++) {
+          const ratio = (fadeLen - f) / fadeLen;
+          const pos = writeOffset + segLen - fadeLen + f;
+          if (pos >= 0 && pos < targetData.length) {
+            targetData[pos] *= ratio; // Linear fade out
+          }
+        }
+      }
+
+      writeOffset += segLen;
+    }
+  }
+
+  // 5. Adjust all Subtitle Timestamps to maintain 100% Lip-Sync!
+  let totalDurationCut = 0;
+  for (const cut of cleanIntervals) {
+    totalDurationCut += (cut.end - cut.start);
+  }
+
+  const updatedSubtitles: SubtitleItem[] = [];
+
+  for (const sub of subtitles) {
+    // If cue is inside a cut interval, drop it
+    const isInsideCut = cleanIntervals.some(
+      cut => sub.startTime >= cut.start - 0.05 && sub.endTime <= cut.end + 0.05
+    );
+
+    if (isInsideCut) {
+      continue;
+    }
+
+    // Calculate how much cut time occurred before sub.startTime and sub.endTime
+    let cutBeforeStart = 0;
+    let cutBeforeEnd = 0;
+
+    for (const cut of cleanIntervals) {
+      const cutDur = cut.end - cut.start;
+      if (cut.end <= sub.startTime) {
+        cutBeforeStart += cutDur;
+        cutBeforeEnd += cutDur;
+      } else if (cut.start < sub.startTime && cut.end > sub.startTime) {
+        cutBeforeStart += (sub.startTime - cut.start);
+        cutBeforeEnd += cutDur;
+      } else if (cut.start >= sub.startTime && cut.end <= sub.endTime) {
+        cutBeforeEnd += cutDur;
+      } else if (cut.start < sub.endTime && cut.end > sub.endTime) {
+        cutBeforeEnd += (sub.endTime - cut.start);
+      }
+    }
+
+    const newStart = Math.max(0, sub.startTime - cutBeforeStart);
+    const newEnd = Math.max(newStart + 0.3, sub.endTime - cutBeforeEnd);
+
+    // Also remove any residual filler words from the text
+    const cleanText = removeHebrewFillerWords(sub.text).cleaned;
+
+    if (cleanText.length > 0) {
+      updatedSubtitles.push({
+        ...sub,
+        startTime: Number(newStart.toFixed(3)),
+        endTime: Number(newEnd.toFixed(3)),
+        text: cleanText
+      });
+    }
+  }
+
+  // 6. Encode the new buffer to WAV or MP3
+  const isMp3 = options?.outputFormat === 'mp3';
+  const cleanedBlob = isMp3
+    ? audioBufferToMp3(newBuffer, { bitrate: 192 })
+    : audioBufferToWav(newBuffer, numChannels === 1);
+
+  return {
+    cleanedBlob,
+    totalCuts: cleanIntervals.length,
+    totalDurationCutSeconds: Number(totalDurationCut.toFixed(2)),
+    updatedSubtitles,
+    intervalsCut: cleanIntervals
+  };
+}
+
