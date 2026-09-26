@@ -73,6 +73,7 @@ interface AudioEditorAudiogramStudioProps {
 }
 
 export type WaveformStyle = 
+  | 'none'
   | 'bars' 
   | 'sine' 
   | 'radial' 
@@ -1788,8 +1789,13 @@ export default function AudioEditorAudiogramStudio({
       // D. DRAW SELECTED WAVEFORM STYLE
       const waveCenterY = waveformPosition === 'center' ? H * 0.52 : waveformPosition === 'bottom' ? H * 0.72 : H * 0.32;
 
+      // 0. NONE (Hidden / Removed from screen)
+      if (waveformStyle === 'none') {
+        // Waveform is hidden
+      }
+
       // 1. BARS (Vertical Spectrum Bars)
-      if (waveformStyle === 'bars') {
+      else if (waveformStyle === 'bars') {
         const barCount = 48;
         const barWidth = (W * 0.6) / barCount;
         const startX = W * 0.2;
@@ -5914,9 +5920,10 @@ export default function AudioEditorAudiogramStudio({
                 <div className="space-y-4">
                   {/* Waveform Style Selector (10 Styles) */}
                   <div className="space-y-1.5">
-                    <label className="text-xs font-bold text-slate-300 block">סגנון גלי הקול (10 סגנונות):</label>
+                    <label className="text-xs font-bold text-slate-300 block">סגנון גלי הקול:</label>
                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                       {[
+                        { id: 'none', label: '🚫 ללא גלי קול (הסתר)', desc: 'הסרת גל הקול מהמסך' },
                         { id: 'circle_bars', label: '🔴 מעגל קורן', desc: 'מעגל גלי קול רדיאלי' },
                         { id: 'neon_glow_wave', label: '⚡ ניאון כפול', desc: 'זוהר עם פעימות' },
                         { id: 'spectrum_3d', label: '✨ עמודי תלת-מימד', desc: 'השתקפות זכוכית' },

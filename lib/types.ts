@@ -146,6 +146,12 @@ export interface SubtitleStyle {
   showSpeakerBadge?: boolean; // הצגת תגית שם הדובר מעל הכתובית בווידאו
   speakerColors?: Record<string, string>; // מפת צבעים מותאמת אישית לכל דובר (שם דובר -> צבע HEX)
   colorCodeSubtitleBySpeaker?: boolean; // הדגשת מסגרת/טקסט הכתובית בצבע הדובר
+  // Animated Soundwave Overlay on Screen
+  soundwaveEnabled?: boolean; // הצגה או הסרה של גלי קול מונפשים על המסך
+  soundwavePosition?: 'center' | 'bottom' | 'top'; // מיקום גל הקול על המסך
+  soundwaveStyle?: 'bars' | 'wave' | 'pulse' | 'dots' | 'neon'; // סגנון גל הקול
+  soundwaveColor?: 'default' | 'cyan' | 'gold' | 'fire' | 'matrix'; // ערכת צבעי גל הקול
+  soundwaveOpacity?: number; // שקיפות (10 - 100)
 }
 
 export interface SubtitleItem {

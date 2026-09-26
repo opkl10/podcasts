@@ -58,6 +58,7 @@ import {
   Sliders, 
   Sparkles, 
   Clock, 
+  Activity,
   Check, 
   X, 
   ChevronLeft, 
@@ -188,7 +189,13 @@ const DEFAULT_STYLE: SubtitleStyle = {
   logoSize: 64,
   logoOpacity: 90,
   logoOffsetX: 16,
-  logoOffsetY: 16
+  logoOffsetY: 16,
+  // Animated Soundwave Overlay
+  soundwaveEnabled: true,
+  soundwavePosition: 'center',
+  soundwaveStyle: 'bars',
+  soundwaveColor: 'default',
+  soundwaveOpacity: 35
 };
 
 const SUBTITLE_THEMES = [
@@ -2674,21 +2681,113 @@ export default function SubtitleStudio({
                 </div>
               )}
 
-              {/* Animated Soundwave Studio Backdrop when audio is playing */}
-              <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center opacity-25">
-                <div className="flex items-center gap-1.5 h-16">
-                  {[40, 70, 50, 90, 65, 80, 45, 95, 60, 75, 85, 55, 65, 90, 45, 70].map((h, i) => (
-                    <div
-                      key={i}
-                      style={{
-                        height: isPlaying ? `${h}%` : '15%',
-                        transition: 'height 0.15s ease-in-out'
-                      }}
-                      className="w-1.5 rounded-full bg-gradient-to-t from-purple-500 via-amber-400 to-pink-500"
-                    />
-                  ))}
+              {/* Animated Soundwave Studio Backdrop when enabled */}
+              {globalStyle.soundwaveEnabled !== false && (
+                <div 
+                  className={`absolute inset-0 pointer-events-none flex flex-col items-center z-10 transition-all ${
+                    globalStyle.soundwavePosition === 'bottom' 
+                      ? 'justify-end pb-12' 
+                      : globalStyle.soundwavePosition === 'top' 
+                      ? 'justify-start pt-12' 
+                      : 'justify-center'
+                  }`}
+                  style={{ opacity: (globalStyle.soundwaveOpacity ?? 35) / 100 }}
+                >
+                  {/* Soundwave visualization depending on style */}
+                  {(() => {
+                    const waveStyle = globalStyle.soundwaveStyle || 'bars';
+                    const colorScheme = globalStyle.soundwaveColor || 'default';
+                    const gradientClass = 
+                      colorScheme === 'cyan' ? 'from-cyan-500 via-blue-500 to-indigo-500' :
+                      colorScheme === 'gold' ? 'from-amber-500 via-yellow-400 to-orange-500' :
+                      colorScheme === 'fire' ? 'from-red-600 via-rose-500 to-amber-400' :
+                      colorScheme === 'matrix' ? 'from-emerald-500 via-green-400 to-teal-300' :
+                      'from-purple-500 via-amber-400 to-pink-500';
+
+                    if (waveStyle === 'pulse') {
+                      return (
+                        <div className="flex items-center justify-center gap-1.5 h-14">
+                          <div className={`h-1.5 w-16 sm:w-28 rounded-full bg-gradient-to-r ${gradientClass} transition-all ${isPlaying ? 'scale-y-125' : 'scale-y-100'}`} />
+                          <div className={`w-3.5 h-3.5 rounded-full bg-pink-400 shadow-lg shadow-pink-500/50 transition-transform ${isPlaying ? 'animate-ping scale-150' : 'scale-100'}`} />
+                          <div className={`h-1.5 w-16 sm:w-28 rounded-full bg-gradient-to-l ${gradientClass} transition-all ${isPlaying ? 'scale-y-125' : 'scale-y-100'}`} />
+                        </div>
+                      );
+                    }
+
+                    if (waveStyle === 'neon') {
+                      return (
+                        <div className="flex items-center gap-2 h-20">
+                          {[35, 65, 45, 90, 70, 85, 40, 95, 60, 80, 85, 50, 65, 90, 45, 75].map((h, i) => (
+                            <div
+                              key={i}
+                              style={{
+                                height: isPlaying ? `${h}%` : '18%',
+                                transition: 'height 0.12s ease-in-out',
+                                boxShadow: isPlaying ? '0 0 12px rgba(236,72,153,0.8), 0 0 20px rgba(6,182,212,0.6)' : 'none'
+                              }}
+                              className={`w-2 rounded-full bg-gradient-to-t ${gradientClass} filter drop-shadow`}
+                            />
+                          ))}
+                        </div>
+                      );
+                    }
+
+                    if (waveStyle === 'dots') {
+                      return (
+                        <div className="flex items-center gap-2 h-14">
+                          {[20, 50, 80, 100, 70, 90, 40, 85, 60, 95, 55, 75, 45, 80, 30].map((h, i) => (
+                            <div key={i} className="flex flex-col items-center gap-1 justify-center h-full">
+                              {[1, 2, 3].map((dot) => (
+                                <div
+                                  key={dot}
+                                  className={`w-2 h-2 rounded-full transition-all duration-150 ${
+                                    isPlaying && (dot * 30 <= h) 
+                                      ? `bg-gradient-to-tr ${gradientClass} scale-110 shadow-sm shadow-pink-400/50` 
+                                      : 'bg-slate-700/50 scale-75'
+                                  }`}
+                                />
+                              ))}
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    }
+
+                    if (waveStyle === 'wave') {
+                      return (
+                        <div className="flex items-center gap-1.5 h-16">
+                          {[30, 45, 65, 85, 95, 80, 60, 40, 60, 80, 95, 85, 65, 45, 30, 20].map((h, i) => (
+                            <div
+                              key={i}
+                              style={{
+                                height: isPlaying ? `${h}%` : '15%',
+                                transition: 'height 0.18s cubic-bezier(0.4, 0, 0.2, 1)'
+                              }}
+                              className={`w-1.5 rounded-full bg-gradient-to-t ${gradientClass}`}
+                            />
+                          ))}
+                        </div>
+                      );
+                    }
+
+                    // Default: 'bars'
+                    return (
+                      <div className="flex items-center gap-1.5 h-16">
+                        {[40, 70, 50, 90, 65, 80, 45, 95, 60, 75, 85, 55, 65, 90, 45, 70].map((h, i) => (
+                          <div
+                            key={i}
+                            style={{
+                              height: isPlaying ? `${h}%` : '15%',
+                              transition: 'height 0.15s ease-in-out'
+                            }}
+                            className={`w-1.5 rounded-full bg-gradient-to-t ${gradientClass}`}
+                          />
+                        ))}
+                      </div>
+                    );
+                  })()}
                 </div>
-              </div>
+              )}
 
               {/* Brand Logo Overlay (Right / Left / Custom position) */}
               {globalStyle.logoEnabled && globalStyle.logoUrl && (
@@ -3007,6 +3106,23 @@ export default function SubtitleStudio({
               >
                 <Grid className="w-3.5 h-3.5" />
                 <span>אזור בטוח (Safe Zone)</span>
+              </button>
+              {/* Soundwaves Toggle Button on Screen */}
+              <button
+                type="button"
+                onClick={() => {
+                  const nextVal = !(globalStyle.soundwaveEnabled !== false);
+                  applyStyleUpdate({ soundwaveEnabled: nextVal });
+                }}
+                className={`px-3 py-1 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+                  globalStyle.soundwaveEnabled !== false 
+                    ? 'bg-gradient-to-r from-pink-500 to-purple-600 text-white font-black shadow-md' 
+                    : 'bg-slate-800/80 text-slate-400 hover:text-white'
+                }`}
+                title={globalStyle.soundwaveEnabled !== false ? 'לחץ להסרת גלי הקול מהמסך' : 'לחץ להוספת גלי קול על גבי המסך'}
+              >
+                <Activity className="w-3.5 h-3.5" />
+                <span>{globalStyle.soundwaveEnabled !== false ? '🔊 גלי קול פעילים' : '🔇 גלי קול כבויים'}</span>
               </button>
               <button
                 type="button"
@@ -5329,6 +5445,137 @@ export default function SubtitleStudio({
                       )}
                     </div>
                   </div>
+                </div>
+
+                {/* 11. גלי קול מונפשים על המסך (Soundwave Overlay) */}
+                <div className="p-4 rounded-2xl bg-gradient-to-r from-pink-950/20 via-purple-950/20 to-slate-950 border border-pink-500/30 space-y-4 shadow-lg">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="w-7 h-7 rounded-lg bg-gradient-to-tr from-pink-500 to-purple-600 flex items-center justify-center text-white shadow">
+                        <Activity className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-bold text-white flex items-center gap-1.5">
+                          <span>גלי קול מונפשים על המסך</span>
+                          <span className="text-[10px] font-mono font-bold bg-pink-500/20 text-pink-300 px-1.5 py-0.2 rounded-full border border-pink-500/30">
+                            Soundwave
+                          </span>
+                        </h4>
+                        <p className="text-[10px] text-slate-400">הוספה, הסרה והתאמה אישית של גל קול חי בווידאו</p>
+                      </div>
+                    </div>
+
+                    {/* Master Soundwave Toggle Switch */}
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={globalStyle.soundwaveEnabled !== false}
+                        onChange={(e) => applyStyleUpdate({ soundwaveEnabled: e.target.checked })}
+                        className="sr-only peer"
+                      />
+                      <div className="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-pink-600"></div>
+                    </label>
+                  </div>
+
+                  {/* Soundwave Controls (when enabled) */}
+                  {globalStyle.soundwaveEnabled !== false && (
+                    <div className="space-y-3 pt-2 border-t border-slate-800/80 animate-in fade-in-50 duration-200">
+                      {/* Style selector */}
+                      <div className="space-y-1.5">
+                        <label className="text-[11px] font-bold text-slate-300 block">סגנון גל הקול:</label>
+                        <div className="grid grid-cols-3 gap-1.5">
+                          {[
+                            { id: 'bars', label: '📊 עמודות EQ' },
+                            { id: 'neon', label: '⚡ ניאון זוהר' },
+                            { id: 'wave', label: '〰️ גל רך' },
+                            { id: 'dots', label: '💡 מטריקס' },
+                            { id: 'pulse', label: '💓 קו דופק' }
+                          ].map((st) => (
+                            <button
+                              key={st.id}
+                              type="button"
+                              onClick={() => applyStyleUpdate({ soundwaveStyle: st.id as any })}
+                              className={`p-2 rounded-xl text-center border transition-all ${
+                                (globalStyle.soundwaveStyle || 'bars') === st.id
+                                  ? 'bg-pink-600/30 border-pink-400 text-white shadow-sm font-bold'
+                                  : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                              }`}
+                            >
+                              <div className="text-xs">{st.label}</div>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Position on screen */}
+                      <div className="space-y-1.5">
+                        <label className="text-[11px] font-bold text-slate-300 block">מיקום גל הקול על המסך:</label>
+                        <div className="grid grid-cols-3 gap-1.5">
+                          {[
+                            { id: 'top', label: '⬆️ עליון' },
+                            { id: 'center', label: '🎯 מרכז' },
+                            { id: 'bottom', label: '⬇️ תחתון' }
+                          ].map((pos) => (
+                            <button
+                              key={pos.id}
+                              type="button"
+                              onClick={() => applyStyleUpdate({ soundwavePosition: pos.id as any })}
+                              className={`py-1.5 px-2 rounded-xl text-xs text-center border transition-all ${
+                                (globalStyle.soundwavePosition || 'center') === pos.id
+                                  ? 'bg-purple-600/30 border-purple-400 text-white font-bold shadow-sm'
+                                  : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                              }`}
+                            >
+                              {pos.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Color Palette */}
+                      <div className="space-y-1.5">
+                        <label className="text-[11px] font-bold text-slate-300 block">ערכת צבעים:</label>
+                        <div className="grid grid-cols-5 gap-1.5">
+                          {[
+                            { id: 'default', label: 'ורוד-סגול', bg: 'from-purple-500 via-amber-400 to-pink-500' },
+                            { id: 'cyan', label: 'טורקיז', bg: 'from-cyan-500 via-blue-500 to-indigo-500' },
+                            { id: 'gold', label: 'זהב', bg: 'from-amber-500 via-yellow-400 to-orange-500' },
+                            { id: 'fire', label: 'אש', bg: 'from-red-600 via-rose-500 to-amber-400' },
+                            { id: 'matrix', label: 'מטריקס', bg: 'from-emerald-500 via-green-400 to-teal-300' }
+                          ].map((col) => (
+                            <button
+                              key={col.id}
+                              type="button"
+                              onClick={() => applyStyleUpdate({ soundwaveColor: col.id as any })}
+                              title={col.label}
+                              className={`h-7 rounded-xl bg-gradient-to-r ${col.bg} border-2 transition-transform hover:scale-105 ${
+                                (globalStyle.soundwaveColor || 'default') === col.id
+                                  ? 'border-white scale-105 shadow-md'
+                                  : 'border-slate-800'
+                              }`}
+                            />
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Opacity slider */}
+                      <div className="space-y-1">
+                        <div className="flex justify-between text-[11px]">
+                          <span className="text-slate-400">שקיפות גל הקול:</span>
+                          <span className="font-mono text-pink-300 font-bold">{globalStyle.soundwaveOpacity ?? 35}%</span>
+                        </div>
+                        <input
+                          type="range"
+                          min={10}
+                          max={100}
+                          step={5}
+                          value={globalStyle.soundwaveOpacity ?? 35}
+                          onChange={(e) => applyStyleUpdate({ soundwaveOpacity: parseInt(e.target.value) })}
+                          className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-pink-500"
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
