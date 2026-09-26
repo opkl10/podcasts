@@ -65,17 +65,18 @@ export default function DeepResearchModal({
     topics: TopicItem[];
     source?: string;
     webGrounding?: boolean;
+    verifiedSources?: Array<{ title: string; url: string; sourceType?: string; directiveMatch?: string }>;
   } | null>(null);
 
   const FOCUS_PRESETS = [
-    { label: '🎵 פסקול ומוזיקה', text: 'התמקד בפסקול, במוזיקה המקורית של המלחין ובעיצוב הסאונד' },
-    { label: '🎬 שפת בימוי וצילום', text: 'שים דגש על החלטות הבימוי, שפת הצילום, עדשות והזוויות הויזואליות' },
-    { label: '🎭 ליהוק ומשחק', text: 'התמקד בליהוק השחקנים, בהכנות הפיזיות לתפקידים ובאתגרי המשחק' },
-    { label: '📖 תסריט והשוואה למקור', text: 'נתח את מבנה התסריט, הדיאלוגים וההשוואה למקור הספרותי או ההיסטורי' },
-    { label: '⚡ דיבייט חריף וקונפליקטים', text: 'הכן שאלות עוקצניות ומעוררות מחלוקת על נקודות התורפה והסיום' },
-    { label: '🤫 סודות מאחורי הקלעים', text: 'הבא אנקדוטות אמיתיות, תקלות צילום וסודות מסט ההפקה' },
-    { label: '💰 תקציב וקופות', text: 'התמקד בנתוני התקציב, ההכנסות בקופות וההצלחה המסחרית' },
-    { label: '🏆 ביקורות ופרסים', text: 'נתח את קבלת הסרט אצל המבקרים, הציונים ברשת והמועמדויות לפרסים' }
+    { label: '🎵 חקור פסקול ומלחין', text: 'חקור את הפסקול, המוזיקה המקורית והמלחין והבא מקורות' },
+    { label: '🎬 חקור בימוי ושפת צילום', text: 'חקור את החלטות הבימוי, שפת הצילום, עדשות ואפקטים מעשיים' },
+    { label: '🎭 חקור ליהוק ואודישנים', text: 'חקור את ליהוק השחקנים, שחקנים אחרים שנשקלו ואודישנים' },
+    { label: '💰 חקור תקציב וקופות', text: 'חקור את נתוני התקציב המדויקים, הכנסות בקופות בעולם והישגים' },
+    { label: '🏆 חקור ביקורות ופרסים', text: 'חקור את ציוני המבקרים ב-Rotten Tomatoes ו-IMDb ומועמדויות לפרסים' },
+    { label: '🤫 חקור מאחורי הקלעים', text: 'חקור אנקדוטות אמיתיות, תקלות צילום וסודות מסט ההפקה' },
+    { label: '📖 חקור השוואה למקור', text: 'חקור את ההבדלים בין התסריט למקור הספרותי או ההיסטורי' },
+    { label: '⚡ חקור דיבייט ומחלוקות', text: 'חקור את המחלוקות הציבוריות והביקורתיות סביב סצנת הסיום' }
   ];
 
   useEffect(() => {
@@ -185,7 +186,8 @@ export default function DeepResearchModal({
         suggestedTitle: result.data.suggestedTitle,
         topics: generatedTopics,
         source: result.source,
-        webGrounding: result.webGrounding
+        webGrounding: result.webGrounding,
+        verifiedSources: result.verifiedSources || result.data?.verifiedSources || []
       });
 
       setTimeout(() => {
@@ -312,25 +314,25 @@ export default function DeepResearchModal({
             />
           </div>
 
-          {/* Specific Focus / Custom Notes & Requests for AI */}
+          {/* Binding Research Directives for AI with Live Web Research */}
           <div className="space-y-2 p-3.5 rounded-2xl bg-amber-950/20 border border-amber-500/30">
             <div className="flex items-center justify-between">
               <label className="block text-xs font-bold text-amber-300 flex items-center gap-1.5">
                 <Target className="w-4 h-4 text-amber-400" />
-                הערות ובקשות מיוחדות למנוע המחקר (מיקוד AI):
+                דרישות מחקר מחייבות ל-AI (סריקת רשת מקיפה + מקורות מאומתים):
               </label>
               <span className="text-[10px] bg-amber-500/20 text-amber-300 font-bold px-2.5 py-0.5 rounded-full border border-amber-500/40">
-                הנחיות אישיות ל-AI
+                מחקר רשת + מקורות מאומתים
               </span>
             </div>
             <p className="text-[11px] text-slate-400 leading-relaxed">
-              כוון את מנוע המחקר בדיוק להיבטים שמעניינים אותך: נושאים ספציפיים, פסקול, שפת בימוי, שחקנים, סצנות מפתח, תקציב או שאלות עוקצניות.
+              ההערות שלך כאן מוגדרות כ<strong>דרישות מחקר מחייבות</strong>. המערכת תסרוק את הרשת (ויקיפדיה, מאגרי קולנוע, ביקורות), תביא מקורות מאומתים, תקדיש ראשי פרקים ייעודיים לכל דרישה ותשזור את הממצאים בכל חלקי הפרק!
             </p>
             <textarea
               rows={2}
               value={specificFocus}
               onChange={(e) => handleFocusChange(e.target.value)}
-              placeholder='למשל: "התמקד בפסקול של הנס זימר ובאפקטים המעשיים", "דבר על אתגרי ההפקה בלונדון והתקציב", "התמקד בהשוואה בין הסרט לספר המקורי", "שים דגש על הקונפליקט בין הגיבורים", "הכן שאלות עוקצניות ומאתגרות על סצנת הסיום המסתורית"...'
+              placeholder='למשל: "תחקור את הפסקול והמלחין ותביא מקורות", "בדוק את תקציב ההפקה וההכנסות בקופות", "חקור את שפת הבימוי והאפקטים המעשיים", "חקור את המחלוקת סביב סצנת הסיום המסתורית"...'
               className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900/90 border border-amber-500/30 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-400 leading-relaxed transition-colors"
             />
             {/* Quick Focus Preset Chips */}
@@ -484,6 +486,35 @@ export default function DeepResearchModal({
               </p>
             </div>
 
+            {/* Verified Sources from Live Web Research */}
+            {researchResult.verifiedSources && researchResult.verifiedSources.length > 0 && (
+              <div className="p-4 rounded-2xl bg-slate-900/90 border border-cyan-500/30 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-cyan-300 flex items-center gap-1.5">
+                    <ExternalLink className="w-3.5 h-3.5 text-cyan-400" />
+                    🌐 מקורות מחקר מאומתים מהאינטרנט ({researchResult.verifiedSources.length}):
+                  </span>
+                  <span className="text-[10px] text-cyan-400/80 bg-cyan-950/60 px-2 py-0.5 rounded border border-cyan-800/40">
+                    קישורים אמיתיים לבדיקה
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {researchResult.verifiedSources.map((source, sIdx) => (
+                    <a
+                      key={sIdx}
+                      href={source.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-cyan-950/40 hover:bg-cyan-900/50 text-cyan-200 border border-cyan-800/50 text-xs transition-colors group"
+                    >
+                      <span className="truncate max-w-[240px] sm:max-w-[320px] font-medium">{source.title}</span>
+                      <ExternalLink className="w-3 h-3 text-cyan-400 group-hover:translate-x-0.5 transition-transform shrink-0" />
+                    </a>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Generated Topics Breakdown */}
             <div className="space-y-3">
               <div className="flex items-center justify-between">
@@ -494,7 +525,7 @@ export default function DeepResearchModal({
 
               <div className="space-y-3">
                 {researchResult.topics.map((t, idx) => {
-                  const isFocusTopic = t.title.includes('מוקד מחקר מיוחד') || 
+                  const isFocusTopic = t.title.includes('מוקד מחקר') || 
                     (specificFocus && t.title.toLowerCase().includes(specificFocus.slice(0, 8).toLowerCase()));
                   return (
                     <div 
@@ -516,7 +547,7 @@ export default function DeepResearchModal({
                           {isFocusTopic && (
                             <span className="text-[10px] bg-amber-500 text-slate-950 font-black px-2 py-0.5 rounded-md flex items-center gap-1 shadow">
                               <Target className="w-3 h-3" />
-                              נושא ייעודי שהופק לפי בקשת המיקוד שלך!
+                              נושא מחקר ייעודי לדרישת המשתמש!
                             </span>
                           )}
                         </div>
@@ -559,6 +590,28 @@ export default function DeepResearchModal({
                         </ul>
                       </div>
                     </div>
+
+                    {/* Verified Topic Resources */}
+                    {t.resources && t.resources.length > 0 && (
+                      <div className="pt-1.5 border-t border-slate-800/80 flex items-center gap-2 flex-wrap">
+                        <span className="text-[10px] font-bold text-emerald-400 flex items-center gap-1">
+                          <ExternalLink className="w-3 h-3" />
+                          מקורות מאומתים:
+                        </span>
+                        {t.resources.map((res, rIdx) => (
+                          <a
+                            key={rIdx}
+                            href={res.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-lg bg-emerald-950/30 hover:bg-emerald-900/40 text-emerald-300 border border-emerald-800/40 transition-colors"
+                          >
+                            <span className="truncate max-w-[180px]">{res.title}</span>
+                            <ExternalLink className="w-2.5 h-2.5 opacity-70 shrink-0" />
+                          </a>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 );
               })}

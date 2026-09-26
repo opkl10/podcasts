@@ -249,7 +249,7 @@ export interface MovieFactCard {
   movieTitle: string;
   category: FactCategory;
   fact: string;
-  source: 'IMDb' | 'Wikipedia' | 'Rotten Tomatoes' | 'Letterboxd' | 'Metacritic' | 'Variety / Empire' | 'Box Office Mojo' | 'Other';
+  source: 'IMDb' | 'Wikipedia' | 'Rotten Tomatoes' | 'Letterboxd' | 'Metacritic' | 'Variety / Empire' | 'Box Office Mojo' | 'Other' | string;
   sourceUrl?: string;
   ratingScore?: string;
   year?: string;
@@ -258,6 +258,7 @@ export interface MovieFactCard {
   spoilerLevel?: 'none' | 'mild' | 'heavy';
   directorOrActor?: string;
   verified?: boolean;
+  directiveMatch?: string;
 }
 
 // Live Broadcast Graphic Overlays with Position & Scale Controls

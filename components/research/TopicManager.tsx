@@ -200,11 +200,14 @@ export default function TopicManager({
           url: r.url || 'https://google.com'
         }));
 
+        const existingUrls = new Set(topic.resources.map(r => r.url.toLowerCase()));
+        const uniqueNewResources = newResources.filter((r: any) => !existingUrls.has(r.url.toLowerCase()));
+
         handleTopicChange(topicId, {
           notes: topic.notes ? `${topic.notes}\n\n${newNotes}` : newNotes,
           talkingPoints: [...new Set([...topic.talkingPoints, ...newPoints])],
           questions: [...new Set([...topic.questions, ...newQuestions])],
-          resources: [...topic.resources, ...newResources]
+          resources: [...topic.resources, ...uniqueNewResources]
         });
 
         setAiSuccessTopicId(topicId);
@@ -363,13 +366,13 @@ export default function TopicManager({
                 </div>
               </div>
 
-              {/* Topic Notes */}
+              {/* Topic Notes / Research Directives */}
               <div className="mb-4">
                 <textarea
                   rows={2}
                   value={topic.notes}
                   onChange={(e) => handleTopicChange(topic.id, { notes: e.target.value })}
-                  placeholder="הערות רקע, דגשים מיוחדים, הקשר או אנקדוטה על הנושא..."
+                  placeholder="דרישות מחקר ל-AI (למשל: 'תחקור את הפסקול והמלחין', 'בדוק את תקציב ההפקה וההכנסות'). לחיצה על 'הרחב עם AI' תסרוק ברשת, תביא מקורות מאומתים ותרחיב את הנושא..."
                   className="w-full px-3.5 py-2 rounded-xl bg-slate-900/60 border border-slate-800/80 text-xs text-slate-300 placeholder-slate-500 focus:outline-none focus:border-indigo-500"
                 />
               </div>

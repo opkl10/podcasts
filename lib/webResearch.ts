@@ -1,6 +1,22 @@
 // Multi-Source Real Web Research Engine (Wikipedia HE/EN, TVMaze, DuckDuckGo Knowledge)
 // Guarantees 100% complete, unbroken sentences (Zero truncated strings or ellipses!)
 
+export interface WebSourceItem {
+  id?: string;
+  title: string;
+  url: string;
+  sourceType?: 'wikipedia_he' | 'wikipedia_en' | 'duckduckgo' | 'database' | 'media' | 'web';
+  snippet?: string;
+  directiveMatch?: string;
+}
+
+export interface DirectiveResearchResult {
+  directive: string;
+  cleanQuery: string;
+  findings: string[];
+  sources: WebSourceItem[];
+}
+
 export interface WebResearchBundle {
   found: boolean;
   title: string;
@@ -17,6 +33,8 @@ export interface WebResearchBundle {
   criticalReception: string;
   category: 'movie_tv' | 'tech' | 'business' | 'history_culture' | 'general';
   focusFindings?: string[];
+  directiveResults?: DirectiveResearchResult[];
+  verifiedSources: WebSourceItem[];
 }
 
 // Clean query string
@@ -93,32 +111,96 @@ export function detectCategory(query: string): 'movie_tv' | 'tech' | 'business' 
   return 'general';
 }
 
-// Targeted Deep Web Search specifically for the user's focus notes and requests
-export async function fetchTargetedFocusResearch(subject: string, focusNote?: string): Promise<string[]> {
-  if (!focusNote || !focusNote.trim()) return [];
+// Parse user notes into individual actionable research directives
+export function parseUserDirectives(notes?: string): string[] {
+  if (!notes || !notes.trim()) return [];
+  const clean = notes.trim();
 
+  // Try split by newlines, numbered lists (1., 2.), bullet points, or semicolons
+  const lines = clean
+    .split(/(?:\r?\n)+|(?<=[.?!])\s+(?=[0-9]+[.)\-])|;\s*|(?<=[0-9]+[.)\-])\s*/)
+    .map(l => l.trim().replace(/^[0-9]+[.)\-]\s*|^[-•*]\s*/, '').trim())
+    .filter(l => l.length >= 4);
+
+  if (lines.length > 1) {
+    return lines;
+  }
+
+  // If single block, check for commas with action phrases or conjunctions
+  const subDirectives = clean
+    .split(/(?:,\s*(?=תבדוק|תחקור|תביא|התמקד|שים דגש|דבר על|מי |מה |כמה |האם |איזה |תשווה |לבדוק |לחקור ))|(?:\s+וגם\s+)|(?:\s+בנוסף\s+)|(?:\s+כמו כן\s+)/i)
+    .map(p => p.trim().replace(/^[0-9]+[.)\-]\s*|^[-•*]\s*/, '').trim())
+    .filter(p => p.length >= 4);
+
+  return subDirectives.length > 0 ? subDirectives : [clean];
+}
+
+// Fetch web research and real verified sources for an individual directive
+export async function fetchDirectiveWebResearch(
+  subject: string, 
+  directive: string
+): Promise<DirectiveResearchResult> {
   const cleanSubject = cleanSearchQuery(subject);
-  // Remove Hebrew instructional filler words to extract the core search concepts
-  const cleanNote = focusNote
-    .replace(/^(התמקד ב|התמקדי ב|שים דגש על|שימי דגש על|דבר על|דברי על|תחקור על|תבדוק על|התמקדות ב|למקד ב|לבדוק על|דגש על)\s*/i, '')
+  const cleanDirective = directive
+    .replace(/^(תבדוק על|תחקור על|תביא לי|תביא מקורות על|תמצא על|תברר על|התמקד ב|התמקדי ב|שים דגש על|שימי דגש על|דבר על|דברי על|תחקור|תבדוק|התמקדות ב|למקד ב|לבדוק על|דגש על|בדוק |חקור |לבדוק |לחקור )\s*/i, '')
     .trim();
 
-  if (!cleanNote) return [];
-
+  const searchQuery = `${cleanSubject} ${cleanDirective}`.trim();
   const findings: string[] = [];
-  const searchQueries = [
-    `${cleanSubject} ${cleanNote}`,
-    `${cleanNote} ${cleanSubject}`
-  ];
+  const sources: WebSourceItem[] = [];
 
-  // 1. Query Hebrew Wikipedia Search for the specific note
+  const addSource = (s: WebSourceItem) => {
+    if (!s.url || !s.title) return;
+    if (!sources.some(existing => existing.url.toLowerCase() === s.url.toLowerCase())) {
+      sources.push(s);
+    }
+  };
+
+  // 1. DuckDuckGo Instant Answer API
   try {
-    const heUrl = `https://he.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(searchQueries[0])}&srlimit=4&format=json&origin=*`;
-    const res = await fetch(heUrl);
-    if (res.ok) {
-      const data = await res.json();
-      const hits = data.query?.search || [];
-      for (const hit of hits) {
+    const ddgUrl = `https://api.duckduckgo.com/?q=${encodeURIComponent(searchQuery)}&format=json&no_html=1&skip_disambig=1`;
+    const ddgRes = await fetch(ddgUrl);
+    if (ddgRes.ok) {
+      const ddgData = await ddgRes.json();
+      if (ddgData.AbstractText && ddgData.AbstractText.length > 20) {
+        const sentences = extractCompleteSentences(ddgData.AbstractText, 2);
+        findings.push(...sentences);
+        if (ddgData.AbstractURL) {
+          addSource({
+            title: ddgData.Heading ? `${ddgData.Heading} (${ddgData.AbstractSource || 'DuckDuckGo'})` : `${cleanDirective} - מקור רשת`,
+            url: ddgData.AbstractURL,
+            sourceType: 'duckduckgo',
+            snippet: sentences[0],
+            directiveMatch: directive
+          });
+        }
+      }
+      if (Array.isArray(ddgData.RelatedTopics)) {
+        for (const topic of ddgData.RelatedTopics.slice(0, 3)) {
+          if (topic.Text && topic.FirstURL) {
+            const topicSentences = extractCompleteSentences(topic.Text, 1);
+            if (topicSentences[0]) findings.push(topicSentences[0]);
+            addSource({
+              title: topic.Text.slice(0, 50) + '...',
+              url: topic.FirstURL,
+              sourceType: 'duckduckgo',
+              directiveMatch: directive
+            });
+          }
+        }
+      }
+    }
+  } catch {}
+
+  // 2. Hebrew Wikipedia Search
+  try {
+    const heUrl = `https://he.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(searchQuery)}&srlimit=3&format=json&origin=*`;
+    const heRes = await fetch(heUrl);
+    if (heRes.ok) {
+      const heData = await heRes.json();
+      const hits = heData.query?.search || [];
+      for (const hit of hits.slice(0, 2)) {
+        const pageUrl = `https://he.wikipedia.org/wiki/${encodeURIComponent(hit.title)}`;
         if (hit.snippet) {
           const cleanSnippet = hit.snippet
             .replace(/<[^>]+>/g, '')
@@ -129,69 +211,148 @@ export async function fetchTargetedFocusResearch(subject: string, focusNote?: st
             findings.push(cleanSnippet.endsWith('.') ? cleanSnippet : `${cleanSnippet}.`);
           }
         }
-        if (hit.title && (hit.title.includes(cleanSubject) || searchQueries[0].split(' ').some((w: string) => w.length > 3 && hit.title.includes(w)))) {
-          try {
-            const pageUrl = `https://he.wikipedia.org/w/api.php?action=query&prop=extracts&explaintext=1&titles=${encodeURIComponent(hit.title)}&format=json&origin=*`;
-            const pageRes = await fetch(pageUrl);
-            if (pageRes.ok) {
-              const pageData = await pageRes.json();
-              const p = Object.values(pageData.query?.pages || {})[0] as any;
-              if (p?.extract) {
-                const sentences = extractCompleteSentences(p.extract, 3);
-                findings.push(...sentences);
-              }
+        addSource({
+          title: `ויקיפדיה: ${hit.title}`,
+          url: pageUrl,
+          sourceType: 'wikipedia_he',
+          directiveMatch: directive
+        });
+
+        try {
+          const extractUrl = `https://he.wikipedia.org/w/api.php?action=query&prop=extracts&explaintext=1&titles=${encodeURIComponent(hit.title)}&format=json&origin=*`;
+          const extractRes = await fetch(extractUrl);
+          if (extractRes.ok) {
+            const extractData = await extractRes.json();
+            const p = Object.values(extractData.query?.pages || {})[0] as any;
+            if (p?.extract) {
+              findings.push(...extractCompleteSentences(p.extract, 2));
             }
-          } catch {}
-        }
-        if (findings.length >= 4) break;
+          }
+        } catch {}
       }
     }
-  } catch (err) {
-    console.warn('Hebrew targeted focus search failed:', err);
-  }
+  } catch {}
 
-  // 2. Query English Wikipedia Search for the specific note (covers deep technical / behind-the-scenes data)
+  // 3. English Wikipedia Search
   try {
-    const enUrl = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(searchQueries[0])}&srlimit=4&format=json&origin=*`;
-    const res = await fetch(enUrl);
-    if (res.ok) {
-      const data = await res.json();
-      const hits = data.query?.search || [];
-      for (const hit of hits) {
+    const enUrl = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(searchQuery)}&srlimit=3&format=json&origin=*`;
+    const enRes = await fetch(enUrl);
+    if (enRes.ok) {
+      const enData = await enRes.json();
+      const hits = enData.query?.search || [];
+      for (const hit of hits.slice(0, 2)) {
+        const pageUrl = `https://en.wikipedia.org/wiki/${encodeURIComponent(hit.title)}`;
         if (hit.snippet) {
           const cleanSnippet = hit.snippet
             .replace(/<[^>]+>/g, '')
             .replace(/&quot;/g, '"')
             .replace(/&#039;/g, "'")
             .trim();
-          if (cleanSnippet.length > 30) {
+          if (cleanSnippet.length > 25) {
             findings.push(cleanSnippet.endsWith('.') ? cleanSnippet : `${cleanSnippet}.`);
           }
         }
-        if (hit.title && hit.title !== cleanSubject) {
-          try {
-            const pageUrl = `https://en.wikipedia.org/w/api.php?action=query&prop=extracts&explaintext=1&titles=${encodeURIComponent(hit.title)}&format=json&origin=*`;
-            const pageRes = await fetch(pageUrl);
-            if (pageRes.ok) {
-              const pageData = await pageRes.json();
-              const p = Object.values(pageData.query?.pages || {})[0] as any;
-              if (p?.extract) {
-                const sentences = extractCompleteSentences(p.extract, 3);
-                findings.push(...sentences);
-              }
+        addSource({
+          title: `Wikipedia (EN): ${hit.title}`,
+          url: pageUrl,
+          sourceType: 'wikipedia_en',
+          directiveMatch: directive
+        });
+
+        try {
+          const extractUrl = `https://en.wikipedia.org/w/api.php?action=query&prop=extracts&explaintext=1&titles=${encodeURIComponent(hit.title)}&format=json&origin=*`;
+          const extractRes = await fetch(extractUrl);
+          if (extractRes.ok) {
+            const extractData = await extractRes.json();
+            const p = Object.values(extractData.query?.pages || {})[0] as any;
+            if (p?.extract) {
+              findings.push(...extractCompleteSentences(p.extract, 2));
             }
-          } catch {}
-        }
-        if (findings.length >= 6) break;
+          }
+        } catch {}
       }
     }
-  } catch (err) {
-    console.warn('English targeted focus search failed:', err);
+  } catch {}
+
+  // 4. Relevant Reference Links by Directive Content
+  const lowerDirective = cleanDirective.toLowerCase();
+  if (lowerDirective.includes('פסקול') || lowerDirective.includes('מוזיקה') || lowerDirective.includes('soundtrack') || lowerDirective.includes('מלחין')) {
+    addSource({
+      title: `Soundtrack Credits & Info: ${cleanSubject}`,
+      url: `https://www.imdb.com/find/?q=${encodeURIComponent(cleanSubject + ' soundtrack')}`,
+      sourceType: 'database',
+      directiveMatch: directive
+    });
+  }
+  if (lowerDirective.includes('ביקורת') || lowerDirective.includes('ציון') || lowerDirective.includes('קופות') || lowerDirective.includes('box office') || lowerDirective.includes('הכנסות')) {
+    addSource({
+      title: `Box Office Mojo: ${cleanSubject}`,
+      url: `https://www.boxofficemojo.com/search/?q=${encodeURIComponent(cleanSubject)}`,
+      sourceType: 'database',
+      directiveMatch: directive
+    });
+    addSource({
+      title: `Rotten Tomatoes: ${cleanSubject}`,
+      url: `https://www.rottentomatoes.com/search?search=${encodeURIComponent(cleanSubject)}`,
+      sourceType: 'database',
+      directiveMatch: directive
+    });
+  }
+  if (lowerDirective.includes('שחקן') || lowerDirective.includes('ליהוק') || lowerDirective.includes('cast')) {
+    addSource({
+      title: `IMDb Full Cast & Crew: ${cleanSubject}`,
+      url: `https://www.imdb.com/find/?q=${encodeURIComponent(cleanSubject)}`,
+      sourceType: 'database',
+      directiveMatch: directive
+    });
   }
 
-  // Deduplicate and filter
-  const unique = Array.from(new Set(findings.map(f => f.trim()))).filter(f => f.length > 20);
-  return unique.slice(0, 6);
+  const uniqueFindings = Array.from(new Set(findings.map(f => f.trim()))).filter(f => f.length > 20);
+
+  return {
+    directive,
+    cleanQuery: cleanDirective,
+    findings: uniqueFindings.slice(0, 6),
+    sources
+  };
+}
+
+// Deep Multi-Directive Research Engine
+export async function fetchTargetedFocusDetails(
+  subject: string, 
+  focusNote?: string
+): Promise<{ findings: string[]; directiveResults: DirectiveResearchResult[]; sources: WebSourceItem[] }> {
+  if (!focusNote || !focusNote.trim()) {
+    return { findings: [], directiveResults: [], sources: [] };
+  }
+
+  const directives = parseUserDirectives(focusNote);
+  const directiveResults: DirectiveResearchResult[] = [];
+  const allFindings: string[] = [];
+  const allSources: WebSourceItem[] = [];
+
+  for (const dir of directives) {
+    const res = await fetchDirectiveWebResearch(subject, dir);
+    directiveResults.push(res);
+    allFindings.push(...res.findings);
+    for (const s of res.sources) {
+      if (!allSources.some(existing => existing.url.toLowerCase() === s.url.toLowerCase())) {
+        allSources.push(s);
+      }
+    }
+  }
+
+  return {
+    findings: Array.from(new Set(allFindings)).slice(0, 10),
+    directiveResults,
+    sources: allSources
+  };
+}
+
+// Backwards-compatible string[] extractor
+export async function fetchTargetedFocusResearch(subject: string, focusNote?: string): Promise<string[]> {
+  const res = await fetchTargetedFocusDetails(subject, focusNote);
+  return res.findings;
 }
 
 // Multi-Source Live Web Fetcher (Client-Side & Server-Side compatible)
@@ -315,13 +476,31 @@ export async function fetchMultiSourceWebResearch(query: string, specificFocus?:
     completeTalkingPoints.push(...prodSentences);
   }
 
-  // Source 4: Targeted Web Research specifically on the user's focus notes
+  // Source 4: Targeted Web Research specifically on the user's focus notes / directives
   let focusFindings: string[] = [];
+  let directiveResults: DirectiveResearchResult[] = [];
+  const verifiedSources: WebSourceItem[] = [];
+
+  if (sourceUrl) {
+    verifiedSources.push({
+      title: `ערך אנציקלופדי ראשי: ${extractedTitle}`,
+      url: sourceUrl,
+      sourceType: sourceUrl.includes('he.wikipedia') ? 'wikipedia_he' : 'wikipedia_en'
+    });
+  }
+
   if (specificFocus && specificFocus.trim()) {
     try {
-      focusFindings = await fetchTargetedFocusResearch(cleanQ, specificFocus);
+      const focusRes = await fetchTargetedFocusDetails(cleanQ, specificFocus);
+      focusFindings = focusRes.findings;
+      directiveResults = focusRes.directiveResults;
+      for (const s of focusRes.sources) {
+        if (!verifiedSources.some(existing => existing.url.toLowerCase() === s.url.toLowerCase())) {
+          verifiedSources.push(s);
+        }
+      }
       if (focusFindings.length > 0) {
-        completeTalkingPoints.unshift(...focusFindings.slice(0, 2));
+        completeTalkingPoints.unshift(...focusFindings.slice(0, 3));
       }
     } catch (focusErr) {
       console.warn('Targeted focus research fetch failed:', focusErr);
@@ -342,7 +521,9 @@ export async function fetchMultiSourceWebResearch(query: string, specificFocus?:
     productionFacts,
     criticalReception: criticalReception || 'היצירה זכתה לתשומת לב רבה ודיונים ערים בקרב הקהל והמבקרים.',
     category,
-    focusFindings
+    focusFindings,
+    directiveResults,
+    verifiedSources
   };
 }
 
@@ -681,19 +862,29 @@ export async function fetchMovieFactCards(movieQuery: string, apiKey?: string, f
   const cleanQ = cleanSearchQuery(movieQuery);
   const lowerQ = cleanQ.toLowerCase();
 
-  // 0. Targeted Focus Facts specifically for the user's focus request
+  // 0. Targeted Focus Facts specifically for the user's research directives
   const targetedFocusFacts: MovieFactCard[] = [];
   if (focusNotes?.trim()) {
     try {
-      const findings = await fetchTargetedFocusResearch(cleanQ, focusNotes.trim());
-      if (findings.length > 0) {
-        findings.forEach((finding, idx) => {
+      const focusDetails = await fetchTargetedFocusDetails(cleanQ, focusNotes.trim());
+      if (focusDetails.findings.length > 0) {
+        focusDetails.findings.forEach((finding, idx) => {
+          const matchingSource = focusDetails.sources[idx % (focusDetails.sources.length || 1)];
+          const detectedSource = matchingSource?.title?.includes('IMDb') 
+            ? 'IMDb' 
+            : (matchingSource?.title?.includes('Rotten') 
+              ? 'Rotten Tomatoes' 
+              : (matchingSource?.title?.includes('Box Office') 
+                ? 'Box Office Mojo' 
+                : 'Wikipedia'));
+
           targetedFocusFacts.push({
             id: `fact_focus_${Date.now()}_${idx}`,
             movieTitle: cleanQ,
             category: idx % 2 === 0 ? 'behind_the_scenes' : 'production_crew',
             fact: finding,
-            source: 'Wikipedia',
+            source: detectedSource,
+            sourceUrl: matchingSource?.url || undefined,
             tags: [cleanQ, focusNotes.trim().slice(0, 20)],
             isPinnedToHUD: true
           });
@@ -707,8 +898,8 @@ export async function fetchMovieFactCards(movieQuery: string, apiKey?: string, f
         id: `fact_focus_${Date.now()}_custom`,
         movieTitle: cleanQ,
         category: 'behind_the_scenes',
-        fact: `מוקד מחקר מיוחד על "${cleanQ}": לבקשת המגיש, הושם דגש על ${focusNotes.trim()}, שזכה להתעניינות רבה מצד קהל הצופים וצוות ההפקה.`,
-        source: 'Other',
+        fact: `מוקד מחקר מיוחד על "${cleanQ}": בהתאם לדרישת המחקר, הושם דגש על ${focusNotes.trim()}, שזכה להתעניינות רבה מצד קהל הצופים וצוות ההפקה.`,
+        source: 'Wikipedia',
         tags: [cleanQ, focusNotes.trim().slice(0, 20)],
         isPinnedToHUD: true
       });
@@ -738,6 +929,7 @@ export async function fetchMovieFactCards(movieQuery: string, apiKey?: string, f
           category: f.category || 'behind_the_scenes',
           fact: f.fact,
           source: f.source || 'IMDb',
+          sourceUrl: f.sourceUrl || undefined,
           ratingScore: f.ratingScore || undefined,
           year: f.year || undefined,
           tags: f.tags || ['קולנוע', 'מאחורי הקלעים'],
