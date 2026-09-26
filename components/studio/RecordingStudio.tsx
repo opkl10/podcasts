@@ -2421,11 +2421,15 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
               </DraggableOverlay>
             )}
 
-            {/* Top Right Quick Controls */}
-            <div className="absolute top-4 left-4 z-20 flex items-center gap-2 opacity-0 group-hover/video:opacity-100 transition-opacity">
+            {/* Bottom Left Quick Controls (Fullscreen, Bokeh, Mirror, Banner) */}
+            <div className={`absolute z-30 flex items-center gap-1.5 p-1 rounded-2xl bg-black/75 backdrop-blur-md border border-white/15 shadow-2xl transition-all ${
+              !isAudioOnly && guestConnectionStatus === 'connected' && guestLayout === 'pip'
+                ? 'bottom-4 left-48 sm:left-60'
+                : 'bottom-4 left-4'
+            } opacity-90 sm:opacity-0 sm:group-hover/video:opacity-100`}>
               <button
                 onClick={() => setIsMirrored(!isMirrored)}
-                className="p-2 rounded-xl bg-black/60 backdrop-blur-md border border-white/10 text-slate-300 hover:text-white transition-colors"
+                className="p-2 rounded-xl bg-black/40 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-white transition-colors"
                 title="היפוך מראה למצלמה"
               >
                 <RotateCw className="w-3.5 h-3.5" />
@@ -2433,7 +2437,7 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
 
               <button
                 onClick={() => setDepthOfField(!depthOfField)}
-                className={`p-2 rounded-xl border transition-colors ${depthOfField ? 'bg-purple-600 border-purple-400 text-white' : 'bg-black/60 border-white/10 text-slate-400'}`}
+                className={`p-2 rounded-xl border transition-colors ${depthOfField ? 'bg-purple-600 border-purple-400 text-white' : 'bg-black/40 hover:bg-white/10 border-white/10 text-slate-400 hover:text-white'}`}
                 title="הפעל/כבה עומק שדה קולנועי (Bokeh)"
               >
                 <Focus className="w-3.5 h-3.5" />
@@ -2441,7 +2445,7 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
 
               <button
                 onClick={() => setShowLowerThird(!showLowerThird)}
-                className={`p-2 rounded-xl border transition-colors ${showLowerThird ? 'bg-indigo-600/80 border-indigo-400 text-white' : 'bg-black/60 border-white/10 text-slate-400'}`}
+                className={`p-2 rounded-xl border transition-colors ${showLowerThird ? 'bg-indigo-600/80 border-indigo-400 text-white' : 'bg-black/40 hover:bg-white/10 border-white/10 text-slate-400 hover:text-white'}`}
                 title="הצג/הסתר באנר תחתון"
               >
                 <Tv className="w-3.5 h-3.5" />
@@ -2449,8 +2453,8 @@ export default function RecordingStudio({ episode }: RecordingStudioProps) {
 
               <button
                 onClick={toggleFullscreen}
-                className="p-2 rounded-xl bg-black/60 backdrop-blur-md border border-white/10 text-slate-300 hover:text-white transition-colors"
-                title="מסך מלא"
+                className="p-2 rounded-xl bg-black/40 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-white transition-colors"
+                title={isFullscreen ? "צא ממסך מלא" : "מסך מלא"}
               >
                 {isFullscreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
               </button>
