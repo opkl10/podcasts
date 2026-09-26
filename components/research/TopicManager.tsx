@@ -31,6 +31,7 @@ interface TopicManagerProps {
   onUpdateTopics: (topics: TopicItem[]) => void;
   onOpenDeepResearch?: () => void;
   onOpenImport?: () => void;
+  onOpenSmartAdd?: () => void;
 }
 
 export default function TopicManager({
@@ -39,7 +40,8 @@ export default function TopicManager({
   targetDurationMinutes,
   onUpdateTopics,
   onOpenDeepResearch,
-  onOpenImport
+  onOpenImport,
+  onOpenSmartAdd
 }: TopicManagerProps) {
   const [editingTopicId, setEditingTopicId] = useState<string | null>(null);
   const [newPointInput, setNewPointInput] = useState<{ [key: string]: string }>({});
@@ -245,6 +247,18 @@ export default function TopicManager({
               {totalEstimatedMinutes} מתוך {targetDurationMinutes} דק'
             </span>
           </div>
+
+          {/* Smart Add & Auto-Tag Info Button */}
+          {onOpenSmartAdd && (
+            <button
+              onClick={onOpenSmartAdd}
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 hover:from-indigo-500 hover:to-pink-500 text-xs font-bold text-white shadow-lg shadow-purple-900/30 active:scale-95 transition-all border border-purple-400/30"
+              title="סיווג אוטומטי של מידע נוסף: שיוך לנושא קיים או יצירת נושא חדש"
+            >
+              <Sparkles className="w-4 h-4 text-amber-300" />
+              <span>✨ הוספת מידע חכם</span>
+            </button>
+          )}
 
           {/* Deep Research Button */}
           {onOpenDeepResearch && (

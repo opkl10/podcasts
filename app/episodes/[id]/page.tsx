@@ -12,7 +12,8 @@ import ImportResearchModal from '@/components/research/ImportResearchModal';
 import AudioEditorAudiogramStudio from '@/components/audio/AudioEditorAudiogramStudio';
 import MovieFactCardsManager from '@/components/research/MovieFactCardsManager';
 import HighlightClipsManager from '@/components/research/HighlightClipsManager';
-import { ListChecks, Film, Flame } from 'lucide-react';
+import SmartAddInfoModal from '@/components/research/SmartAddInfoModal';
+import { ListChecks, Film, Flame, Sparkles, CheckCircle2 } from 'lucide-react';
 
 interface EpisodePageProps {
   params: Promise<{ id: string }>;
@@ -26,6 +27,9 @@ export default function EpisodePage({ params }: EpisodePageProps) {
   const [isExportOpen, setIsExportOpen] = useState(false);
   const [isImportOpen, setIsImportOpen] = useState(false);
   const [isDeepResearchOpen, setIsDeepResearchOpen] = useState(false);
+  const [isSmartAddOpen, setIsSmartAddOpen] = useState(false);
+  const [smartAddScope, setSmartAddScope] = useState<'all' | 'topics' | 'facts'>('all');
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [isAudiogramOpen, setIsAudiogramOpen] = useState(false);
   const [selectedClipForStudio, setSelectedClipForStudio] = useState<HighlightClip | null>(null);
   const [isLoaded, setIsLoaded] = useState(false);
@@ -124,6 +128,23 @@ export default function EpisodePage({ params }: EpisodePageProps) {
     handleUpdateEpisode(updated);
   };
 
+  const handleApplySmartIntegration = (
+    updatedTopics: TopicItem[],
+    updatedFacts: MovieFactCard[],
+    message: string
+  ) => {
+    if (!episode) return;
+    const updated: Episode = {
+      ...episode,
+      topics: updatedTopics,
+      movieFacts: updatedFacts,
+      status: (episode.status === 'draft' && updatedTopics.length > 0) ? 'research' : episode.status
+    };
+    handleUpdateEpisode(updated);
+    setToastMessage(message);
+    setTimeout(() => setToastMessage(null), 5000);
+  };
+
   const handleOpenAudiogramForClip = (clip: HighlightClip) => {
     setSelectedClipForStudio(clip);
     setIsAudiogramOpen(true);
@@ -154,6 +175,14 @@ export default function EpisodePage({ params }: EpisodePageProps) {
 
   return (
     <div className="space-y-8 animate-in fade-in duration-300">
+      {/* Toast Alert Feedback */}
+      {toastMessage && (
+        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-50 px-5 py-3 rounded-2xl bg-emerald-950/90 border border-emerald-500/40 text-emerald-200 text-xs font-bold shadow-2xl backdrop-blur-md flex items-center gap-2.5 animate-in fade-in slide-in-from-top-4">
+          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+          <span>{toastMessage}</span>
+        </div>
+      )}
+
       {/* Header & Metadata Editor */}
       <EpisodeDetailsHeader
         episode={episode}
@@ -166,42 +195,57 @@ export default function EpisodePage({ params }: EpisodePageProps) {
         }}
       />
 
-      {/* Research Tabs Switcher */}
-      <div className="flex items-center gap-2 p-1.5 rounded-2xl bg-slate-900/80 border border-slate-800 w-fit flex-wrap">
-        <button
-          onClick={() => setActiveResearchTab('topics')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
-            activeResearchTab === 'topics'
-              ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30'
-              : 'text-slate-400 hover:text-white'
-          }`}
-        >
-          <ListChecks className="w-4 h-4" />
-          <span>מבנה הפרק ונושאי שיחה ({episode.topics.length})</span>
-        </button>
+      {/* Research Tabs Switcher & Smart Info Quick Action */}
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="flex items-center gap-2 p-1.5 rounded-2xl bg-slate-900/80 border border-slate-800 w-fit flex-wrap">
+          <button
+            onClick={() => setActiveResearchTab('topics')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+              activeResearchTab === 'topics'
+                ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <ListChecks className="w-4 h-4" />
+            <span>מבנה הפרק ונושאי שיחה ({episode.topics.length})</span>
+          </button>
 
-        <button
-          onClick={() => setActiveResearchTab('facts')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
-            activeResearchTab === 'facts'
-              ? 'bg-amber-500 text-slate-950 font-black shadow-lg shadow-amber-500/20'
-              : 'text-slate-400 hover:text-white'
-          }`}
-        >
-          <Film className="w-4 h-4" />
-          <span>כרטיסיות עובדות קולנוע ומקורות ({episode.movieFacts?.length || 0})</span>
-        </button>
+          <button
+            onClick={() => setActiveResearchTab('facts')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+              activeResearchTab === 'facts'
+                ? 'bg-amber-500 text-slate-950 font-black shadow-lg shadow-amber-500/20'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <Film className="w-4 h-4" />
+            <span>כרטיסיות עובדות קולנוע ומקורות ({episode.movieFacts?.length || 0})</span>
+          </button>
 
+          <button
+            onClick={() => setActiveResearchTab('clips')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black transition-all ${
+              activeResearchTab === 'clips'
+                ? 'bg-gradient-to-r from-rose-500 to-amber-500 text-white shadow-lg shadow-rose-500/30'
+                : 'text-slate-400 hover:text-amber-300'
+            }`}
+          >
+            <Flame className="w-4 h-4 text-amber-400" />
+            <span>🔥 קליפים ויראליים ו-Shorts ({episode.highlightClips?.length || 0})</span>
+          </button>
+        </div>
+
+        {/* Global Smart Add Info Trigger */}
         <button
-          onClick={() => setActiveResearchTab('clips')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black transition-all ${
-            activeResearchTab === 'clips'
-              ? 'bg-gradient-to-r from-rose-500 to-amber-500 text-white shadow-lg shadow-rose-500/30'
-              : 'text-slate-400 hover:text-amber-300'
-          }`}
+          onClick={() => {
+            setSmartAddScope(activeResearchTab === 'facts' ? 'facts' : activeResearchTab === 'topics' ? 'topics' : 'all');
+            setIsSmartAddOpen(true);
+          }}
+          className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 hover:from-indigo-500 hover:to-pink-500 text-white text-xs font-black shadow-xl shadow-purple-900/30 border border-purple-400/40 active:scale-95 transition-all"
+          title="הוספת מידע נוסף: המערכת תתייג ותשלב במה שקיים או תוסיף למקום משלו אם הוא חדש"
         >
-          <Flame className="w-4 h-4 text-amber-400" />
-          <span>🔥 קליפים ויראליים ו-Shorts ({episode.highlightClips?.length || 0})</span>
+          <Sparkles className="w-4 h-4 text-amber-300" />
+          <span>✨ הוספת מידע חכם (מיזוג ותיוג אוטומטי)</span>
         </button>
       </div>
 
@@ -214,6 +258,10 @@ export default function EpisodePage({ params }: EpisodePageProps) {
           onUpdateTopics={handleUpdateTopics}
           onOpenDeepResearch={() => setIsDeepResearchOpen(true)}
           onOpenImport={() => setIsImportOpen(true)}
+          onOpenSmartAdd={() => {
+            setSmartAddScope('topics');
+            setIsSmartAddOpen(true);
+          }}
         />
       ) : activeResearchTab === 'facts' ? (
         <MovieFactCardsManager
@@ -222,6 +270,10 @@ export default function EpisodePage({ params }: EpisodePageProps) {
           onUpdateMovieFacts={handleUpdateMovieFacts}
           onAddFactAsTopicPoint={handleAddFactAsTopicPoint}
           onOpenImport={() => setIsImportOpen(true)}
+          onOpenSmartAdd={() => {
+            setSmartAddScope('facts');
+            setIsSmartAddOpen(true);
+          }}
         />
       ) : (
         <HighlightClipsManager
@@ -256,6 +308,17 @@ export default function EpisodePage({ params }: EpisodePageProps) {
         guestRole={episode.guest?.role}
         targetDurationMinutes={episode.targetDurationMinutes}
         onApplyTopics={handleApplyDeepResearch}
+      />
+
+      {/* Smart Add Information Modal (Auto-Tag Existing or Create New Place) */}
+      <SmartAddInfoModal
+        isOpen={isSmartAddOpen}
+        onClose={() => setIsSmartAddOpen(false)}
+        episodeTitle={episode.title}
+        existingTopics={episode.topics}
+        existingFacts={episode.movieFacts || []}
+        defaultScope={smartAddScope}
+        onApply={handleApplySmartIntegration}
       />
 
       {/* Audio Editor & Audiogram Studio */}

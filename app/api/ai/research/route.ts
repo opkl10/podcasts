@@ -7,6 +7,7 @@ import {
   DirectiveResearchResult,
   mergeAndSequenceFactsLocally 
 } from '@/lib/webResearch';
+import { integrateLocally } from '@/lib/smartIntegrator';
 
 export async function POST(req: NextRequest) {
   try {
@@ -151,6 +152,125 @@ ${incomingFacts.map((f, i) => `${i + 1}. [${f.category || 'כללי'}] ${f.fact}
         data: {
           movieTitle: querySubject,
           facts: localSequenced
+        }
+      });
+    }
+
+    // 0.5 Smart Integration of Additional Information (Tag existing or create new place)
+    if (mode === 'smart_integrate_info') {
+      const additionalInfo: string = (body.additionalInfo || effectiveFocus || '').trim();
+      const existingTopics = body.existingTopics || [];
+      const existingFacts = body.existingFacts || body.movieFacts || body.facts || [];
+      const targetScope: 'all' | 'topics' | 'facts' = body.targetScope || 'all';
+
+      if (!additionalInfo) {
+        return NextResponse.json({ error: 'אין מידע נוסף לסיווג' }, { status: 400 });
+      }
+
+      if (effectiveKey && effectiveKey.length >= 10) {
+        const models = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'];
+        const integratePrompt = `
+אתה עורך תוכן, תסריטאי ומנהל מחקר פודקאסטים ראשי.
+לפניך פרק פודקאסט בנושא: "${querySubject}".
+
+להלן ראשי הפרקים ונושאי השיחה הקיימים כרגע (${existingTopics.length}):
+${existingTopics.map((t: any, i: number) => `${i + 1}. [נושא מזהה: ${t.id}] כותרת: "${t.title}" | הערות: "${t.notes}" | נקודות שיחה: ${(t.talkingPoints || []).join(' • ')}`).join('\n')}
+
+להלן כרטיסיות עובדות הקולנוע הקיימות כרגע (${existingFacts.length}):
+${existingFacts.map((f: any, i: number) => `${i + 1}. [עובדה מזהה: ${f.id}] קטגוריה: [${f.category}] | עובדה: "${f.fact}" | תגיות: ${(f.tags || []).join(', ')}`).join('\n')}
+
+המשתמש הזין כעת "מידע נוסף" (הערות, עובדות חדשות, ציטוטים, רעיונות או תובנות):
+"""
+${additionalInfo}
+"""
+
+משימתך המדויקת:
+נתח את כל המידע הנוסף, וסווג כל פריט מידע לאחת משתי האפשרויות:
+1. "matched_existing" (תיוג ומיזוג במה שקיים בצורה מסודרת):
+   - אם המידע מתקשר ישירות לנושא קיים, שייך אותו לאותו נושא!
+     -> הוסף נקודת שיחה חדה ומנוסחת היטב ב-talkingPoints של הנושא (עם תיוג מסודר בפורמט: "🏷️ [תוספת: תגית קצרה] התוכן המלא").
+     -> אם רלוונטי, עדכן את שדה ה-notes של הנושא.
+   - אם המידע מתקשר לכרטיסיית עובדה קיימת (או לקטגוריה קיימת), מזג אותו לתוכה או הוסף תגית ופרט משלים.
+2. "created_new" (הוספה למקום משלו אם הוא חדש):
+   - אם המידע מהווה נושא חדש/נפרד שלא כוסה בנושאים הקיימים:
+     -> צור עבורו נושא חדש ועצמאי ב-topics! תן לו כותרת מצוינת, זמן מוערך בדקות (10 דקות), נקודות שיחה מפורטות, שאלת פתיחה, והערות.
+   - אם המידע מהווה עובדת קולנוע חדשה:
+     -> צור כרטיסיית עובדה חדשה ועצמאית עם קטגוריה מתאימה (plot / cast / production_crew / reviews / behind_the_scenes / director_vision), מקור ותגיות.
+
+החזר JSON במבנה מדויק בלבד:
+{
+  "summary": {
+    "matchedCount": 2,
+    "newCount": 1,
+    "actions": [
+      {
+        "action": "matched_existing",
+        "type": "topic",
+        "targetTitle": "שם הנושא הקיים שאליו שויך",
+        "explanation": "הסבר בעברית מדוע המידע תוייג לנושא זה",
+        "taggedContent": "הטקסט כפי שתוייג",
+        "tag": "עלילה"
+      },
+      {
+        "action": "created_new",
+        "type": "topic",
+        "targetTitle": "כותרת הנושא החדש שנוצר",
+        "explanation": "הסבר בעברית מדוע נוצר מקום חדש נפרד עבור מידע זה",
+        "taggedContent": "התוכן שנוצר",
+        "tag": "הפקה"
+      }
+    ]
+  },
+  "updatedTopics": [...],
+  "updatedFacts": [...]
+}
+`;
+
+        for (const model of models) {
+          try {
+            const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${effectiveKey}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                contents: [{ parts: [{ text: integratePrompt }] }],
+                generationConfig: {
+                  responseMimeType: 'application/json',
+                  temperature: 0.3
+                }
+              })
+            });
+
+            if (res.ok) {
+              const data = await res.json();
+              const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+              if (text) {
+                const parsed = JSON.parse(text.replace(/```json/g, '').replace(/```/g, '').trim());
+                if (parsed.updatedTopics || parsed.updatedFacts) {
+                  return NextResponse.json({
+                    success: true,
+                    source: `Gemini AI Smart Integrator (${model})`,
+                    data: {
+                      summary: parsed.summary || { matchedCount: 0, newCount: 0, actions: [] },
+                      updatedTopics: parsed.updatedTopics || existingTopics,
+                      updatedFacts: parsed.updatedFacts || existingFacts
+                    }
+                  });
+                }
+              }
+            }
+          } catch (e) {}
+        }
+      }
+
+      // Deterministic local integration fallback
+      const localResult = integrateLocally(additionalInfo, existingTopics, existingFacts, querySubject, targetScope);
+      return NextResponse.json({
+        success: true,
+        source: 'Built-in Local Smart Integrator',
+        data: {
+          summary: localResult.summary,
+          updatedTopics: localResult.updatedTopics,
+          updatedFacts: localResult.updatedFacts
         }
       });
     }
