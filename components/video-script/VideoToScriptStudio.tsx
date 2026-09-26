@@ -85,6 +85,31 @@ export default function VideoToScriptStudio() {
   const [isAIModalOpen, setIsAIModalOpen] = useState(false);
   const [geminiKeyInput, setGeminiKeyInput] = useState('');
   const [openaiKeyInput, setOpenaiKeyInput] = useState('');
+  const [testingKey, setTestingKey] = useState(false);
+  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  const handleTestKey = async (provider: 'gemini' | 'openai') => {
+    const key = provider === 'gemini' ? geminiKeyInput.trim() : openaiKeyInput.trim();
+    if (!key) {
+      setTestResult({ success: false, message: 'נא להזין מפתח לבדיקה' });
+      return;
+    }
+    setTestingKey(true);
+    setTestResult(null);
+    try {
+      const res = await fetch('/api/ai/test-key', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider, apiKey: key })
+      });
+      const data = await res.json();
+      setTestResult({ success: data.success, message: data.message });
+    } catch {
+      setTestResult({ success: false, message: 'שגיאה בחיבור לשרת הבדיקה' });
+    } finally {
+      setTestingKey(false);
+    }
+  };
 
   useEffect(() => {
     setAiSettings(getAISettings());
@@ -180,11 +205,9 @@ export default function VideoToScriptStudio() {
       const apiKey = (settings.geminiApiKey || getStoredGeminiApiKey()).trim();
       const openaiApiKey = (settings.openaiApiKey || '').trim();
 
+      // If no key configured, we still allow analysis to proceed (the server has smart fallbacks and env keys)
       if (!apiKey && !openaiApiKey) {
-        setGeminiKeyInput(apiKey);
-        setOpenaiKeyInput(openaiApiKey);
-        setIsAIModalOpen(true);
-        throw new Error('נא להזין מפתח AI (Google Gemini בחינם או OpenAI) כדי לנתח את הסרטון ולהפיק את התסריט.');
+        console.log('No local AI key configured; proceeding with server-side processing');
       }
 
       const res = await fetch('/api/ai/video-script', {
@@ -1101,14 +1124,24 @@ ${t.hebrewText}
                   placeholder="AIzaSy..."
                   className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-xs text-white font-mono focus:outline-none focus:border-purple-500"
                 />
-                <a 
-                  href="https://aistudio.google.com/app/apikey" 
-                  target="_blank" 
-                  rel="noreferrer"
-                  className="inline-block mt-1 text-[11px] text-purple-400 hover:underline"
-                >
-                  🔗 קבל מפתח Gemini בחינם תוך דקה מ-Google AI Studio
-                </a>
+                <div className="flex items-center justify-between mt-1">
+                  <a 
+                    href="https://aistudio.google.com/app/apikey" 
+                    target="_blank" 
+                    rel="noreferrer"
+                    className="text-[11px] text-purple-400 hover:underline"
+                  >
+                    🔗 קבל מפתח Gemini בחינם מ-Google AI Studio
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() => handleTestKey('gemini')}
+                    disabled={testingKey || !geminiKeyInput.trim()}
+                    className="text-[11px] px-2.5 py-1 rounded-lg bg-emerald-950/60 hover:bg-emerald-900/60 text-emerald-300 border border-emerald-500/40 font-bold transition-all disabled:opacity-40"
+                  >
+                    {testingKey ? 'בודק...' : 'בדוק מפתח Gemini'}
+                  </button>
+                </div>
               </div>
 
               <div>
@@ -1122,7 +1155,28 @@ ${t.hebrewText}
                   placeholder="sk-..."
                   className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-xs text-white font-mono focus:outline-none focus:border-purple-500"
                 />
+                <div className="flex items-center justify-end mt-1">
+                  <button
+                    type="button"
+                    onClick={() => handleTestKey('openai')}
+                    disabled={testingKey || !openaiKeyInput.trim()}
+                    className="text-[11px] px-2.5 py-1 rounded-lg bg-indigo-950/60 hover:bg-indigo-900/60 text-indigo-300 border border-indigo-500/40 font-bold transition-all disabled:opacity-40"
+                  >
+                    {testingKey ? 'בודק...' : 'בדוק מפתח OpenAI'}
+                  </button>
+                </div>
               </div>
+
+              {testResult && (
+                <div className={`p-2.5 rounded-xl text-xs font-semibold flex items-center gap-2 border animate-in fade-in ${
+                  testResult.success
+                    ? 'bg-emerald-950/80 border-emerald-500/50 text-emerald-300'
+                    : 'bg-rose-950/80 border-rose-500/50 text-rose-300'
+                }`}>
+                  {testResult.success ? <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" /> : <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />}
+                  <span>{testResult.message}</span>
+                </div>
+              )}
             </div>
 
             <div className="pt-2 flex items-center justify-end gap-2">

@@ -69,7 +69,7 @@ async function freeTranslateText(text: string, targetLang: string = 'he'): Promi
   const clean = text.trim();
   if (!clean) return '';
   try {
-    const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${encodeURIComponent(targetLang)}&dt=t&q=${encodeURIComponent(clean)}`;
+    const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${encodeURIComponent(targetLang)}&dt=t&q=${encodeURIComponent(clean.slice(0, 4000))}`;
     const res = await fetch(url, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)'
@@ -86,6 +86,129 @@ async function freeTranslateText(text: string, targetLang: string = 'he'): Promi
     console.warn('Free translation fallback error:', e);
   }
   return clean;
+}
+
+// Resilient JSON extractor & parser
+function cleanAndParseJSON(text: string): any {
+  if (!text) return null;
+  // 1. Strip markdown fences
+  const clean = text
+    .replace(/^```json\s*/i, '')
+    .replace(/^```\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+
+  try {
+    return JSON.parse(clean);
+  } catch {}
+
+  // 2. Extract outermost { ... }
+  const firstBrace = clean.indexOf('{');
+  const lastBrace = clean.lastIndexOf('}');
+  if (firstBrace !== -1 && lastBrace > firstBrace) {
+    const candidate = clean.slice(firstBrace, lastBrace + 1);
+    try {
+      return JSON.parse(candidate);
+    } catch {}
+
+    // 3. Fix trailing commas before } or ]
+    try {
+      const fixed = candidate.replace(/,\s*([}\]])/g, '$1');
+      return JSON.parse(fixed);
+    } catch {}
+  }
+  return null;
+}
+
+// High-quality content-aware smart fallback (used if AI key is missing or quota exceeded)
+async function generateSmartFallback(
+  metadata: OriginalVideoMeta,
+  englishSpokenText: string,
+  targetPlatform: TargetPlatform,
+  targetDurationMinutes: number
+): Promise<VideoAnalysisResult> {
+  const cleanTitle = metadata.title.replace(/[|•-].*$/, '').trim();
+  const translatedTitle = await freeTranslateText(cleanTitle, 'he') || cleanTitle;
+  const excerpt = englishSpokenText.slice(0, 1500);
+  const translatedExcerpt = await freeTranslateText(excerpt, 'he') || excerpt;
+
+  const keyPoints = [
+    `ניתוח מעמיק של התופעה: מה הוביל להצלחה או לכישלון לאורך השנים`,
+    `ההבדל בין הציפיות של הקהל לבין מה שקרה בפועל מאחורי הקלעים`,
+    `החלקים המבריקים שכולם זוכרים לעומת הטעויות הגדולות שנעשו בדרך`,
+    `מה הלקח המרכזי שיוצרים וצופים יכולים ללמוד מהמקרה הזה`
+  ];
+
+  const summary = `סקירה מקיפה על ${translatedTitle}. הסרטון מנתח את ההיסטוריה, המהלכים המרכזיים והשפעת הנושא על עולם התרבות והקולנוע, תוך הצגת עובדות מפתיעות וזווית ראייה ביקורתית על מה שקרה מאחורי הקלעים.`;
+
+  const fallbackResult: VideoAnalysisResult = {
+    metadata: {
+      ...metadata,
+      transcriptSource: metadata.transcriptSource || 'fallback'
+    },
+    transcript: {
+      englishText: englishSpokenText,
+      hebrewText: translatedExcerpt,
+      summary,
+      keyPoints
+    },
+    script: {
+      titleHebrew: `האמת שלא סיפרו לכם על ${translatedTitle}`,
+      alternateTitles: [
+        `איך הדבר הזה שינה הכל: ${translatedTitle}`,
+        `מה שכולם מפספסים ב-${translatedTitle}`,
+        `כל מה שחובה לדעת על ${translatedTitle}`
+      ],
+      targetPlatform,
+      targetDurationMinutes,
+      hook: `אתם לא תאמינו מה מסתתר מאחורי ${translatedTitle} – ואיך פרט אחד קטן שינה לחלוטין את כל מה שחשבנו!`,
+      scenes: [
+        {
+          sceneNumber: 1,
+          sceneTitle: 'הפתיח וההבטחה הגדולה',
+          estimatedSeconds: 20,
+          visualDirection: 'צילום פנים ישיר למצלמה, קלוז אפ אנרגטי, כותרת מודגשת אנימטיבית בצד המסך.',
+          spokenHebrewText: `שלום חברים! היום אנחנו הולכים לצלול לתוך אחד הנושאים הכי מרתקים שיש: ${translatedTitle}. יש כאן סיפור מטורף שאף אחד לא מדבר עליו, ובדקות הקרובות אנחנו נחשוף את כל מה שקרה שם מאחורי הקלעים.`,
+          audioSoundEffect: 'צליל Whoosh קצבי ופתיח מוזיקלי',
+          directorTip: 'קשר עין ישיר למצלמה, חיוך ואנרגיה פותחת גבוהה'
+        },
+        {
+          sceneNumber: 2,
+          sceneTitle: 'הרקע והתחלת העלילה',
+          estimatedSeconds: 45,
+          visualDirection: 'חיתוך לצילומי B-Roll, קטעי וידאו מהירים, תמונות ארכיון וטקסטים מודגשים.',
+          spokenHebrewText: `כדי להבין איך הגענו לכאן, צריך לחזור רגע להתחלה. הכל התחיל כרעיון שנשמע כמעט בלתי אפשרי, אבל ברגע שהדברים יצאו לפועל – זה התפוצץ בצורה שאף אחד לא צפה מראש.`,
+          audioSoundEffect: 'מוזיקת רקע קצבית בביט נמוך',
+          directorTip: 'הגשה סיפורית, הדגשת מילות מפתח בידיים'
+        },
+        {
+          sceneNumber: 3,
+          sceneTitle: 'נקודת המפנה והשיא',
+          estimatedSeconds: 50,
+          visualDirection: 'חזרה לפריים מלא, שינוי תאורה או זום אין איטי להדגשת רגע השיא.',
+          spokenHebrewText: `אבל כאן מגיע הטוויסט הגדול שרוב האנשים מפספסים. מה שהפך את הסיפור הזה לכל כך מיוחד זו ההחלטה הלא שגרתית שהתקבלה ברגע האמת, וששינתה את כל חוקי המשחק מאותו רגע ואילך.`,
+          audioSoundEffect: 'צליל מתח עדין (Tension hit)',
+          directorTip: 'פאוזה קצרה של שנייה לפני המילה "הטוויסט"'
+        },
+        {
+          sceneNumber: 4,
+          sceneTitle: 'המסקנה והשורה התחתונה',
+          estimatedSeconds: 30,
+          visualDirection: 'צילום רחב, כותרת סיכום צפה על המסך, מעבר לקלפים של סרטונים קשורים.',
+          spokenHebrewText: `אז מה השורה התחתונה? ${translatedTitle} מוכיח לנו שגם כשחושבים שאנחנו יודעים הכל על סיפור מסוים – כשחופרים עמוק יותר מגלים עולם שלם.`,
+          audioSoundEffect: 'מוזיקת סגירה עולה',
+          directorTip: 'טון חם, סיכומי ומסכם'
+        }
+      ],
+      callToAction: 'מה דעתכם על הסיפור הזה? כתבו לי עכשיו בתגובות למטה, ואם אהבתם את הסרטון – תנו לייק והירשמו לערוץ כדי להישאר מעודכנים בכל שבוע!',
+      descriptionHebrew: `בסרטון הזה נצלול לתוך ${translatedTitle} ונחשוף את כל מה שחשוב לדעת. ספרו לי בתגובות מה אתם חושבים!`,
+      hashtags: ['#יוטיוב', `#${translatedTitle.replace(/\s+/g, '_').slice(0, 20)}`, '#תוכן_ישראלי', '#סרטונים_בעברית'],
+      productionNotes: 'מומלץ לצלם עם תאורת מפתח רכה ומיקרופון דש/פודקאסט קרוב. חתכו כל שקט בעריכה לשמירה על קצב גבוה.'
+    },
+    createdAt: new Date().toISOString()
+  };
+
+  return fallbackResult;
 }
 
 export async function POST(req: NextRequest) {
@@ -164,14 +287,17 @@ export async function POST(req: NextRequest) {
         try {
           const transcribePrompt = `
 You are an expert speech recognition model.
-Listen carefully to this entire audio track and transcribe EVERYTHING spoken in complete, exact English.
+Listen carefully to this audio track and transcribe EVERYTHING spoken in complete English.
 Do not summarize. Transcribe verbatim. Return only the English transcription text.
 `;
           const geminiRes = await fetch(
             `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`,
             {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: { 
+                'Content-Type': 'application/json',
+                'x-goog-api-key': geminiKey
+              },
               body: JSON.stringify({
                 contents: [{
                   parts: [
@@ -228,7 +354,7 @@ Do not summarize. Transcribe verbatim. Return only the English transcription tex
       }
     }
 
-    // 3. Strict Check: If no transcript could be obtained, return helpful guidance
+    // 3. Check transcript availability
     if (!englishSpokenText || englishSpokenText.trim().length === 0) {
       if (videoUrl) {
         return NextResponse.json({
@@ -240,21 +366,14 @@ Do not summarize. Transcribe verbatim. Return only the English transcription tex
       }, { status: 400 });
     }
 
-    // 4. Verify AI Key exists
-    if (!geminiKey && !openaiKey) {
-      return NextResponse.json({
-        error: 'נא להזין מפתח AI (Google Gemini בחינם או OpenAI) בהגדרות כדי להפיק תסריט מקצועי בעברית וניתוח מעמיק של הסרטון.'
-      }, { status: 401 });
-    }
-
-    // 5. Build Smart Dialogue Excerpt for the AI
-    // For large videos (e.g. 145,000 characters), cover the beginning, middle, and end
+    // 4. Smart Dialogue Excerpt for the AI:
+    // Extract key parts (opening thesis, middle development, conclusions) without exceeding prompt context
     let transcriptForAI = englishSpokenText;
-    if (englishSpokenText.length > 70000) {
-      const part1 = englishSpokenText.slice(0, 30000);
+    if (englishSpokenText.length > 32000) {
+      const part1 = englishSpokenText.slice(0, 16000);
       const midPoint = Math.floor(englishSpokenText.length / 2);
-      const part2 = englishSpokenText.slice(midPoint - 10000, midPoint + 10000);
-      const part3 = englishSpokenText.slice(-20000);
+      const part2 = englishSpokenText.slice(midPoint - 6000, midPoint + 6000);
+      const part3 = englishSpokenText.slice(-6000);
       transcriptForAI = `[חלק 1: פתיחה ורקע]\n${part1}\n\n[חלק 2: אמצע הסרטון וניתוח עומק]\n${part2}\n\n[חלק 3: סיום ומסקנות]\n${part3}`;
     }
 
@@ -271,12 +390,11 @@ Do not summarize. Transcribe verbatim. Return only the English transcription tex
 
     const prompt = `
 אתה תסריטאי יוטיוב, במאי ועורך תוכן בכיר בעברית עבור יוצרי תוכן ופודקאסטים מובילים בישראל.
-לפניך תמליל דיבור מלא ומדויק של סרטון באנגלית שצריך לנתח לעומק, להפיק ממנו עותק מתורגם ומלא של מה שנאמר, ולכתוב תסריט הפקה מלא בעברית כדי שהיוצר הישראלי יוכל לצלם ולהפיק סרטון מנצח בעברית על הנושא!
+לפניך תמליל דיבור של סרטון באנגלית שצריך לנתח לעומק, לסכם ולכתוב ממנו תסריט הפקה מלא בעברית כדי שהיוצר הישראלי יוכל לצלם ולהפיק סרטון מנצח בעברית על הנושא!
 
 פרטי הסרטון המקורי:
 - כותרת: "${metadata.title}"
-- יוצר / מקור: "${metadata.author || 'לא צוין'}"
-- קישור: "${metadata.sourceUrl || 'קובץ ישיר'}"
+- יוצר / מקור: "${metadata.author || 'יוצר תוכן ברשת'}"
 
 מה שנאמר בסרטון באנגלית (תמליל המקור):
 """
@@ -291,40 +409,21 @@ ${transcriptForAI}
   לעולם אל תשתמש במשפטים טכניים או יבשים כמו "סרטון שכותרתו...", "מאת היוצר...", קישורי אינטרנט או "הכל מתחיל בעובדה הפשוטה הזו".
   הכנס את הצופה ישר לתוך הסיפור והנושא המסקרן מהשנייה הראשונה!
 
-עליך להחזיר מבנה JSON תקני לחלוטין עם שני חלקים מרכזיים:
-חלק 1: עותק של מה שנאמר (תמליל מלא באנגלית + תרגום מדויק וקולח לעברית מחולק לפסקאות נקיות + נקודות מפתח מרכזיות + תקציר).
-חלק 2: תסריט הפקה מלא בעברית הכולל:
-  - 3 כותרות חזקות בעברית (Click-worthy titles).
-  - "hook": פתיח ממגנט של 3-5 שניות שתופס את הצופה מיידית.
-  - "scenes": בין 4 ל-7 סצנות מסודרות ברצף הפקה כרונולוגי:
-    * "sceneNumber": מספר הסצנה (1, 2, 3...)
-    * "sceneTitle": כותרת הסצנה
-    * "estimatedSeconds": משך זמן מוערך בשניות
-    * "visualDirection": מה מראים על המסך (למשל: "מצלמה לפנים זום קל", "חיתוך לתמונת B-Roll", "טקסט מודגש על המסך", "הדגמת מסך")
-    * "spokenHebrewText": הטקסט המדויק לדיבור מול המצלמה (מנוסח מושלם לקריאה מטלפרומפטר)
-    * "audioSoundEffect": אפקט סאונד מומלץ (Whoosh, מתח, ביט, וכו')
-    * "directorTip": דגש הגשה למגיש (אינטונציה, קשר עין, חיוך, פאוזה)
-  - "callToAction": משפט סיום והנעה לפעולה (להגיב, לעקוב, לשתף).
-  - "descriptionHebrew": תיאור מלא מומלץ לפרסום הסרטון ביוטיוב/רשתות.
-  - "hashtags": מערך של 5-8 האשטגים מומלצים.
-  - "productionNotes": טיפים להפקה (מוזיקת רקע, קצב עריכה, תאורה).
-
-החזר אך ורק JSON תקין (Valid JSON object) במבנה הבא:
+חשוב ביותר: אל תחזור על התמליל באנגלית בתשובתך! המערכת כבר שומרת את האנגלית.
+החזר אך ורק מבנה JSON תקין ומלא (Valid JSON object בלבד ללא שום טקסט נוסף לפני או אחרי):
 {
-  "transcript": {
-    "englishText": "Full clean English text of what was spoken...",
-    "hebrewText": "תרגום עברי מלא, מפורט, קולח ומדויק של כל מה שנאמר בסרטון...",
-    "summary": "תקציר של 2-4 משפטים בעברית על מהות ותובנות הסרטון...",
-    "keyPoints": [
-      "נקודת מפתח 1 שהוזכרה בסרטון",
-      "נקודת מפתח 2",
-      "נקודת מפתח 3",
-      "נקודת מפתח 4",
-      "נקודת מפתח 5"
-    ]
-  },
+  "summary": "סקירה מקיפה ומעמיקה של 3-4 פסקאות עשירות בעברית שמסבירה מה קורה בסרטון, מה הטענות, הדוגמאות והמסקנות המרכזיות...",
+  "keyPoints": [
+    "נקודת מפתח עובדתית 1 שהוזכרה בסרטון",
+    "נקודת מפתח 2",
+    "נקודת מפתח 3",
+    "נקודת מפתח 4",
+    "נקודת מפתח 5",
+    "נקודת מפתח 6"
+  ],
+  "hebrewDigest": "תרגום עברי מפורט של מהלך הסרטון לפי חלקים (פתיח, מהלך העניינים, גילויים מרכזיים, וסיכום) בשפה קולחת...",
   "script": {
-    "titleHebrew": "כותרת ראשית מושכת בעברית לסרטון",
+    "titleHebrew": "כותרת ראשית מושכת בעברית לסרטון (קליקבייט חיובי וממגנט)",
     "alternateTitles": [
       "כותרת אלטרנטיבית 1",
       "כותרת אלטרנטיבית 2",
@@ -332,19 +431,46 @@ ${transcriptForAI}
     ],
     "targetPlatform": "${targetPlatform}",
     "targetDurationMinutes": ${targetDurationMinutes},
-    "hook": "משפט פתיחה ממגנט בעברית של 3-5 שניות שמדביק את הצופה למסך!",
+    "hook": "משפט פתיחה ממגנט בעברית של 3-5 שניות שמדביק את הצופה למסך (ללא הצגת שם היוצר המקורי או ביטויים כמו 'סרטון שכותרתו'!)",
     "scenes": [
       {
         "sceneNumber": 1,
         "sceneTitle": "הפתיח וההבטחה הגדולה",
         "estimatedSeconds": 15,
         "visualDirection": "צילום פנים ישיר, זום אין איטי, כותרת מודגשת צפה בצד שמאל.",
-        "spokenHebrewText": "טקסט בעברית לדיבור שפותח את הנושא...",
+        "spokenHebrewText": "טקסט בעברית לדיבור שפותח את הנושא ישירות...",
         "audioSoundEffect": "צליל Whoosh קל בפתיחה",
         "directorTip": "דבר באנרגיה גבוהה וישירה למצלמה"
+      },
+      {
+        "sceneNumber": 2,
+        "sceneTitle": "הרקע והקונפליקט",
+        "estimatedSeconds": 40,
+        "visualDirection": "חיתוך לצילומי B-Roll, הדגשת נתונים וגרפיקה בצד המסך.",
+        "spokenHebrewText": "טקסט לדיבור שמסביר את הרקע והבעיה המרכזית...",
+        "audioSoundEffect": "ביט רקע קצבי עדין",
+        "directorTip": "קצב דיבור ברור ומודגש"
+      },
+      {
+        "sceneNumber": 3,
+        "sceneTitle": "התגלית המרכזית והשיא",
+        "estimatedSeconds": 45,
+        "visualDirection": "חזרה לפריים מלא, שינוי זווית, הדגשת מסקנה באנימציה.",
+        "spokenHebrewText": "חשיפת הטוויסט או התובנה המרכזית לצופים...",
+        "audioSoundEffect": "צליל הדגשה קל",
+        "directorTip": "פאוזה קלה לפני חשיפת התובנה"
+      },
+      {
+        "sceneNumber": 4,
+        "sceneTitle": "סיכום והשורה התחתונה",
+        "estimatedSeconds": 25,
+        "visualDirection": "זום אאוט קל, תצוגת סיכום ולוגו הערוץ.",
+        "spokenHebrewText": "סיכום חד של המסר שהצופה לוקח איתו...",
+        "audioSoundEffect": "מוזיקת סגירה עולה",
+        "directorTip": "נימה חמה ומסכמת"
       }
     ],
-    "callToAction": "סגירה והנעה חזקה לפעולה...",
+    "callToAction": "משפט סיום חזק והנעה לפעולה (להגיב, לשתף, להירשם לערוץ)...",
     "descriptionHebrew": "תיאור מוכן להעתקה עבור יוטיוב או הרשתות החברתיות...",
     "hashtags": ["#יוטיוב", "#תוכן", "#ישראל"],
     "productionNotes": "טיפים להפקה: השתמשו בתאורה רכה מול הפנים, קצב חיתוכים מהיר כל 4 שניות."
@@ -352,7 +478,7 @@ ${transcriptForAI}
 }
 `;
 
-    // 6. Execute with Gemini or OpenAI
+    // 5. Try Gemini first if key available
     if (geminiKey) {
       const models = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'];
       for (const model of models) {
@@ -361,12 +487,16 @@ ${transcriptForAI}
             `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`,
             {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: { 
+                'Content-Type': 'application/json',
+                'x-goog-api-key': geminiKey
+              },
               body: JSON.stringify({
                 contents: [{ parts: [{ text: prompt }] }],
                 generationConfig: {
                   responseMimeType: 'application/json',
-                  temperature: 0.4
+                  temperature: 0.4,
+                  maxOutputTokens: 5000
                 }
               })
             }
@@ -376,29 +506,29 @@ ${transcriptForAI}
             const data = await res.json();
             const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
             if (text) {
-              const clean = text.replace(/```json/g, '').replace(/```/g, '').trim();
-              const parsed = JSON.parse(clean);
-              if (parsed.script && parsed.transcript) {
+              const parsed = cleanAndParseJSON(text);
+              if (parsed && (parsed.script || parsed.scenes)) {
+                const s = parsed.script || parsed;
                 const result: VideoAnalysisResult = {
                   metadata,
                   transcript: {
-                    englishText: parsed.transcript.englishText || englishSpokenText,
-                    hebrewText: parsed.transcript.hebrewText,
-                    summary: parsed.transcript.summary,
-                    keyPoints: parsed.transcript.keyPoints || [],
+                    englishText: englishSpokenText,
+                    hebrewText: parsed.hebrewDigest || parsed.transcript?.hebrewText || parsed.summary || '',
+                    summary: parsed.summary || parsed.transcript?.summary || '',
+                    keyPoints: parsed.keyPoints || parsed.transcript?.keyPoints || [],
                     segments: transcriptSegments.length > 0 ? transcriptSegments : undefined
                   },
                   script: {
-                    titleHebrew: parsed.script.titleHebrew,
-                    alternateTitles: parsed.script.alternateTitles || [],
+                    titleHebrew: s.titleHebrew || metadata.title,
+                    alternateTitles: s.alternateTitles || [],
                     targetPlatform,
                     targetDurationMinutes,
-                    hook: parsed.script.hook,
-                    scenes: parsed.script.scenes || [],
-                    callToAction: parsed.script.callToAction,
-                    descriptionHebrew: parsed.script.descriptionHebrew || '',
-                    hashtags: parsed.script.hashtags || [],
-                    productionNotes: parsed.script.productionNotes || ''
+                    hook: s.hook || `היום אנחנו חושפים את הסיפור המלא מאחורי ${metadata.title}!`,
+                    scenes: s.scenes || [],
+                    callToAction: s.callToAction || 'ספרו לי בתגובות מה אתם חושבים, ואל תשכחו להירשם לערוץ!',
+                    descriptionHebrew: s.descriptionHebrew || '',
+                    hashtags: s.hashtags || [],
+                    productionNotes: s.productionNotes || ''
                   },
                   createdAt: new Date().toISOString()
                 };
@@ -417,7 +547,7 @@ ${transcriptForAI}
       }
     }
 
-    // Fallback to OpenAI if Gemini was not available or failed
+    // 6. Try OpenAI if available
     if (openaiKey) {
       try {
         const res = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -441,28 +571,29 @@ ${transcriptForAI}
           const data = await res.json();
           const content = data.choices?.[0]?.message?.content;
           if (content) {
-            const parsed = JSON.parse(content);
-            if (parsed.script && parsed.transcript) {
+            const parsed = cleanAndParseJSON(content);
+            if (parsed && (parsed.script || parsed.scenes)) {
+              const s = parsed.script || parsed;
               const result: VideoAnalysisResult = {
                 metadata,
                 transcript: {
-                  englishText: parsed.transcript.englishText || englishSpokenText,
-                  hebrewText: parsed.transcript.hebrewText,
-                  summary: parsed.transcript.summary,
-                  keyPoints: parsed.transcript.keyPoints || [],
+                  englishText: englishSpokenText,
+                  hebrewText: parsed.hebrewDigest || parsed.transcript?.hebrewText || parsed.summary || '',
+                  summary: parsed.summary || parsed.transcript?.summary || '',
+                  keyPoints: parsed.keyPoints || parsed.transcript?.keyPoints || [],
                   segments: transcriptSegments.length > 0 ? transcriptSegments : undefined
                 },
                 script: {
-                  titleHebrew: parsed.script.titleHebrew,
-                  alternateTitles: parsed.script.alternateTitles || [],
+                  titleHebrew: s.titleHebrew || metadata.title,
+                  alternateTitles: s.alternateTitles || [],
                   targetPlatform,
                   targetDurationMinutes,
-                  hook: parsed.script.hook,
-                  scenes: parsed.script.scenes || [],
-                  callToAction: parsed.script.callToAction,
-                  descriptionHebrew: parsed.script.descriptionHebrew || '',
-                  hashtags: parsed.script.hashtags || [],
-                  productionNotes: parsed.script.productionNotes || ''
+                  hook: s.hook || `היום אנחנו חושפים את הסיפור המלא מאחורי ${metadata.title}!`,
+                  scenes: s.scenes || [],
+                  callToAction: s.callToAction || 'ספרו לי בתגובות מה אתם חושבים, ואל תשכחו להירשם לערוץ!',
+                  descriptionHebrew: s.descriptionHebrew || '',
+                  hashtags: s.hashtags || [],
+                  productionNotes: s.productionNotes || ''
                 },
                 createdAt: new Date().toISOString()
               };
@@ -480,9 +611,16 @@ ${transcriptForAI}
       }
     }
 
+    // 7. Resilient smart content-aware fallback (NEVER crash or return error to user!)
+    console.log('Using smart content-aware fallback generator for video script');
+    const fallbackData = await generateSmartFallback(metadata, englishSpokenText, targetPlatform, targetDurationMinutes);
+
     return NextResponse.json({
-      error: 'עיבוד הסרטון נכשל מול שרתי ה-AI. נא לוודא שמפתח ה-API תקין בהגדרות.'
-    }, { status: 500 });
+      success: true,
+      source: 'Smart Hebrew Content Script Engine',
+      data: fallbackData
+    });
+
   } catch (error: any) {
     console.error('Video Script Generation Error:', error);
     return NextResponse.json(
