@@ -5,16 +5,63 @@ import {
   VideoTranscript, 
   ProductionScript, 
   TargetPlatform, 
-  ScriptTone 
+  ScriptTone,
+  TranscriptSegment 
 } from '@/types/videoScript';
+import { YoutubeTranscript } from 'youtube-transcript';
 
-export const maxDuration = 60; // Next.js route max timeout
+export const maxDuration = 120; // 2 minutes timeout for large transcripts & video analysis
 
 function extractYouTubeId(url: string): string | null {
   if (!url) return null;
-  const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=|shorts\/)([^#&?]*).*/;
-  const match = url.match(regExp);
+  const clean = url.trim();
+  if (/^[a-zA-Z0-9_-]{11}$/.test(clean)) return clean;
+  const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=|shorts\/|live\/)([^#&?]*).*/;
+  const match = clean.match(regExp);
   return (match && match[2].length === 11) ? match[2] : null;
+}
+
+// Fetch YouTube captions safely with multiple language and fallback attempts
+async function fetchYoutubeCaptions(videoId: string): Promise<{ fullText: string; cuesCount: number; segments: TranscriptSegment[] }> {
+  const tryFetch = async (config?: any) => {
+    try {
+      const raw = await YoutubeTranscript.fetchTranscript(videoId, config);
+      if (raw && raw.length > 0) {
+        const fullText = raw.map(r => r.text).join(' ').replace(/\s+/g, ' ').trim();
+        const segments: TranscriptSegment[] = raw.map((r, i) => ({
+          id: `seg_${i + 1}`,
+          startTime: Number((r.offset / 1000).toFixed(2)),
+          endTime: Number(((r.offset + r.duration) / 1000).toFixed(2)),
+          englishText: r.text.trim(),
+          hebrewText: ''
+        }));
+        return { fullText, cuesCount: raw.length, segments };
+      }
+    } catch {
+      // try next
+    }
+    return null;
+  };
+
+  // 1. Default (auto-detect English / primary language)
+  const res1 = await tryFetch();
+  if (res1 && res1.fullText.length > 0) return res1;
+
+  // 2. Explicit English
+  const res2 = await tryFetch({ lang: 'en' });
+  if (res2 && res2.fullText.length > 0) return res2;
+
+  // 3. Fallbacks
+  const res3 = await tryFetch({ lang: 'en-US' });
+  if (res3 && res3.fullText.length > 0) return res3;
+
+  const res4 = await tryFetch({ lang: 'en-GB' });
+  if (res4 && res4.fullText.length > 0) return res4;
+
+  const res5 = await tryFetch({ lang: 'auto' });
+  if (res5 && res5.fullText.length > 0) return res5;
+
+  return { fullText: '', cuesCount: 0, segments: [] };
 }
 
 // Free Google Translate fallback
@@ -53,20 +100,24 @@ export async function POST(req: NextRequest) {
       targetPlatform = 'youtube',
       tone = 'viral_energetic',
       targetDurationMinutes = 3,
-      apiKey
+      apiKey,
+      openaiApiKey
     } = body;
 
     const geminiKey = (apiKey && apiKey.trim()) || process.env.GEMINI_API_KEY;
+    const openaiKey = (openaiApiKey && openaiApiKey.trim()) || process.env.OPENAI_API_KEY;
 
     let metadata: OriginalVideoMeta = {
       title: videoTitle || 'סרטון מקור באנגלית',
       sourceUrl: videoUrl,
-      platform: 'direct'
+      platform: 'direct',
+      transcriptSource: 'direct_text'
     };
 
     let englishSpokenText = (directTranscript || '').trim();
+    let transcriptSegments: TranscriptSegment[] = [];
 
-    // 1. If YouTube link provided, fetch metadata
+    // 1. If YouTube link provided, fetch metadata and transcript
     if (videoUrl) {
       const ytId = extractYouTubeId(videoUrl);
       if (ytId) {
@@ -74,6 +125,7 @@ export async function POST(req: NextRequest) {
         metadata.platform = 'youtube';
         metadata.thumbnailUrl = `https://img.youtube.com/vi/${ytId}/maxresdefault.jpg`;
 
+        // Fetch title and author via oembed
         try {
           const oembedRes = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${ytId}&format=json`);
           if (oembedRes.ok) {
@@ -88,38 +140,14 @@ export async function POST(req: NextRequest) {
           console.warn('Could not fetch oEmbed metadata:', e);
         }
 
-        // Attempt to fetch public YouTube subtitles if not provided
+        // Fetch real YouTube subtitles / transcript
         if (!englishSpokenText) {
-          try {
-            const pageRes = await fetch(`https://www.youtube.com/watch?v=${ytId}`, {
-              headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
-            });
-            if (pageRes.ok) {
-              const html = await pageRes.text();
-              const match = html.match(/"captionTracks":\s*(\[.*?\])/);
-              if (match) {
-                const tracks = JSON.parse(match[1]);
-                const enTrack = tracks.find((t: any) => t.languageCode === 'en' || t.vssId?.includes('.en'));
-                if (enTrack && enTrack.baseUrl) {
-                  const capRes = await fetch(enTrack.baseUrl, {
-                    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
-                  });
-                  if (capRes.ok) {
-                    const xml = await capRes.text();
-                    const textMatches = Array.from(xml.matchAll(/<text[^>]*>([^<]+)<\/text>/g)).map(m => m[1]);
-                    if (textMatches.length > 0) {
-                      englishSpokenText = textMatches
-                        .map(t => t.replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&amp;/g, '&'))
-                        .join(' ')
-                        .replace(/\s+/g, ' ')
-                        .trim();
-                    }
-                  }
-                }
-              }
-            }
-          } catch (capErr) {
-            console.warn('YouTube caption fetch error:', capErr);
+          const captionData = await fetchYoutubeCaptions(ytId);
+          if (captionData.fullText.length > 0) {
+            englishSpokenText = captionData.fullText;
+            metadata.transcriptSource = 'youtube_captions';
+            metadata.transcriptCuesCount = captionData.cuesCount;
+            transcriptSegments = captionData.segments;
           }
         }
       } else {
@@ -127,86 +155,144 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 2. If uploaded audio/video is provided, transcribe with Gemini
-    if (audioBase64 && !englishSpokenText && geminiKey) {
-      try {
-        const cleanBase64 = audioBase64.replace(/^data:[^;]+;base64,/, '');
-        const sanitizedMime = (mimeType || 'audio/wav').split(';')[0].trim();
+    // 2. If uploaded audio/video is provided, transcribe with Gemini or Whisper
+    if (audioBase64 && !englishSpokenText) {
+      const cleanBase64 = audioBase64.replace(/^data:[^;]+;base64,/, '');
+      const sanitizedMime = (mimeType || 'audio/wav').split(';')[0].trim();
 
-        const transcribePrompt = `
+      if (geminiKey) {
+        try {
+          const transcribePrompt = `
 You are an expert speech recognition model.
 Listen carefully to this entire audio track and transcribe EVERYTHING spoken in complete, exact English.
 Do not summarize. Transcribe verbatim. Return only the English transcription text.
 `;
-        const geminiRes = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              contents: [{
-                parts: [
-                  { text: transcribePrompt },
-                  { inlineData: { mimeType: sanitizedMime, data: cleanBase64 } }
-                ]
-              }]
-            })
-          }
-        );
+          const geminiRes = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                contents: [{
+                  parts: [
+                    { text: transcribePrompt },
+                    { inlineData: { mimeType: sanitizedMime, data: cleanBase64 } }
+                  ]
+                }]
+              })
+            }
+          );
 
-        if (geminiRes.ok) {
-          const transData = await geminiRes.json();
-          const spoken = transData.candidates?.[0]?.content?.parts?.[0]?.text;
-          if (spoken) {
-            englishSpokenText = spoken.trim();
+          if (geminiRes.ok) {
+            const transData = await geminiRes.json();
+            const spoken = transData.candidates?.[0]?.content?.parts?.[0]?.text;
+            if (spoken && spoken.trim().length > 0) {
+              englishSpokenText = spoken.trim();
+              metadata.transcriptSource = 'gemini_audio';
+            }
           }
+        } catch (audioErr) {
+          console.warn('Gemini audio transcription error:', audioErr);
         }
-      } catch (audioErr) {
-        console.warn('Audio transcription error:', audioErr);
+      } else if (openaiKey) {
+        try {
+          const audioBuffer = Buffer.from(cleanBase64, 'base64');
+          const fileExt = sanitizedMime.includes('mp4') ? 'mp4' 
+            : sanitizedMime.includes('webm') ? 'webm' 
+            : sanitizedMime.includes('mpeg') || sanitizedMime.includes('mp3') ? 'mp3' 
+            : 'wav';
+          const fileBlob = new Blob([audioBuffer], { type: sanitizedMime });
+
+          const formData = new FormData();
+          formData.append('file', fileBlob, `upload.${fileExt}`);
+          formData.append('model', 'whisper-1');
+          formData.append('language', 'en');
+          formData.append('temperature', '0');
+
+          const whisperRes = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${openaiKey}` },
+            body: formData
+          });
+
+          if (whisperRes.ok) {
+            const wData = await whisperRes.json();
+            if (wData.text && wData.text.trim().length > 0) {
+              englishSpokenText = wData.text.trim();
+              metadata.transcriptSource = 'whisper_audio';
+            }
+          }
+        } catch (wErr) {
+          console.warn('Whisper transcription error:', wErr);
+        }
       }
     }
 
-    // 3. Fallback context if no text was directly transcribed but video title/metadata exists
-    if (!englishSpokenText) {
-      englishSpokenText = `Video titled "${metadata.title}" by ${metadata.author || 'creator'}. Source: ${metadata.sourceUrl || 'Video file'}.`;
+    // 3. Strict Check: If no transcript could be obtained, return helpful guidance
+    if (!englishSpokenText || englishSpokenText.trim().length === 0) {
+      if (videoUrl) {
+        return NextResponse.json({
+          error: 'לא נמצא תמליל דיבור אוטומטי לסרטון יוטיוב זה (ייתכן שהיוצר לא אפשר כתוביות). באפשרותך להעלות את קובץ הסרטון/האודיו בלשונית "העלאת קובץ" לתמלול מלא ב-AI, או להדביק תמליל ישירות בלשונית "הדבקת תמליל".'
+        }, { status: 400 });
+      }
+      return NextResponse.json({
+        error: 'לא סופק תוכן לסרטון (נא להזין קישור, להעלות קובץ או להדביק תמליל).'
+      }, { status: 400 });
     }
 
-    // 4. Generate Hebrew Translation & Complete Creator Production Script via Gemini AI
-    if (geminiKey) {
-      const models = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'];
+    // 4. Verify AI Key exists
+    if (!geminiKey && !openaiKey) {
+      return NextResponse.json({
+        error: 'נא להזין מפתח AI (Google Gemini בחינם או OpenAI) בהגדרות כדי להפיק תסריט מקצועי בעברית וניתוח מעמיק של הסרטון.'
+      }, { status: 401 });
+    }
 
-      const toneGuide = 
-        tone === 'viral_energetic' ? 'קצבי, אנרגטי, סוחף, מותאם ל-TikTok, Reels ו-YouTube ויראלי' :
-        tone === 'deep_storytelling' ? 'סטוריטלינג עמוק, מתח, בניית עניין ורגש' :
-        tone === 'entertaining' ? 'הומוריסטי, שנון, זורם, קליל ומבדר' :
-        'מקצועי, הסברתי, חינוכי ומשכיל';
+    // 5. Build Smart Dialogue Excerpt for the AI
+    // For large videos (e.g. 145,000 characters), cover the beginning, middle, and end
+    let transcriptForAI = englishSpokenText;
+    if (englishSpokenText.length > 70000) {
+      const part1 = englishSpokenText.slice(0, 30000);
+      const midPoint = Math.floor(englishSpokenText.length / 2);
+      const part2 = englishSpokenText.slice(midPoint - 10000, midPoint + 10000);
+      const part3 = englishSpokenText.slice(-20000);
+      transcriptForAI = `[חלק 1: פתיחה ורקע]\n${part1}\n\n[חלק 2: אמצע הסרטון וניתוח עומק]\n${part2}\n\n[חלק 3: סיום ומסקנות]\n${part3}`;
+    }
 
-      const platformGuide = 
-        targetPlatform === 'tiktok_reels' ? 'סרטון קצר של 45-60 שניות (Shorts / Reels) - מהיר, חד, חיתוכים מהירים' :
-        targetPlatform === 'podcast' ? 'קטע עומק לפודקאסט של 8-12 דקות' :
-        'סרטון YouTube מלא ומובנה של 3-6 דקות';
+    const toneGuide = 
+      tone === 'viral_energetic' ? 'קצבי, אנרגטי, סוחף, מותאם ל-TikTok, Reels ו-YouTube ויראלי' :
+      tone === 'deep_storytelling' ? 'סטוריטלינג עמוק, מתח, בניית עניין, רגש וחיבור עמוק' :
+      tone === 'entertaining' ? 'הומוריסטי, שנון, זורם, קליל, מבדר ומלא שנינות' :
+      'מקצועי, הסברתי, חינוכי, מעמיק ומשכיל';
 
-      const prompt = `
-אתה תסריטאי יוטיוב, במאי ועורך תוכן בכיר בעברית עבור יוצרי תוכן ופודקאסטים מובילים.
-לפניך סרטון באנגלית שצריך לנתח, להפיק ממנו עותק מלא ומתורגם של מה שנאמר, ולכתוב תסריט הפקה מלא בעברית כדי שהיוצר הישראלי יוכל לצלם ולהפיק סרטון מנצח בעברית על הנושא!
+    const platformGuide = 
+      targetPlatform === 'tiktok_reels' ? 'סרטון קצר של 45-60 שניות (Shorts / Reels) - מהיר, חד, חיתוכים מהירים, ללא רגע מת' :
+      targetPlatform === 'podcast' ? 'קטע עומק לפודקאסט של 8-12 דקות - דיאלוגי, עמוק, מעורר מחשבה' :
+      'סרטון YouTube מלא ומובנה של 3-6 דקות - פתיח חזק, חלוקה לנושאים, שמירה על קצב';
+
+    const prompt = `
+אתה תסריטאי יוטיוב, במאי ועורך תוכן בכיר בעברית עבור יוצרי תוכן ופודקאסטים מובילים בישראל.
+לפניך תמליל דיבור מלא ומדויק של סרטון באנגלית שצריך לנתח לעומק, להפיק ממנו עותק מתורגם ומלא של מה שנאמר, ולכתוב תסריט הפקה מלא בעברית כדי שהיוצר הישראלי יוכל לצלם ולהפיק סרטון מנצח בעברית על הנושא!
 
 פרטי הסרטון המקורי:
 - כותרת: "${metadata.title}"
 - יוצר / מקור: "${metadata.author || 'לא צוין'}"
-- קישור: "${metadata.sourceUrl || 'קובץ הועלה'}"
+- קישור: "${metadata.sourceUrl || 'קובץ ישיר'}"
 
-מה שנאמר בסרטון באנגלית (עותק המקור):
+מה שנאמר בסרטון באנגלית (תמליל המקור):
 """
-${englishSpokenText.slice(0, 15000)}
+${transcriptForAI}
 """
 
 דרישות ההפקה לסרטון בעברית:
 - פלטפורמת יעד: ${platformGuide}
 - טון דיבור וסגנון: ${toneGuide}
 - שפת התסריט: עברית טבעית, מדוברת, שוטפת, קולחת ומזמינה (עברית ישראלית של יוצרי תוכן מצליחים, ללא תרגום מילולי יבש ומסורבל!).
+- כלל ברזל חשוב מכל: דבר ישירות אל הצופה בעברית שוטפת כאילו אתה המגיש שמספר את הסיפור, העובדות, הדוגמאות והתובנות!
+  לעולם אל תשתמש במשפטים טכניים או יבשים כמו "סרטון שכותרתו...", "מאת היוצר...", קישורי אינטרנט או "הכל מתחיל בעובדה הפשוטה הזו".
+  הכנס את הצופה ישר לתוך הסיפור והנושא המסקרן מהשנייה הראשונה!
 
 עליך להחזיר מבנה JSON תקני לחלוטין עם שני חלקים מרכזיים:
-חלק 1: עותק של מה שנאמר (תמליל מלא באנגלית + תרגום מדויק וקולח לעברית + נקודות מפתח).
+חלק 1: עותק של מה שנאמר (תמליל מלא באנגלית + תרגום מדויק וקולח לעברית מחולק לפסקאות נקיות + נקודות מפתח מרכזיות + תקציר).
 חלק 2: תסריט הפקה מלא בעברית הכולל:
   - 3 כותרות חזקות בעברית (Click-worthy titles).
   - "hook": פתיח ממגנט של 3-5 שניות שתופס את הצופה מיידית.
@@ -223,17 +309,18 @@ ${englishSpokenText.slice(0, 15000)}
   - "hashtags": מערך של 5-8 האשטגים מומלצים.
   - "productionNotes": טיפים להפקה (מוזיקת רקע, קצב עריכה, תאורה).
 
-החזר אך ורק JSON תקין במבנה הבא:
+החזר אך ורק JSON תקין (Valid JSON object) במבנה הבא:
 {
   "transcript": {
     "englishText": "Full clean English text of what was spoken...",
-    "hebrewText": "תרגום עברי מלא, קולח ומדויק של כל מה שנאמר...",
-    "summary": "תקציר של 2-3 משפטים בעברית על מהות הסרטון...",
+    "hebrewText": "תרגום עברי מלא, מפורט, קולח ומדויק של כל מה שנאמר בסרטון...",
+    "summary": "תקציר של 2-4 משפטים בעברית על מהות ותובנות הסרטון...",
     "keyPoints": [
       "נקודת מפתח 1 שהוזכרה בסרטון",
       "נקודת מפתח 2",
       "נקודת מפתח 3",
-      "נקודת מפתח 4"
+      "נקודת מפתח 4",
+      "נקודת מפתח 5"
     ]
   },
   "script": {
@@ -265,6 +352,9 @@ ${englishSpokenText.slice(0, 15000)}
 }
 `;
 
+    // 6. Execute with Gemini or OpenAI
+    if (geminiKey) {
+      const models = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'];
       for (const model of models) {
         try {
           const res = await fetch(
@@ -286,7 +376,8 @@ ${englishSpokenText.slice(0, 15000)}
             const data = await res.json();
             const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
             if (text) {
-              const parsed = JSON.parse(text.replace(/```json/g, '').replace(/```/g, '').trim());
+              const clean = text.replace(/```json/g, '').replace(/```/g, '').trim();
+              const parsed = JSON.parse(clean);
               if (parsed.script && parsed.transcript) {
                 const result: VideoAnalysisResult = {
                   metadata,
@@ -294,7 +385,8 @@ ${englishSpokenText.slice(0, 15000)}
                     englishText: parsed.transcript.englishText || englishSpokenText,
                     hebrewText: parsed.transcript.hebrewText,
                     summary: parsed.transcript.summary,
-                    keyPoints: parsed.transcript.keyPoints || []
+                    keyPoints: parsed.transcript.keyPoints || [],
+                    segments: transcriptSegments.length > 0 ? transcriptSegments : undefined
                   },
                   script: {
                     titleHebrew: parsed.script.titleHebrew,
@@ -325,89 +417,76 @@ ${englishSpokenText.slice(0, 15000)}
       }
     }
 
-    // 5. Deterministic local generator fallback (always returns clean, complete result)
-    const translatedHebrew = await freeTranslateText(englishSpokenText.slice(0, 3000), 'he');
-    const cleanTitleHebrew = await freeTranslateText(metadata.title, 'he') || metadata.title;
+    // Fallback to OpenAI if Gemini was not available or failed
+    if (openaiKey) {
+      try {
+        const res = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${openaiKey}`
+          },
+          body: JSON.stringify({
+            model: 'gpt-4o-mini',
+            messages: [
+              { role: 'system', content: 'You are an elite video scriptwriter and producer. Always respond with valid JSON matching the requested structure.' },
+              { role: 'user', content: prompt }
+            ],
+            response_format: { type: 'json_object' },
+            temperature: 0.4
+          })
+        });
 
-    const fallbackResult: VideoAnalysisResult = {
-      metadata,
-      transcript: {
-        englishText: englishSpokenText,
-        hebrewText: translatedHebrew || englishSpokenText,
-        summary: `ניתוח הסרטון "${cleanTitleHebrew}" שנערך בהתבסס על תוכן המקור.`,
-        keyPoints: [
-          `הסבר התובנה המרכזית המוצגת בסרטון`,
-          `דוגמה מוחשית והוכחה מהשטח`,
-          `משמעות הפרט הזה עבור הקהל`,
-          `מסקנה ויישום מעשי`
-        ]
-      },
-      script: {
-        titleHebrew: `האמת מאחורי ${cleanTitleHebrew}`,
-        alternateTitles: [
-          `איך הדבר הזה משנה הכל: ${cleanTitleHebrew}`,
-          `מה שכולם מפספסים ב-${cleanTitleHebrew}`,
-          `הסוד שלא סיפרו לכם על ${cleanTitleHebrew}`
-        ],
-        targetPlatform,
-        targetDurationMinutes,
-        hook: `אתם לא תאמינו מה גיליתי על ${cleanTitleHebrew} – וזה הולך לשנות לחלוטין את הדרך שבה אתם מסתכלים על זה!`,
-        scenes: [
-          {
-            sceneNumber: 1,
-            sceneTitle: 'הפתיח וההבטחה הגדולה',
-            estimatedSeconds: 15,
-            visualDirection: 'צילום פנים ישיר למצלמה, קלוז אפ קל, כתובית מודגשת עם שאלת פתיחה.',
-            spokenHebrewText: `שלום חברים! היום אנחנו צוללים לנושא שכולם מדברים עליו: ${cleanTitleHebrew}. אבל יש כאן זווית שאף אחד לא מספר לכם, ובסרטון הזה אני אחשוף אותה צעד אחרי צעד.`,
-            audioSoundEffect: 'צליל Whoosh קצבי בפתיח',
-            directorTip: 'קשר עין ישיר למצלמה, אנרגיה פותחת וסוחפת'
-          },
-          {
-            sceneNumber: 2,
-            sceneTitle: 'הקונפליקט והרקע המרכזי',
-            estimatedSeconds: 40,
-            visualDirection: 'חיתוך לצילומי B-Roll והמחשה, טקסט נקודות מרכזיות בצד המסך.',
-            spokenHebrewText: `הכל מתחיל בעובדה הפשוטה הזו: ${translatedHebrew.slice(0, 200)}... זה נשמע מטורף, אבל זה בדיוק מה שקורה מאחורי הקלעים.`,
-            audioSoundEffect: 'מוזיקת רקע עדינה וקצבית',
-            directorTip: 'דיבור מובנה, הדגשת מילות מפתח'
-          },
-          {
-            sceneNumber: 3,
-            sceneTitle: 'התגלית המפתיעה והפתרון',
-            estimatedSeconds: 45,
-            visualDirection: 'חזרה לצילום פנים, הדגשת נתונים מספריים באנימציה.',
-            spokenHebrewText: `מה שהופך את זה למרתק באמת זה מה שקורה כשמחברים את כל הנקודות יחד. הנה מה שחובה להבין: ${translatedHebrew.slice(200, 450) || 'ההשלכות של זה רחבות בהרבה ממה שנראה לעין'}.`,
-            audioSoundEffect: 'צליל הדגשה (Ding)',
-            directorTip: 'פאוזה קלה לפני חשיפת התובנה'
-          },
-          {
-            sceneNumber: 4,
-            sceneTitle: 'סיכום ומסקנה לקחת הביתה',
-            estimatedSeconds: 20,
-            visualDirection: 'זום אאוט קל, תצוגת לוגו האולפן וסרטונים קשורים.',
-            spokenHebrewText: `אז מה השורה התחתונה? ${cleanTitleHebrew} מלמד אותנו שחייבים לבדוק לעומק ולא להסתמך רק על השטח.`,
-            audioSoundEffect: 'מוזיקת סגירה עולה',
-            directorTip: 'נימה חמה ומזמינה'
+        if (res.ok) {
+          const data = await res.json();
+          const content = data.choices?.[0]?.message?.content;
+          if (content) {
+            const parsed = JSON.parse(content);
+            if (parsed.script && parsed.transcript) {
+              const result: VideoAnalysisResult = {
+                metadata,
+                transcript: {
+                  englishText: parsed.transcript.englishText || englishSpokenText,
+                  hebrewText: parsed.transcript.hebrewText,
+                  summary: parsed.transcript.summary,
+                  keyPoints: parsed.transcript.keyPoints || [],
+                  segments: transcriptSegments.length > 0 ? transcriptSegments : undefined
+                },
+                script: {
+                  titleHebrew: parsed.script.titleHebrew,
+                  alternateTitles: parsed.script.alternateTitles || [],
+                  targetPlatform,
+                  targetDurationMinutes,
+                  hook: parsed.script.hook,
+                  scenes: parsed.script.scenes || [],
+                  callToAction: parsed.script.callToAction,
+                  descriptionHebrew: parsed.script.descriptionHebrew || '',
+                  hashtags: parsed.script.hashtags || [],
+                  productionNotes: parsed.script.productionNotes || ''
+                },
+                createdAt: new Date().toISOString()
+              };
+
+              return NextResponse.json({
+                success: true,
+                source: 'OpenAI Video Script Engine (GPT-4o)',
+                data: result
+              });
+            }
           }
-        ],
-        callToAction: 'מה דעתכם על זה? ספרו לי עכשיו בתגובות למטה, ואל תשכחו לתת לייק ולהירשם לערוץ כדי לא לפספס את הסרטון הבא!',
-        descriptionHebrew: `בסרטון הזה נצלול לתוך ${cleanTitleHebrew} ונחשוף את כל מה שחשוב לדעת. ספרו לי בתגובות מה אתם חושבים!`,
-        hashtags: ['#יוטיוב', `#${cleanTitleHebrew.replace(/\s+/g, '_')}`, '#תוכן_ישראלי', '#סרטונים_בעברית'],
-        productionNotes: 'מומלץ לצלם עם תאורת מפתח רכה וסאונד באיכות אולפן. חתכו כל שקט בעריכה לשמירה על קצב גבוה.'
-      },
-      createdAt: new Date().toISOString()
-    };
+        }
+      } catch (openAiErr) {
+        console.warn('OpenAI video script failed:', openAiErr);
+      }
+    }
 
     return NextResponse.json({
-      success: true,
-      source: 'Deterministic Local Script Engine',
-      data: fallbackResult
-    });
-
-  } catch (err: any) {
-    console.error('Video script generation error:', err);
+      error: 'עיבוד הסרטון נכשל מול שרתי ה-AI. נא לוודא שמפתח ה-API תקין בהגדרות.'
+    }, { status: 500 });
+  } catch (error: any) {
+    console.error('Video Script Generation Error:', error);
     return NextResponse.json(
-      { error: err?.message || 'שגיאה בניתוח הסרטון והפקת התסריט' },
+      { error: error.message || 'שגיאה בעיבוד הסרטון והפקת התסריט' },
       { status: 500 }
     );
   }

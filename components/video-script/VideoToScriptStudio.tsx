@@ -9,7 +9,7 @@ import {
   ScriptTone,
   ProductionScriptScene
 } from '@/types/videoScript';
-import { getStoredGeminiApiKey } from '@/lib/apiConfig';
+import { getStoredGeminiApiKey, getAISettings, saveAISettings } from '@/lib/apiConfig';
 import { saveEpisode, getEpisodes, getPodcasts } from '@/lib/storage';
 import { Episode } from '@/lib/types';
 import { 
@@ -40,7 +40,9 @@ import {
   Share2, 
   ListOrdered, 
   Layers,
-  Wand2
+  Wand2,
+  Key,
+  X
 } from 'lucide-react';
 
 export default function VideoToScriptStudio() {
@@ -76,8 +78,17 @@ export default function VideoToScriptStudio() {
   // Copy Feedback
   const [copiedSection, setCopiedSection] = useState<string | null>(null);
   const [exportedEpisodeId, setExportedEpisodeId] = useState<string | null>(null);
-
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // AI Keys Configuration State
+  const [aiSettings, setAiSettings] = useState(getAISettings());
+  const [isAIModalOpen, setIsAIModalOpen] = useState(false);
+  const [geminiKeyInput, setGeminiKeyInput] = useState('');
+  const [openaiKeyInput, setOpenaiKeyInput] = useState('');
+
+  useEffect(() => {
+    setAiSettings(getAISettings());
+  }, []);
 
   // Clean up object URLs
   useEffect(() => {
@@ -165,7 +176,16 @@ export default function VideoToScriptStudio() {
         mimeType = uploadedFile.type;
       }
 
-      const apiKey = getStoredGeminiApiKey();
+      const settings = getAISettings();
+      const apiKey = (settings.geminiApiKey || getStoredGeminiApiKey()).trim();
+      const openaiApiKey = (settings.openaiApiKey || '').trim();
+
+      if (!apiKey && !openaiApiKey) {
+        setGeminiKeyInput(apiKey);
+        setOpenaiKeyInput(openaiApiKey);
+        setIsAIModalOpen(true);
+        throw new Error('נא להזין מפתח AI (Google Gemini בחינם או OpenAI) כדי לנתח את הסרטון ולהפיק את התסריט.');
+      }
 
       const res = await fetch('/api/ai/video-script', {
         method: 'POST',
@@ -179,7 +199,8 @@ export default function VideoToScriptStudio() {
           targetPlatform,
           tone: scriptTone,
           targetDurationMinutes,
-          apiKey
+          apiKey: apiKey || undefined,
+          openaiApiKey: openaiApiKey || undefined
         })
       });
 
@@ -362,7 +383,32 @@ ${t.hebrewText}
             </p>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2.5 flex-wrap">
+            {/* AI Key Settings Trigger */}
+            <button
+              type="button"
+              onClick={() => {
+                const s = getAISettings();
+                setGeminiKeyInput(s.geminiApiKey || getStoredGeminiApiKey());
+                setOpenaiKeyInput(s.openaiApiKey || '');
+                setIsAIModalOpen(true);
+              }}
+              className={`px-3 py-2.5 rounded-xl text-xs font-bold transition-all border flex items-center gap-2 ${
+                aiSettings.geminiApiKey || aiSettings.openaiApiKey
+                  ? 'bg-emerald-950/40 hover:bg-emerald-900/40 text-emerald-300 border-emerald-500/40 shadow-sm'
+                  : 'bg-amber-950/40 hover:bg-amber-900/40 text-amber-300 border-amber-500/40 animate-pulse'
+              }`}
+              title="הגדרות מפתחות AI (Google Gemini, OpenAI)"
+            >
+              <Key className="w-4 h-4 text-amber-400" />
+              <span>{aiSettings.geminiApiKey ? 'Gemini מחובר' : aiSettings.openaiApiKey ? 'OpenAI מחובר' : 'הגדר מפתח AI'}</span>
+              <span className={`w-2 h-2 rounded-full ${
+                aiSettings.geminiApiKey || aiSettings.openaiApiKey
+                  ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]'
+                  : 'bg-amber-400'
+              }`} />
+            </button>
+
             <Link
               href="/subtitles"
               className="px-4 py-2.5 rounded-xl bg-slate-900/90 hover:bg-slate-800 text-slate-300 hover:text-white text-xs font-bold border border-slate-700 transition-all flex items-center gap-2"
@@ -585,10 +631,15 @@ ${t.hebrewText}
           {/* Result Header & Tab Switcher */}
           <div className="flex flex-wrap items-center justify-between gap-4 pb-6 border-b border-slate-800/80">
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-black uppercase border border-emerald-500/30">
                   ניתוח הושלם בהצלחה ✓
                 </span>
+                {result.metadata.transcriptCuesCount ? (
+                  <span className="px-2.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 text-[10px] font-bold border border-indigo-500/30">
+                    📜 תמליל נשלף מיוטיוב: {result.metadata.transcriptCuesCount.toLocaleString()} משפטים
+                  </span>
+                ) : null}
                 <span className="text-xs text-slate-400 font-mono">
                   {result.metadata.title}
                 </span>
@@ -1011,6 +1062,94 @@ ${t.hebrewText}
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* AI Key Settings Modal */}
+      {isAIModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
+          <div className="w-full max-w-md p-6 rounded-3xl bg-[#161b26] border border-slate-700 shadow-2xl text-right space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <button 
+                type="button"
+                onClick={() => setIsAIModalOpen(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800"
+              >
+                <X className="w-5 h-5" />
+              </button>
+              <div className="flex items-center gap-2 text-white font-bold text-base">
+                <Key className="w-5 h-5 text-amber-400" />
+                <span>הגדרת מפתח AI לניתוח סרטונים</span>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-300 leading-relaxed">
+              המערכת משתמשת במודלי AI מתקדמים כדי לחלץ את התוכן המלא, לתרגם במדויק ולכתוב תסריט הפקה מקצועי בעברית.
+              <br />
+              <strong className="text-emerald-400">Google Gemini זמין בחינם לחלוטין!</strong>
+            </p>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1">
+                  Google Gemini API Key (מומלץ בחינם):
+                </label>
+                <input
+                  type="password"
+                  value={geminiKeyInput}
+                  onChange={(e) => setGeminiKeyInput(e.target.value)}
+                  placeholder="AIzaSy..."
+                  className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-xs text-white font-mono focus:outline-none focus:border-purple-500"
+                />
+                <a 
+                  href="https://aistudio.google.com/app/apikey" 
+                  target="_blank" 
+                  rel="noreferrer"
+                  className="inline-block mt-1 text-[11px] text-purple-400 hover:underline"
+                >
+                  🔗 קבל מפתח Gemini בחינם תוך דקה מ-Google AI Studio
+                </a>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1">
+                  OpenAI API Key (אופציונלי):
+                </label>
+                <input
+                  type="password"
+                  value={openaiKeyInput}
+                  onChange={(e) => setOpenaiKeyInput(e.target.value)}
+                  placeholder="sk-..."
+                  className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-xs text-white font-mono focus:outline-none focus:border-purple-500"
+                />
+              </div>
+            </div>
+
+            <div className="pt-2 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setIsAIModalOpen(false)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:text-white"
+              >
+                ביטול
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  saveAISettings({
+                    geminiApiKey: geminiKeyInput.trim(),
+                    openaiApiKey: openaiKeyInput.trim()
+                  });
+                  setAiSettings(getAISettings());
+                  setIsAIModalOpen(false);
+                  setErrorMsg(null);
+                }}
+                className="px-5 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs shadow-lg transition-all"
+              >
+                שמור הגדרות
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

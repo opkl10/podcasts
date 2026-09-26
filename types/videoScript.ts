@@ -14,6 +14,8 @@ export interface OriginalVideoMeta {
   sourceUrl?: string;
   videoId?: string;
   platform?: 'youtube' | 'tiktok' | 'vimeo' | 'direct' | 'uploaded';
+  transcriptSource?: 'youtube_captions' | 'whisper_audio' | 'gemini_audio' | 'direct_text' | 'fallback';
+  transcriptCuesCount?: number;
 }
 
 export interface TranscriptSegment {
