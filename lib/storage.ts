@@ -621,6 +621,12 @@ export async function deleteEpisode(id: string): Promise<void> {
   if (target?.recording?.videoBlobKey) {
     await deleteMediaBlob(target.recording.videoBlobKey);
   }
+  if (target?.recording?.audioBlobKey) {
+    await deleteMediaBlob(target.recording.audioBlobKey);
+  }
+  if (target?.recording?.mp3BlobKey) {
+    await deleteMediaBlob(target.recording.mp3BlobKey);
+  }
   const filtered = episodes.filter(ep => ep.id !== id);
   saveEpisodes(filtered);
 }

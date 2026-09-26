@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { Episode, PodcastShow } from '@/lib/types';
 import { formatTime, exportEpisodeNotes, getMediaBlob, deleteMediaBlob, deleteEpisode, findMediaBlobForEpisode, reassignEpisodeRecording, getEpisodes } from '@/lib/storage';
 import { convertBlobToStereoWav, convertBlobToMonoWav, exportToSRT, exportToVTT } from '@/lib/audioUtils';
+import Mp3ConvertModal from '@/components/audio/Mp3ConvertModal';
 import { 
   FolderArchive, 
   Video, 
@@ -50,6 +51,7 @@ export default function RecordedEpisodesVault({
   const [selectedPodcastId, setSelectedPodcastId] = useState<string>('all');
   const [selectedCategory, setSelectedCategory] = useState<'all' | 'podcasts' | 'gaming'>('all');
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [mp3Episode, setMp3Episode] = useState<Episode | null>(null);
 
   // Filter episodes that have been recorded or have recording metadata
   const recordedEpisodes = episodes
@@ -276,6 +278,7 @@ export default function RecordedEpisodesVault({
                 handleDownloadChapters={handleDownloadChapters}
                 handleDownloadSRT={handleDownloadSRT}
                 downloadingId={downloadingId}
+                onOpenMp3Modal={(targetEp) => setMp3Episode(targetEp)}
               />
             );
           })}
@@ -288,6 +291,22 @@ export default function RecordedEpisodesVault({
             לאחר שתקליטו או תעלו פרק למערכת, הוא יופיע כאן אוטומטית לפי סדר עונות ופרקים עם נגן שמע ואפשרויות הורדה בכל הפורמטים.
           </p>
         </div>
+      )}
+
+      {/* MP3 Convert & Export Modal */}
+      {mp3Episode && (
+        <Mp3ConvertModal
+          isOpen={!!mp3Episode}
+          onClose={() => setMp3Episode(null)}
+          episode={mp3Episode}
+          onUpdateEpisode={(updated) => {
+            setMp3Episode(updated);
+            if (onUpdateEpisodes) {
+              const updatedList = episodes.map(e => e.id === updated.id ? updated : e);
+              onUpdateEpisodes(updatedList);
+            }
+          }}
+        />
       )}
     </div>
   );
@@ -306,6 +325,7 @@ function VaultEpisodeItemRow({
   handleDownloadMono,
   handleDownloadChapters,
   handleDownloadSRT,
+  onOpenMp3Modal,
   downloadingId
 }: {
   ep: Episode;
@@ -320,6 +340,7 @@ function VaultEpisodeItemRow({
   handleDownloadMono: (ep: Episode) => void;
   handleDownloadChapters: (ep: Episode) => void;
   handleDownloadSRT: (ep: Episode) => void;
+  onOpenMp3Modal: (ep: Episode) => void;
   downloadingId: string | null;
 }) {
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
@@ -561,8 +582,8 @@ function VaultEpisodeItemRow({
         </div>
       ) : null}
 
-      {/* 5-Format Download Suite */}
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 pt-3 border-t border-slate-800/80">
+      {/* 6-Format Download Suite */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 pt-3 border-t border-slate-800/80">
         {/* 1. Video (MP4 / WebM) */}
         <div className="flex items-center rounded-xl bg-indigo-600/10 border border-indigo-500/30 overflow-hidden">
           <button
@@ -583,6 +604,16 @@ function VaultEpisodeItemRow({
             WebM
           </button>
         </div>
+
+        {/* 2. Audio MP3 (High-Fidelity Podcast Broadcast) */}
+        <button
+          onClick={() => onOpenMp3Modal(ep)}
+          className="flex items-center justify-center gap-1.5 p-2.5 rounded-xl bg-amber-600/15 hover:bg-amber-600/25 border border-amber-500/40 text-amber-300 hover:text-white text-xs font-bold transition-all active:scale-98 text-center shadow-sm"
+          title="המרה והורדה בפורמט MP3 מכווץ ואיכותי (אידיאלי לפודקאסטים ושידור)"
+        >
+          <Music className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+          <span className="truncate">{ep.recording?.mp3BlobKey ? 'הורד MP3 (מוכן)' : 'המר ל-MP3'}</span>
+        </button>
 
         {/* 2. Audio Stereo */}
         <button

@@ -69,6 +69,7 @@ export interface RecordingMetadata {
   recordedAt: string;
   videoBlobKey?: string; // key in IndexedDB
   audioBlobKey?: string;
+  mp3BlobKey?: string; // key in IndexedDB for converted high-fidelity MP3
   videoUrl?: string; // object URL or data URL
   fileSize?: number;
   mimeType?: string;

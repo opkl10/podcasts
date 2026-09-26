@@ -1,4 +1,5 @@
 import { SubtitleItem } from './types';
+import { Mp3Encoder } from '@breezystack/lamejs';
 
 export interface WhisperWord {
   word: string;
@@ -113,6 +114,105 @@ export async function convertBlobToMonoWav(blob: Blob): Promise<Blob> {
   const monoWav = audioBufferToWav(audioBuffer, true);
   await audioContext.close();
   return monoWav;
+}
+
+// Options for MP3 conversion
+export interface Mp3ConversionOptions {
+  bitrate?: number; // 128, 192, 256, 320 kbps (default 192)
+  isMono?: boolean;
+  normalize?: boolean; // Peak normalization (default true)
+  onProgress?: (progress: number) => void;
+}
+
+// Convert Web Audio Buffer to Pure MP3 Blob using LAME MP3 Encoder
+export function audioBufferToMp3(
+  buffer: AudioBuffer,
+  options: Mp3ConversionOptions = {}
+): Blob {
+  const { bitrate = 192, isMono = false, normalize = true, onProgress } = options;
+  const numChannels = isMono ? 1 : Math.min(2, buffer.numberOfChannels);
+  const sampleRate = buffer.sampleRate;
+  const length = buffer.length;
+
+  const leftFloat = buffer.getChannelData(0);
+  const rightFloat = (numChannels > 1 && buffer.numberOfChannels > 1) ? buffer.getChannelData(1) : leftFloat;
+
+  // Calculate safe broadcast loudness normalization gain
+  let gain = 1.0;
+  if (normalize) {
+    let maxAmp = 0.001;
+    for (let i = 0; i < length; i++) {
+      const ampL = Math.abs(leftFloat[i]);
+      if (ampL > maxAmp) maxAmp = ampL;
+      if (numChannels > 1) {
+        const ampR = Math.abs(rightFloat[i]);
+        if (ampR > maxAmp) maxAmp = ampR;
+      }
+    }
+    gain = Math.min(3.0, 0.98 / maxAmp);
+  }
+
+  const left = new Int16Array(length);
+  const right = numChannels > 1 ? new Int16Array(length) : null;
+
+  for (let i = 0; i < length; i++) {
+    const sL = Math.max(-1, Math.min(1, leftFloat[i] * gain));
+    left[i] = sL < 0 ? sL * 0x8000 : sL * 0x7FFF;
+    if (right) {
+      const sR = Math.max(-1, Math.min(1, rightFloat[i] * gain));
+      right[i] = sR < 0 ? sR * 0x8000 : sR * 0x7FFF;
+    }
+  }
+
+  const encoder = new Mp3Encoder(numChannels, sampleRate, bitrate);
+  const mp3Data: Uint8Array[] = [];
+  const sampleBlockSize = 1152;
+
+  for (let i = 0; i < length; i += sampleBlockSize) {
+    const leftChunk = left.subarray(i, i + sampleBlockSize);
+    let mp3buf: Uint8Array;
+    if (numChannels === 2 && right) {
+      const rightChunk = right.subarray(i, i + sampleBlockSize);
+      mp3buf = encoder.encodeBuffer(leftChunk, rightChunk);
+    } else {
+      mp3buf = encoder.encodeBuffer(leftChunk);
+    }
+    if (mp3buf.length > 0) {
+      mp3Data.push(mp3buf);
+    }
+    if (onProgress && (i % (sampleBlockSize * 15) === 0 || i + sampleBlockSize >= length)) {
+      onProgress(Math.min(99, Math.round((i / length) * 100)));
+    }
+  }
+
+  const endBuf = encoder.flush();
+  if (endBuf.length > 0) {
+    mp3Data.push(endBuf);
+  }
+  if (onProgress) {
+    onProgress(100);
+  }
+
+  return new Blob(mp3Data as BlobPart[], { type: 'audio/mp3' });
+}
+
+// Convert any Audio or Video Blob directly to High-Quality Broadcast MP3
+export async function convertBlobToMp3(
+  blob: Blob,
+  options: Mp3ConversionOptions = {}
+): Promise<Blob> {
+  const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+  const audioContext = new AudioCtx();
+  try {
+    const arrayBuffer = await blob.arrayBuffer();
+    const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+    const mp3Blob = audioBufferToMp3(audioBuffer, options);
+    return mp3Blob;
+  } finally {
+    try {
+      await audioContext.close();
+    } catch (e) {}
+  }
 }
 
 // Acoustic Speech Clarity Filter Chain:

@@ -28,8 +28,10 @@ import {
   Upload,
   Gamepad2,
   Users,
-  UserPlus
+  UserPlus,
+  Music
 } from 'lucide-react';
+import Mp3ConvertModal from '@/components/audio/Mp3ConvertModal';
 
 interface EpisodeDetailsHeaderProps {
   episode: Episode;
@@ -56,6 +58,7 @@ export default function EpisodeDetailsHeader({
   onOpenAudiogram
 }: EpisodeDetailsHeaderProps) {
   const [isEditing, setIsEditing] = useState(false);
+  const [isMp3ModalOpen, setIsMp3ModalOpen] = useState(false);
   const [title, setTitle] = useState(episode.title);
   const [podcastId, setPodcastId] = useState(episode.podcastId || 'pod-tech');
   const [mediaType, setMediaType] = useState<'video' | 'audio_only' | 'gaming_creator'>(episode.mediaType || 'video');
@@ -768,6 +771,16 @@ export default function EpisodeDetailsHeader({
                 </div>
 
                 <div className="flex items-center gap-2">
+                  {/* MP3 Convert & Export Button */}
+                  <button
+                    onClick={() => setIsMp3ModalOpen(true)}
+                    className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-300 hover:text-white text-xs font-bold transition-all active:scale-95 shadow-sm"
+                    title="המרת הקלטת הפרק לקובץ MP3 מכווץ ואיכותי להורדה והפצה"
+                  >
+                    <Music className="w-3.5 h-3.5 text-amber-400" />
+                    <span>{episode.recording.mp3BlobKey ? '🎵 הורד MP3 (מוכן)' : '🎵 המר ל-MP3'}</span>
+                  </button>
+
                   <Link
                     href={`/episodes/${episode.id}/subtitles`}
                     className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-bold shadow-md shadow-purple-600/30 transition-all active:scale-95"
@@ -813,6 +826,13 @@ export default function EpisodeDetailsHeader({
           )}
         </div>
       )}
+      {/* MP3 Convert & Export Modal */}
+      <Mp3ConvertModal
+        isOpen={isMp3ModalOpen}
+        onClose={() => setIsMp3ModalOpen(false)}
+        episode={episode}
+        onUpdateEpisode={onUpdateEpisode}
+      />
     </div>
   );
 }

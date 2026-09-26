@@ -58,6 +58,7 @@ import {
 } from 'lucide-react';
 import ImageStockPickerModal from '../studio/ImageStockPickerModal';
 import DraggableOverlay from '../studio/DraggableOverlay';
+import Mp3ConvertModal from './Mp3ConvertModal';
 import { removeImageBackground } from '@/lib/imageBackgroundRemoval';
 
 interface AudioEditorAudiogramStudioProps {
@@ -912,6 +913,7 @@ export default function AudioEditorAudiogramStudio({
   // Tabs
   const [activeTab, setActiveTab] = useState<'styler' | 'waveform' | 'background' | 'overlays' | 'trimmer' | 'export'>('styler');
   const [isStockModalOpen, setIsStockModalOpen] = useState(false);
+  const [isMp3ModalOpen, setIsMp3ModalOpen] = useState(false);
   const [stockPickerTarget, setStockPickerTarget] = useState<'background' | 'poster' | 'logo' | 'movable_image'>('poster');
 
   // DOM & Audio Nodes Refs
@@ -6997,6 +6999,24 @@ export default function AudioEditorAudiogramStudio({
                       <span>{isExportingVideo ? `מרנדר וידאו (${exportResolution.toUpperCase()} ${exportFormat.toUpperCase()})...` : `ייצא והורד וידאו ב-${exportResolution === '1080p' ? 'Full HD 1080p' : exportResolution.toUpperCase()} (${exportFormat.toUpperCase()})`}</span>
                     </button>
                   </div>
+
+                  {/* MP3 Audio Export Box */}
+                  <div className="p-4 rounded-2xl bg-gradient-to-r from-amber-950/60 to-orange-950/60 border border-amber-500/40 space-y-3">
+                    <h4 className="text-sm font-black text-white flex items-center gap-2">
+                      <Music className="w-4 h-4 text-amber-400" />
+                      <span>ייצוא והמרת אודיו בלבד כ-MP3 (איכות פודקאסט ושידור)</span>
+                    </h4>
+                    <p className="text-xs text-slate-300 leading-relaxed">
+                      ממיר את קובץ ההקלטה לקובץ MP3 מכווץ בטכנולוגיית LAME (192kbps / 320kbps) להפצה מיידית בספוטיפיי, אפל פודקאסטס ורשתות.
+                    </p>
+                    <button
+                      onClick={() => setIsMp3ModalOpen(true)}
+                      className="w-full py-3 rounded-xl bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 hover:from-amber-400 hover:to-orange-400 text-black font-black text-xs shadow-lg shadow-amber-500/20 flex items-center justify-center gap-2 active:scale-95 transition-all"
+                    >
+                      <Music className="w-4 h-4 fill-black" />
+                      <span>המר והורד אודיו כ-MP3</span>
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
@@ -7078,6 +7098,17 @@ export default function AudioEditorAudiogramStudio({
             </div>
           </div>
         </div>
+      )}
+
+      {/* MP3 Convert & Export Modal */}
+      {isMp3ModalOpen && (
+        <Mp3ConvertModal
+          isOpen={isMp3ModalOpen}
+          onClose={() => setIsMp3ModalOpen(false)}
+          episode={episode}
+          initialSourceBlob={audioBlob || initialAudioBlob || initialVideoBlob}
+          onUpdateEpisode={onUpdateEpisode}
+        />
       )}
     </div>
   );

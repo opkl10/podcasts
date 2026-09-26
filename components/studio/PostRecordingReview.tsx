@@ -28,6 +28,7 @@ import {
   Trash2
 } from 'lucide-react';
 import AudioEditorAudiogramStudio from '@/components/audio/AudioEditorAudiogramStudio';
+import Mp3ConvertModal from '@/components/audio/Mp3ConvertModal';
 
 interface PostRecordingReviewProps {
   episode: Episode;
@@ -60,6 +61,7 @@ export default function PostRecordingReview({
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [isAudiogramOpen, setIsAudiogramOpen] = useState(false);
+  const [isMp3ModalOpen, setIsMp3ModalOpen] = useState(false);
   const [selectedFormat, setSelectedFormat] = useState<'mp4' | 'webm' | 'mkv' | 'mov'>(defaultFormat);
 
   // BunnyCDN Upload States
@@ -347,6 +349,27 @@ export default function PostRecordingReview({
                 <Download className="w-4 h-4 text-emerald-400 group-hover:translate-y-0.5 transition-transform shrink-0" />
               </button>
 
+              {/* 2a. Dedicated High-Fidelity MP3 Audio Conversion & Download */}
+              <button
+                onClick={() => setIsMp3ModalOpen(true)}
+                disabled={!audioBlob && !videoBlob}
+                className="flex items-center justify-between p-3.5 rounded-2xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-300 hover:text-white disabled:opacity-40 transition-all text-right group shadow-lg shadow-amber-500/10"
+              >
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 rounded-xl bg-gradient-to-tr from-amber-500 to-orange-600 text-black font-black shrink-0">
+                    <Music className="w-4 h-4 fill-black" />
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold text-white flex items-center gap-1.5">
+                      <span>המר והורד כ-MP3</span>
+                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/30 text-amber-200 font-mono font-bold">חדש</span>
+                    </p>
+                    <p className="text-[10px] text-slate-400">איכות פודקאסט (192/320k LAME)</p>
+                  </div>
+                </div>
+                <Download className="w-4 h-4 text-amber-400 group-hover:translate-y-0.5 transition-transform shrink-0" />
+              </button>
+
               {/* 2b. Isolated Console / Game Audio Download (if gaming) */}
               {gameAudioBlob && (
                 <button
@@ -573,6 +596,14 @@ export default function PostRecordingReview({
           onClose={() => setIsAudiogramOpen(false)}
         />
       )}
+
+      {/* High-Quality MP3 Conversion & Download Modal */}
+      <Mp3ConvertModal
+        isOpen={isMp3ModalOpen}
+        onClose={() => setIsMp3ModalOpen(false)}
+        episode={episode}
+        initialSourceBlob={audioBlob || videoBlob}
+      />
     </div>
   );
 }
