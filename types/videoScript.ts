@@ -14,7 +14,7 @@ export interface OriginalVideoMeta {
   sourceUrl?: string;
   videoId?: string;
   platform?: 'youtube' | 'tiktok' | 'vimeo' | 'direct' | 'uploaded';
-  transcriptSource?: 'youtube_captions' | 'whisper_audio' | 'gemini_audio' | 'direct_text' | 'fallback';
+  transcriptSource?: 'youtube_captions' | 'whisper_audio' | 'gemini_audio' | 'direct_text' | 'metadata_fallback' | 'fallback';
   transcriptCuesCount?: number;
 }
 

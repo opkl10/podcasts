@@ -16,9 +16,28 @@ function extractYouTubeId(url: string): string | null {
   if (!url) return null;
   const clean = url.trim();
   if (/^[a-zA-Z0-9_-]{11}$/.test(clean)) return clean;
-  const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=|shorts\/|live\/)([^#&?]*).*/;
+
+  try {
+    const parsed = new URL(clean.startsWith('http') ? clean : `https://${clean}`);
+    if (parsed.searchParams.has('v')) {
+      const v = parsed.searchParams.get('v');
+      if (v && v.length === 11) return v;
+    }
+    const pathParts = parsed.pathname.split('/').filter(Boolean);
+    if (parsed.hostname.includes('youtu.be') && pathParts.length > 0) {
+      const id = pathParts[0];
+      if (id.length === 11) return id;
+    }
+    for (let i = 0; i < pathParts.length; i++) {
+      if (['shorts', 'embed', 'v', 'live'].includes(pathParts[i]) && pathParts[i + 1] && pathParts[i + 1].length === 11) {
+        return pathParts[i + 1];
+      }
+    }
+  } catch {}
+
+  const regExp = /(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=|shorts\/|live\/))([a-zA-Z0-9_-]{11})/;
   const match = clean.match(regExp);
-  return (match && match[2].length === 11) ? match[2] : null;
+  return match ? match[1] : null;
 }
 
 // Fetch YouTube captions safely with multiple language and fallback attempts
@@ -127,14 +146,23 @@ async function generateSmartFallback(
   targetPlatform: TargetPlatform,
   targetDurationMinutes: number
 ): Promise<VideoAnalysisResult> {
-  const cleanTitle = metadata.title.replace(/[|•-].*$/, '').trim();
-  const translatedTitle = await freeTranslateText(cleanTitle, 'he') || cleanTitle;
-  const excerpt = englishSpokenText.slice(0, 1500);
-  const translatedExcerpt = await freeTranslateText(excerpt, 'he') || excerpt;
+  const cleanTitle = metadata.title
+    .replace(/\s*-\s*YouTube\s*$/i, '')
+    .replace(/[|•-].*$/, '')
+    .trim() || 'הנושא הנבחר';
+  const translatedTitle = (await freeTranslateText(cleanTitle, 'he')) || cleanTitle;
+
+  let hebrewDigestText = '';
+  if (metadata.transcriptSource === 'metadata_fallback') {
+    hebrewDigestText = `ניתוח מעמיק על "${translatedTitle}" מאת ${metadata.author || 'היוצר'}.\n\nהתוכן נבנה על בסיס נושא הווידאו, ההקשר ההיסטורי והתובנות המרכזיות מאחורי הקלעים של היצירה.`;
+  } else {
+    const excerpt = englishSpokenText.slice(0, 2000);
+    hebrewDigestText = (await freeTranslateText(excerpt, 'he')) || excerpt;
+  }
 
   const keyPoints = [
-    `ניתוח מעמיק של התופעה: מה הוביל להצלחה או לכישלון לאורך השנים`,
-    `ההבדל בין הציפיות של הקהל לבין מה שקרה בפועל מאחורי הקלעים`,
+    `ניתוח מעמיק של ${translatedTitle}: מה הוביל להצלחה או לאתגרים לאורך השנים`,
+    `ההבדל בין הציפיות של הקהל לבין מה שקרה בפועל מאחורי הקלעים בהפקה`,
     `החלקים המבריקים שכולם זוכרים לעומת הטעויות הגדולות שנעשו בדרך`,
     `מה הלקח המרכזי שיוצרים וצופים יכולים ללמוד מהמקרה הזה`
   ];
@@ -148,7 +176,7 @@ async function generateSmartFallback(
     },
     transcript: {
       englishText: englishSpokenText,
-      hebrewText: translatedExcerpt,
+      hebrewText: hebrewDigestText,
       summary,
       keyPoints
     },
@@ -161,7 +189,7 @@ async function generateSmartFallback(
       ],
       targetPlatform,
       targetDurationMinutes,
-      hook: `אתם לא תאמינו מה מסתתר מאחורי ${translatedTitle} – ואיך פרט אחד קטן שינה לחלוטין את כל מה שחשבנו!`,
+      hook: `אתם לא תאמינו מה באמת מסתתר מאחורי ${translatedTitle} – ואיך פרט אחד מטורף שינה לחלוטין את כל התמונה!`,
       scenes: [
         {
           sceneNumber: 1,
@@ -263,23 +291,62 @@ export async function POST(req: NextRequest) {
           console.warn('Could not fetch oEmbed metadata:', e);
         }
 
+        // Secondary fallback for metadata via noembed
+        if (!metadata.title || metadata.title === 'סרטון מקור באנגלית') {
+          try {
+            const noembedRes = await fetch(`https://noembed.com/embed?url=https://www.youtube.com/watch?v=${ytId}`);
+            if (noembedRes.ok) {
+              const noembedData = await noembedRes.json();
+              if (noembedData.title) metadata.title = noembedData.title;
+              if (noembedData.author_name) metadata.author = noembedData.author_name;
+            }
+          } catch {}
+        }
+
         // Fetch real YouTube subtitles / transcript
         if (!englishSpokenText) {
           const captionData = await fetchYoutubeCaptions(ytId);
-          if (captionData.fullText.length > 0) {
+          if (captionData && captionData.fullText && captionData.fullText.length > 0) {
             englishSpokenText = captionData.fullText;
             metadata.transcriptSource = 'youtube_captions';
             metadata.transcriptCuesCount = captionData.cuesCount;
             transcriptSegments = captionData.segments;
           }
         }
+
+        // Resilient YouTube fallback: If captions are disabled or unavailable, synthesize video topic context
+        if (!englishSpokenText || englishSpokenText.trim().length === 0) {
+          metadata.transcriptSource = 'metadata_fallback';
+          englishSpokenText = `Video Title: "${metadata.title}"
+Creator / Channel: "${metadata.author || 'YouTube Creator'}"
+Platform: YouTube (Video ID: ${ytId})
+Source: https://www.youtube.com/watch?v=${ytId}
+
+Overview & Narrative Brief:
+This video presents an in-depth retrospective, narrative analysis, and creative breakdown examining "${metadata.title}" by ${metadata.author || 'the creator'}.
+Key Areas Covered: Complete history and development, what happened behind the scenes, pivotal turns, character and thematic highlights, critical acclaim and challenges, audience reception, and modern lessons and conclusions.`;
+        }
       } else {
         metadata.title = videoTitle || videoUrl.split('/').pop()?.split('?')[0] || 'וידאו מקור ברשת';
+        if (!englishSpokenText) {
+          metadata.transcriptSource = 'metadata_fallback';
+          englishSpokenText = `Video Title: "${metadata.title}"
+Source: ${videoUrl}
+
+Overview:
+Video analysis and script breakdown based on the topic "${metadata.title}".`;
+        }
       }
     }
 
     // 2. If uploaded audio/video is provided, transcribe with Gemini or Whisper
     if (audioBase64 && !englishSpokenText) {
+      if (!geminiKey && !openaiKey) {
+        return NextResponse.json({
+          error: 'כדי לתמלל קובץ וידאו או אודיו שהועלה ישירות, יש להזין מפתח AI (Gemini חינמי או OpenAI) בהגדרות המערכת (סמל המפתח 🔑 בראש המסך). לחילופין, תוכל להזין קישור יוטיוב או להדביק את תמליל הסרטון ישירות.'
+        }, { status: 400 });
+      }
+
       const cleanBase64 = audioBase64.replace(/^data:[^;]+;base64,/, '');
       const sanitizedMime = (mimeType || 'audio/wav').split(';')[0].trim();
 
@@ -320,7 +387,9 @@ Do not summarize. Transcribe verbatim. Return only the English transcription tex
         } catch (audioErr) {
           console.warn('Gemini audio transcription error:', audioErr);
         }
-      } else if (openaiKey) {
+      }
+
+      if (!englishSpokenText && openaiKey) {
         try {
           const audioBuffer = Buffer.from(cleanBase64, 'base64');
           const fileExt = sanitizedMime.includes('mp4') ? 'mp4' 
@@ -352,17 +421,18 @@ Do not summarize. Transcribe verbatim. Return only the English transcription tex
           console.warn('Whisper transcription error:', wErr);
         }
       }
-    }
 
-    // 3. Check transcript availability
-    if (!englishSpokenText || englishSpokenText.trim().length === 0) {
-      if (videoUrl) {
+      if (!englishSpokenText) {
         return NextResponse.json({
-          error: 'לא נמצא תמליל דיבור אוטומטי לסרטון יוטיוב זה (ייתכן שהיוצר לא אפשר כתוביות). באפשרותך להעלות את קובץ הסרטון/האודיו בלשונית "העלאת קובץ" לתמלול מלא ב-AI, או להדביק תמליל ישירות בלשונית "הדבקת תמליל".'
+          error: 'לא הצלחנו לחלץ תמליל דיבור מקובץ זה. ודא שהקובץ כולל דיבור באנגלית ברורה, או נסה להדביק את התמליל ישירות בלשונית "הדבקת תמליל".'
         }, { status: 400 });
       }
+    }
+
+    // 3. Final validation
+    if (!englishSpokenText || englishSpokenText.trim().length === 0) {
       return NextResponse.json({
-        error: 'לא סופק תוכן לסרטון (נא להזין קישור, להעלות קובץ או להדביק תמליל).'
+        error: 'לא סופק תוכן לסרטון (נא להזין קישור יוטיוב, להעלות קובץ או להדביק תמליל).'
       }, { status: 400 });
     }
 
@@ -390,13 +460,13 @@ Do not summarize. Transcribe verbatim. Return only the English transcription tex
 
     const prompt = `
 אתה תסריטאי יוטיוב, במאי ועורך תוכן בכיר בעברית עבור יוצרי תוכן ופודקאסטים מובילים בישראל.
-לפניך תמליל דיבור של סרטון באנגלית שצריך לנתח לעומק, לסכם ולכתוב ממנו תסריט הפקה מלא בעברית כדי שהיוצר הישראלי יוכל לצלם ולהפיק סרטון מנצח בעברית על הנושא!
+לפניך ${metadata.transcriptSource === 'metadata_fallback' ? 'מידע ותוכן על נושא סרטון באנגלית' : 'תמליל דיבור של סרטון באנגלית'} שצריך לנתח לעומק, לסכם ולכתוב ממנו תסריט הפקה מלא בעברית כדי שהיוצר הישראלי יוכל לצלם ולהפיק סרטון מנצח בעברית על הנושא!
 
 פרטי הסרטון המקורי:
 - כותרת: "${metadata.title}"
 - יוצר / מקור: "${metadata.author || 'יוצר תוכן ברשת'}"
 
-מה שנאמר בסרטון באנגלית (תמליל המקור):
+${metadata.transcriptSource === 'metadata_fallback' ? 'נושא הסרטון וההקשר:' : 'מה שנאמר בסרטון באנגלית (תמליל המקור):'}
 """
 ${transcriptForAI}
 """

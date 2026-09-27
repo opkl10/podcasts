@@ -10,6 +10,7 @@ import {
   ProductionScriptScene
 } from '@/types/videoScript';
 import { getStoredGeminiApiKey, getAISettings, saveAISettings } from '@/lib/apiConfig';
+import { audioBufferToMp3 } from '@/lib/audioUtils';
 import { saveEpisode, getEpisodes, getPodcasts } from '@/lib/storage';
 import { Episode } from '@/lib/types';
 import { 
@@ -158,14 +159,57 @@ export default function VideoToScriptStudio() {
     }
   };
 
-  // Convert File to Base64
-  const fileToBase64 = (file: File): Promise<string> => {
+  // Convert File/Blob to Base64
+  const fileToBase64 = (file: Blob): Promise<string> => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => resolve(reader.result as string);
       reader.onerror = reject;
       reader.readAsDataURL(file);
     });
+  };
+
+  // Helper to extract & compress audio from an uploaded File (video or audio)
+  const extractAudioFromFile = async (file: File): Promise<{ base64: string; mimeType: string }> => {
+    // If it's already an audio file and under 4MB, read directly
+    if (file.type.startsWith('audio/') && file.size < 4 * 1024 * 1024) {
+      const base64 = await fileToBase64(file);
+      return { base64, mimeType: file.type || 'audio/wav' };
+    }
+
+    // Try decoding and compressing audio track via Web Audio API to MP3
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (AudioCtx) {
+        const arrayBuffer = await file.arrayBuffer();
+        const audioCtx = new AudioCtx();
+        let audioBuffer: AudioBuffer;
+        try {
+          audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+        } finally {
+          await audioCtx.close().catch(() => {});
+        }
+
+        // Convert audioBuffer to lightweight MP3 (mono, 64 kbps - optimal speech size & speed)
+        const mp3Blob = audioBufferToMp3(audioBuffer, {
+          isMono: true,
+          bitrate: 64,
+          normalize: true
+        });
+
+        const base64 = await fileToBase64(new File([mp3Blob], 'audio.mp3', { type: 'audio/mpeg' }));
+        return { base64, mimeType: 'audio/mpeg' };
+      }
+    } catch (e) {
+      console.warn('Web Audio extraction fallback to raw file:', e);
+    }
+
+    if (file.size > 4.5 * 1024 * 1024) {
+      throw new Error(`קובץ הווידאו גדול מדי להעלאה ישירה (${(file.size / (1024 * 1024)).toFixed(1)}MB). מומלץ להזין קישור יוטיוב או להעלות קובץ אודיו קטן מ-4MB.`);
+    }
+
+    const base64 = await fileToBase64(file);
+    return { base64, mimeType: file.type || 'audio/wav' };
   };
 
   // Run Analysis & Generation
@@ -185,6 +229,17 @@ export default function VideoToScriptStudio() {
       return;
     }
 
+    const settings = getAISettings();
+    const apiKey = (settings.geminiApiKey || getStoredGeminiApiKey()).trim();
+    const openaiApiKey = (settings.openaiApiKey || '').trim();
+
+    // Direct uploaded files require AI key for speech recognition
+    if (inputMode === 'upload' && !apiKey && !openaiApiKey) {
+      setIsAIModalOpen(true);
+      setErrorMsg('כדי לתמלל קובץ וידאו או אודיו שהועלה ישירות, יש להזין מפתח AI (Gemini חינמי או OpenAI) בהגדרות המערכת.');
+      return;
+    }
+
     setIsProcessing(true);
     setCurrentStep(1);
 
@@ -197,17 +252,9 @@ export default function VideoToScriptStudio() {
       let mimeType: string | undefined;
 
       if (inputMode === 'upload' && uploadedFile) {
-        audioBase64 = await fileToBase64(uploadedFile);
-        mimeType = uploadedFile.type;
-      }
-
-      const settings = getAISettings();
-      const apiKey = (settings.geminiApiKey || getStoredGeminiApiKey()).trim();
-      const openaiApiKey = (settings.openaiApiKey || '').trim();
-
-      // If no key configured, we still allow analysis to proceed (the server has smart fallbacks and env keys)
-      if (!apiKey && !openaiApiKey) {
-        console.log('No local AI key configured; proceeding with server-side processing');
+        const audioData = await extractAudioFromFile(uploadedFile);
+        audioBase64 = audioData.base64;
+        mimeType = audioData.mimeType;
       }
 
       const res = await fetch('/api/ai/video-script', {
@@ -662,6 +709,10 @@ ${t.hebrewText}
                   <span className="px-2.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 text-[10px] font-bold border border-indigo-500/30">
                     📜 תמליל נשלף מיוטיוב: {result.metadata.transcriptCuesCount.toLocaleString()} משפטים
                   </span>
+                ) : result.metadata.transcriptSource === 'metadata_fallback' ? (
+                  <span className="px-2.5 py-0.5 rounded-full bg-purple-500/20 text-purple-300 text-[10px] font-bold border border-purple-500/30">
+                    🎯 תסריט נבנה מניתוח נושא ומטא-דאטה של הווידאו
+                  </span>
                 ) : null}
                 <span className="text-xs text-slate-400 font-mono">
                   {result.metadata.title}
@@ -931,7 +982,7 @@ ${t.hebrewText}
                 <div className="p-5 rounded-2xl bg-slate-950/90 border border-slate-800 space-y-3">
                   <div className="flex items-center justify-between border-b border-slate-800 pb-2">
                     <span className="text-xs font-bold text-white flex items-center gap-1.5">
-                      <span>🇺🇸</span> מה שנאמר במקור (English)
+                      <span>🇺🇸</span> {result.metadata.transcriptSource === 'metadata_fallback' ? 'נושא ומבנה המקור (English)' : 'מה שנאמר במקור (English)'}
                     </span>
                     <button
                       onClick={() => handleCopy(result.transcript.englishText, 'en_trans')}
@@ -950,7 +1001,7 @@ ${t.hebrewText}
                 <div className="p-5 rounded-2xl bg-slate-950/90 border border-slate-800 space-y-3">
                   <div className="flex items-center justify-between border-b border-slate-800 pb-2">
                     <span className="text-xs font-bold text-white flex items-center gap-1.5">
-                      <span>🇮🇱</span> תרגום מדויק לעברית
+                      <span>🇮🇱</span> {result.metadata.transcriptSource === 'metadata_fallback' ? 'תקציר וניתוח בעברית' : 'תרגום מדויק לעברית'}
                     </span>
                     <button
                       onClick={() => handleCopy(result.transcript.hebrewText, 'he_trans')}
